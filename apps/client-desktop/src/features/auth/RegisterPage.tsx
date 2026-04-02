@@ -6,6 +6,7 @@ import { extractApiErrorMessage } from "@/services/apiClient";
 import { authApi } from "@/services/authApi";
 import { applySessionEnvelope } from "@/services/authSession";
 import { createAccountIdentity, loadOrCreateDeviceIdentity } from "@/services/identity";
+import { logger } from "@/services/logger";
 
 function defaultDeviceName() {
   const platform = navigator.platform || "desktop";
@@ -49,6 +50,7 @@ export function RegisterPage() {
       await applySessionEnvelope(response);
       navigate("/devices", { replace: true });
     } catch (submitError) {
+      logger.warn("register flow failed", { error: submitError });
       setError(extractApiErrorMessage(submitError));
     } finally {
       setIsSubmitting(false);

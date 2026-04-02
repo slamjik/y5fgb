@@ -20,15 +20,29 @@ async function getStrict(key: string): Promise<string | null> {
   if (!isTauriRuntime()) {
     throw new Error("secure keyring is unavailable outside tauri runtime");
   }
-  const value = await invoke<string | null>("secure_store_get", { key });
-  return value ?? null;
+  try {
+    const value = await invoke<string | null>("secure_store_get", { key });
+    return value ?? null;
+  } catch (error) {
+    if (isMissingSecureEntryError(error)) {
+      return null;
+    }
+    throw error;
+  }
 }
 
 async function deleteStrict(key: string): Promise<void> {
   if (!isTauriRuntime()) {
     throw new Error("secure keyring is unavailable outside tauri runtime");
   }
-  await invoke("secure_store_delete", { key });
+  try {
+    await invoke("secure_store_delete", { key });
+  } catch (error) {
+    if (isMissingSecureEntryError(error)) {
+      return;
+    }
+    throw error;
+  }
 }
 
 export const secureStorage = {
@@ -90,4 +104,13 @@ export const secureStorage = {
 
 function isSensitiveKey(key: string): boolean {
   return strictSensitivePrefixes.some((prefix) => key.startsWith(prefix));
+}
+
+function isMissingSecureEntryError(error: unknown): boolean {
+  const message = String(error ?? "").toLowerCase();
+  return (
+    message.includes("no entry") ||
+    message.includes("not found") ||
+    message.includes("no matching entry")
+  );
 }

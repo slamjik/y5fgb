@@ -106,7 +106,21 @@ export function extractApiErrorMessage(error: unknown): string {
   }
 
   if (error instanceof Error) {
-    return error.message;
+    return error.message || i18n.t("errors.generic");
+  }
+
+  if (typeof error === "string" && error.trim()) {
+    return error;
+  }
+
+  if (error && typeof error === "object") {
+    const candidate = error as { message?: unknown; error?: { message?: unknown } };
+    if (typeof candidate.message === "string" && candidate.message.trim()) {
+      return candidate.message;
+    }
+    if (typeof candidate.error?.message === "string" && candidate.error.message.trim()) {
+      return candidate.error.message;
+    }
   }
 
   return i18n.t("errors.generic");
