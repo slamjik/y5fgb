@@ -66,9 +66,12 @@ func Up(ctx context.Context, pool *pgxpool.Pool) error {
 			return fmt.Errorf("failed to start migration tx: %w", err)
 		}
 
-		if _, err := tx.Exec(ctx, string(content)); err != nil {
-			_ = tx.Rollback(ctx)
-			return fmt.Errorf("failed to apply migration %s: %w", name, err)
+		statements := splitStatements(string(content))
+		for _, statement := range statements {
+			if _, err := tx.Exec(ctx, statement); err != nil {
+				_ = tx.Rollback(ctx)
+				return fmt.Errorf("failed to apply migration %s: %w", name, err)
+			}
 		}
 
 		if _, err := tx.Exec(ctx, "INSERT INTO schema_migrations (version) VALUES ($1)", version); err != nil {
@@ -141,4 +144,18 @@ func migrationVersion(filename string) (int64, error) {
 	}
 
 	return version, nil
+}
+
+func splitStatements(content string) []string {
+	normalized := strings.TrimPrefix(content, "\uFEFF")
+	parts := strings.Split(normalized, ";")
+	statements := make([]string, 0, len(parts))
+	for _, part := range parts {
+		statement := strings.TrimSpace(part)
+		if statement == "" {
+			continue
+		}
+		statements = append(statements, statement)
+	}
+	return statements
 }
