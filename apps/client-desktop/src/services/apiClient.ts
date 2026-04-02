@@ -1,6 +1,6 @@
 import type { ErrorPayload } from "@project/protocol";
 
-import { appConfig } from "@/lib/config";
+import { getActiveServerConfig } from "@/services/serverConnection";
 import i18n from "@/services/i18n";
 
 export class ApiClientError extends Error {
@@ -17,7 +17,8 @@ export class ApiClientError extends Error {
 }
 
 function buildUrl(path: string) {
-  return `${appConfig.apiBaseUrl}${appConfig.apiPrefix}${path}`;
+  const server = getActiveServerConfig();
+  return `${server.apiBaseUrl}${server.apiPrefix}${path}`;
 }
 
 export async function apiRequest<TResponse>(options: {

@@ -16,8 +16,8 @@ import type {
   TransportEndpointsResponse,
 } from "@project/protocol";
 
-import { appConfig } from "@/lib/config";
 import { absoluteApiRequest, apiRequest } from "@/services/apiClient";
+import { getActiveServerConfig } from "@/services/serverConnection";
 
 export const messagingApi = {
   createDirect(accessToken: string, payload: CreateDirectConversationRequest) {
@@ -149,9 +149,10 @@ export const messagingApi = {
 };
 
 function buildSyncPollEndpoint(endpointUrl: string, cursor: number, timeoutSec: number, limit: number): string {
+  const server = getActiveServerConfig();
   const endpoint = endpointUrl.startsWith("http://") || endpointUrl.startsWith("https://")
     ? new URL(endpointUrl)
-    : new URL(endpointUrl, appConfig.apiBaseUrl);
+    : new URL(endpointUrl, server.apiBaseUrl);
   endpoint.searchParams.set("cursor", String(cursor));
   endpoint.searchParams.set("timeoutSec", String(timeoutSec));
   endpoint.searchParams.set("limit", String(limit));

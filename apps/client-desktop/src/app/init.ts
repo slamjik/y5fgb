@@ -1,7 +1,9 @@
 ﻿import { logger } from "@/services/logger";
 import { pluginRuntime } from "@/services/plugins/runtime";
+import { hasStoredServerConfig } from "@/services/serverConnection";
 import { bootstrapSession } from "@/services/sessionBootstrap";
 import { useAppStore } from "@/state/appStore";
+import { useAuthStore } from "@/state/authStore";
 
 let initialized = false;
 
@@ -13,10 +15,14 @@ export async function initApp() {
   initialized = true;
   const now = new Date().toISOString();
 
-  try {
-    await bootstrapSession();
-  } catch (error) {
-    logger.warn("Session bootstrap produced an unhandled error", { error });
+  if (hasStoredServerConfig()) {
+    try {
+      await bootstrapSession();
+    } catch (error) {
+      logger.warn("Session bootstrap produced an unhandled error", { error });
+    }
+  } else {
+    useAuthStore.getState().setInitialized(true);
   }
 
   try {

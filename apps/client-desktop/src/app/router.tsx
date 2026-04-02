@@ -1,6 +1,6 @@
 ﻿import { Navigate, createBrowserRouter } from "react-router-dom";
 
-import { RequireAnonymous, RequireAuth } from "@/app/guards";
+import { RequireAnonymous, RequireAuth, RequireMissingServerConnection } from "@/app/guards";
 import { AppLayout } from "@/components/AppLayout";
 import { LoginPage } from "@/features/auth/LoginPage";
 import { RegisterPage } from "@/features/auth/RegisterPage";
@@ -17,6 +17,7 @@ import { PendingApprovalPage } from "@/features/pending/PendingApprovalPage";
 import { PluginPanelPage } from "@/features/plugins/PluginPanelPage";
 import { PluginsPage } from "@/features/plugins/PluginsPage";
 import { SecurityEventsPage } from "@/features/security/SecurityEventsPage";
+import { ServerConnectPage } from "@/features/server/ServerConnectPage";
 import { SettingsPage } from "@/features/settings/SettingsPage";
 
 export const router = createBrowserRouter([
@@ -24,6 +25,10 @@ export const router = createBrowserRouter([
     path: "/",
     element: <AppLayout />,
     children: [
+      {
+        element: <RequireMissingServerConnection />,
+        children: [{ path: "connect-server", element: <ServerConnectPage /> }],
+      },
       {
         element: <RequireAuth />,
         children: [

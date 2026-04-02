@@ -4,6 +4,7 @@ import { NavLink, useNavigate } from "react-router-dom";
 import { authApi } from "@/services/authApi";
 import { clearSession } from "@/services/authSession";
 import { REFRESH_TOKEN_KEY } from "@/services/authTokens";
+import { hasStoredServerConfig } from "@/services/serverConnection";
 import { secureStorage } from "@/services/secureStorage";
 import { useAppStore } from "@/state/appStore";
 import { useAuthStore } from "@/state/authStore";
@@ -14,6 +15,7 @@ export function Sidebar() {
   const accessToken = useAuthStore((state) => state.accessToken);
   const session = useAuthStore((state) => state.session);
   const onboardingCompleted = useAppStore((state) => state.onboardingCompleted);
+  const hasServerConnection = hasStoredServerConfig();
 
   async function logout() {
     const refreshToken = await secureStorage.get(REFRESH_TOKEN_KEY);
@@ -37,7 +39,11 @@ export function Sidebar() {
           {t("nav.conversations")}
         </NavLink>
 
-        {session ? (
+        {!hasServerConnection ? (
+          <NavLink className="sidebar-link" to="/connect-server">
+            {t("serverConnect.title")}
+          </NavLink>
+        ) : session ? (
           <>
             {!onboardingCompleted ? (
               <NavLink className="sidebar-link" to="/onboarding">

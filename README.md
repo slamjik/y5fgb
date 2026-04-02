@@ -1,226 +1,153 @@
 # Secure Messenger Monorepo
 
-Desktop-first secure messenger with zero-trust relay architecture.
+**RU:** Desktop-first защищённый мессенджер: толстый клиент (Tauri/React) + zero-trust relay на Go + PostgreSQL.  
+**EN:** Desktop-first secure messenger: thick client (Tauri/React) + zero-trust Go relay + PostgreSQL.
 
-## Stack
+## Описание проекта / Project Overview
+
+### Русский
+Проект разделён на два основных слоя:
+- `apps/client-desktop` — desktop-клиент (UI, локальная криптография, устройство, плагины, локальное хранилище).
+- `apps/relay-server` — relay/backend (auth, device trust, очереди доставки, sync, attachments metadata).
+
+Сервер **не расшифровывает** содержимое сообщений: хранит и ретранслирует только зашифрованные envelope/metadata.
+
+### English
+The system is split into two main layers:
+- `apps/client-desktop` — desktop client (UI, local crypto, device model, plugins, local storage).
+- `apps/relay-server` — relay/backend (auth, device trust, delivery queues, sync, attachment metadata).
+
+The server **does not decrypt** message content: it stores and relays encrypted envelopes/metadata only.
+
+## Стек / Stack
 
 - Client: Tauri + React + TypeScript
 - Backend: Go
 - DB: PostgreSQL
 
-## Repo layout
+## Быстрый старт (локально) / Local Quick Start
 
-- `apps/client-desktop` - desktop client
-- `apps/relay-server` - relay/auth/messaging server
-- `packages/protocol` - shared API/ws DTO contracts
-- `packages/shared-types` - branded ID/value types
-- `infra` - docker env and compose files
-- `scripts` - local dev helpers
+### 1) Требования / Prerequisites
+- Node.js 20+
+- Go 1.22+
+- Rust toolchain + cargo
+- Docker + Docker Compose plugin
 
-## Quick start
+### 2) Установка зависимостей / Install dependencies
+```bash
+npm install
+```
 
-1. Install Node.js 20+, Go 1.22+, Rust toolchain, Docker.
-2. Run `npm install` in repo root.
-3. Start backend + postgres: `docker compose up --build`.
-4. Start desktop client: `npm run dev:client`.
+### 3) Запуск сервера + БД (dev) / Start server + DB (dev)
+```bash
+docker compose up --build
+```
+Поднимутся `postgres` и `relay-server` на `localhost:5432` и `localhost:8080`.
 
-## Useful scripts
+### 4) Запуск клиента / Start client
+Вариант A (быстро для UI разработки, через Vite):
+```bash
+npm run dev:client
+```
 
-- `npm run dev:infra` - run postgres + relay
-- `npm run dev:infra:down` - stop infra and remove volumes
-- `npm run dev:server` - run relay locally
-- `npm run dev:client` - run desktop client locally
-- `npm run db:migrate:up` - apply migrations
-- `npm run db:migrate:down` - rollback last migration
-- `npm run test:server` - run Go tests
-- `npm run test:plugins:unit` - run plugin policy/manifest unit checks
-- `npm run test:smoke:v4` - run platform smoke checks (requires running backend)
-- `npm run test:release:rc` - run RC sanity gate (server tests + client build + plugin checks)
-- `npm run build:desktop:windows` - build Windows NSIS bundle
-- `npm run build:desktop:linux` - build Linux AppImage + DEB bundles
-- `npm run build:desktop:rc` - build desktop bundle for current OS
-- `npm run release:rc:sh` - run RC sanity + desktop build (bash)
-- `npm run release:rc:ps1` - run RC sanity + desktop build (PowerShell)
-- `npm run deploy:prod:sh` - run production deploy helper script (bash)
-- `npm run deploy:prod:ps1` - run production deploy helper script (PowerShell)
+Вариант B (настоящий desktop shell Tauri):
+```bash
+npm run tauri:dev --workspace apps/client-desktop
+```
 
-PowerShell/Bash wrappers are available under `scripts/`.
+## Установка сервера (production) / Server Installation (production)
 
-## Production Deployment (Single Host)
+```bash
+cp .env.production.example .env
+```
+Заполните обязательные переменные в `.env`:
+- `PUBLIC_HOST`, `ACME_EMAIL`
+- `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `DATABASE_URL`
+- `AUTH_TOKEN_PEPPER`, `SECURITY_ENCRYPTION_KEY`
+- `TRANSPORT_PRIMARY_WS_ENDPOINT`
 
-Production stack is defined in:
+Запуск:
+```bash
+docker compose -f docker-compose.production.yml --env-file .env up -d --build
+```
 
-- `docker-compose.production.yml`
-- `.env.production.example`
-- `infra/caddy/Caddyfile`
+Проверка:
+```bash
+curl -I https://<PUBLIC_HOST>/health
+curl -I https://<PUBLIC_HOST>/ready
+```
 
-Quick path:
+Подробно:
+- [`docs/production-runbook.md`](docs/production-runbook.md)
+- [`docs/admin-guide.md`](docs/admin-guide.md)
 
-1. `cp .env.production.example .env`
-2. Fill required secrets and host values in `.env`.
-3. `docker compose -f docker-compose.production.yml --env-file .env up -d --build`
+## Установка клиента (release) / Client Installation (release)
 
-Deployment helper scripts:
+### Для разработчика / For developers
+Сборка desktop-пакетов:
+```bash
+npm run build:desktop:windows   # NSIS (Windows)
+npm run build:desktop:linux     # AppImage + DEB (Linux)
+```
 
-- `./scripts/deploy-prod.sh`
-- `./scripts/deploy-prod.ps1`
-
-What the stack starts:
-
-- `postgres` (internal-only)
-- `relay-migrate` one-shot migration job
-- `relay-server` (internal-only)
-- `caddy` reverse proxy with ACME TLS on `80/443`
-
-Readiness and health:
-
-- `GET /health`
-- `GET /ready`
-
-Detailed operations runbook: [`docs/production-runbook.md`](docs/production-runbook.md)
-Admin operations quick guide: [`docs/admin-guide.md`](docs/admin-guide.md)
-
-## Release Candidate v1 (Desktop)
-
-Target version: `1.0.0-rc.1`.
-
-Desktop artifacts:
-
+### Для пользователя / For end users
+Берите готовые артефакты из GitHub Releases:
 - Windows: NSIS installer
-- Linux: AppImage + DEB
+- Linux: AppImage / DEB
 
-Build commands:
+## Как клиент подключается к серверу? / How the client connects to the server
 
-1. `npm run test:release:rc`
-2. `npm run build:desktop:windows` (on Windows runner)
-3. `npm run build:desktop:linux` (on Linux runner)
-4. Optional API integration smoke with running backend: `RUN_RELEASE_SMOKE=1 npm run test:release:rc`
+### Коротко / Short answer
+1. Клиент делает HTTP(S) запросы к API (`/api/v1/...`) для auth/session/devices/messaging/sync.
+2. Для realtime клиент открывает WebSocket на `/ws`.
+3. Если WebSocket недоступен — клиент автоматически уходит в long-poll (`/api/v1/sync/poll`).
 
-Release docs:
+### Важно по конфигу / Important config
+Основные client env-переменные:
+- `VITE_API_BASE_URL` — база API (пример: `https://chat.example.com`)
+- `VITE_API_PREFIX` — обычно `/api/v1`
+- `VITE_WS_URL` — websocket endpoint (пример: `wss://chat.example.com/ws`)
+- `VITE_TRANSPORT_ENDPOINT_OVERRIDES` — optional CSV fallback endpoints
 
-- QA matrix: [`docs/qa-matrix-rc1.md`](docs/qa-matrix-rc1.md)
-- Release checklist: [`docs/release-checklist-1.0.0-rc.1.md`](docs/release-checklist-1.0.0-rc.1.md)
-- Release notes: [`docs/release-notes-1.0.0-rc.1.md`](docs/release-notes-1.0.0-rc.1.md)
-- Bug triage template: [`docs/bug-triage-template.md`](docs/bug-triage-template.md)
+Dev пример (`apps/client-desktop/.env.development`):
+- `VITE_API_BASE_URL=http://localhost:8080`
+- `VITE_WS_URL=ws://localhost:8080/ws`
+
+Prod пример (`apps/client-desktop/.env.production`):
+- `VITE_API_BASE_URL=https://relay.example.com`
+- `VITE_WS_URL=wss://relay.example.com/ws`
+
+### Как это работает в рантайме / Runtime behavior
+- Access token используется для API и WS авторизации.
+- WS — primary transport.
+- Long-poll — fallback transport при проблемах сети/endpoint.
+- После reconnect клиент делает resync по курсору, чтобы не терять сообщения.
+
+## Полезные команды / Useful Commands
+
+- `npm run dev:infra` — postgres + relay (dev)
+- `npm run dev:infra:down` — остановка dev infra
+- `npm run dev:server` — запуск relay локально
+- `npm run dev:client` — запуск client (Vite)
+- `npm run test:server` — Go tests
+- `npm run test:plugins:unit` — plugin unit sanity
+- `npm run test:smoke:v4` — smoke checks
+- `npm run test:release:rc` — release sanity gate
+- `npm run deploy:prod:sh` / `npm run deploy:prod:ps1` — production deploy helpers
+
+## Документация / Documentation
+
 - User guide (RU/EN): [`docs/user-guide.md`](docs/user-guide.md)
 - Dev guide: [`docs/dev-guide.md`](docs/dev-guide.md)
+- Security boundaries: [`docs/security-boundaries.md`](docs/security-boundaries.md)
+- Threat model: [`docs/threat-model-v1.md`](docs/threat-model-v1.md)
 - Desktop release runbook: [`docs/desktop-release-runbook.md`](docs/desktop-release-runbook.md)
+- QA/release docs:
+  - [`docs/qa-matrix-rc1.md`](docs/qa-matrix-rc1.md)
+  - [`docs/release-checklist-1.0.0-rc.1.md`](docs/release-checklist-1.0.0-rc.1.md)
+  - [`docs/release-notes-1.0.0-rc.1.md`](docs/release-notes-1.0.0-rc.1.md)
 
-## Platform core finalization (current stage)
+## Короткий текст для GitHub “About” / Suggested GitHub “About” text
 
-What is stabilized:
-
-- predictable message lifecycle in client: `draft -> encrypting -> queued -> sending -> sent/delivered/failed/expired`
-- dedup by sender-device + client-message-id in runtime store
-- durable outbox replay and retry classification (`retryable` vs `non-retryable`)
-- WS primary transport with controlled fallback to long-poll and endpoint rotation
-- cursor-based sync hardening and reduced duplicate render after reconnect/resync
-- attachment checksum validation and storage-path hardening on server
-- cleaner queue/transport/conversation UX states
-- capability-based plugin runtime v1 with sandboxed iframe isolation
-- plugin manager UI, local/bundled plugin discovery, enable/disable lifecycle
-- focused backend hardening: security headers, body limits, rate limiting, stricter validation
-
-What is intentionally not added in this stage:
-
-- new transport modes beyond existing WS + long-poll
-- calls/video/mobile/federation/marketplace runtime
-- full ratchet redesign
-
-## Plugin system v1
-
-- Execution model: `sandboxed iframe` per plugin (`sandbox="allow-scripts"`).
-- Bridge model: capability-checked `postMessage` API only.
-- Discovery sources:
-  - bundled demo plugins,
-  - local plugins from `app_data/plugins/<plugin-id>/manifest.json`.
-- Permission model: all-or-nothing grant on enable.
-
-Allowed capabilities in v1:
-
-- `ui.render`
-- `commands.register`
-- `storage.plugin_local`
-- `notifications.local`
-- `messages.read_active_conversation_summary`
-- `messages.read_visible_messages`
-- `events.subscribe`
-
-Denied by default in v1:
-
-- `network.outbound`
-- `filesystem.read`
-- `filesystem.write`
-- `transport.control`
-- `auth.session`
-- `crypto.keys`
-- `identity.material`
-
-How to use:
-
-1. Open `Plugins` in the sidebar.
-2. Click `Discover Plugins`.
-3. For discovered items: `Install` -> `Enable`.
-4. Run plugin commands directly in Plugin Manager.
-5. Open plugin panels from panel links.
-
-Local plugin dev flow:
-
-1. Place plugin under app data directory:
-   - Windows example: `%APPDATA%/<app-id>/plugins/<plugin-id>/`
-2. Add `manifest.json` with required fields:
-   - `apiVersion`, `id`, `name`, `version`, `entrypoint`, `requestedPermissions`, `declaredHooks`, `uiContributions`.
-3. Add entrypoint script file referenced by `entrypoint`.
-4. Open Plugin Manager and click `Discover Plugins`.
-5. Install + enable the plugin.
-
-## Manual verification flows
-
-### Auth/identity/device
-
-1. Register account A from client #1.
-2. Login account A from client #2 and confirm it lands in `pending` state.
-3. Approve/reject from trusted device on client #1.
-4. Enable optional 2FA and verify sensitive actions require step-up.
-5. Rotate current device key from `Devices` and verify trust warning/security event update.
-6. Trigger `Logout Everywhere` and confirm old sessions are revoked.
-
-### Messaging core
-
-1. Create direct conversation between two trusted accounts.
-2. Send messages both ways and confirm server only handles encrypted envelope fields.
-3. Restart one client, verify history/bootstrap restores and no duplicate inserts.
-4. Disconnect WS endpoint (or stop server briefly), verify fallback to long-poll and queue replay after reconnect.
-5. Send attachment, download on peer, verify retry path on transient failure.
-6. Send messages with TTL and verify `expired` state is shown consistently after restart/resync.
-7. Create group, add member (owner/admin), send group messages, verify membership enforcement.
-
-### Plugin runtime
-
-1. Open `Plugins` page and run discovery.
-2. Enable `Transport Health Panel` and verify panel updates on reconnect/transport state change.
-3. Enable `Conversation Summary` and verify active conversation/message counters update.
-4. Enable `Local Actions`, run command, verify plugin-local counter increments and notice appears.
-5. Verify denied capabilities are not available to plugins by default.
-6. Disable plugin and verify its commands/panels are removed from runtime state.
-
-### Smoke checks
-
-1. Start backend and DB (`docker compose up --build` or equivalent local stack).
-2. Run `npm run test:smoke:v4`.
-3. Verify output ends with `[smoke] v4 checks passed` (includes key-rotation and logout-all sanity).
-
-### Health checks
-
-- `GET http://localhost:8080/health`
-- `GET /api/v1/transport/endpoints` (authenticated)
-- `GET /api/v1/sync/bootstrap` and `GET /api/v1/sync/poll` (authenticated)
-
-## Security notes
-
-- server stores only encrypted payloads + metadata for messaging
-- private keys remain client-side
-- logs must not contain plaintext messages, decrypted blobs, or raw secrets
-- client secure material uses OS keyring bridge (strict path for messaging key material)
-- plugin runtime is untrusted; trusted/untrusted boundaries are documented in [`docs/security-boundaries.md`](docs/security-boundaries.md)
-- threat model assumptions and limitations are documented in [`docs/threat-model-v1.md`](docs/threat-model-v1.md)
+**RU:** Защищённый desktop-first мессенджер: Tauri-клиент, zero-trust relay на Go, PostgreSQL, E2EE-ready архитектура с fallback transport.  
+**EN:** Secure desktop-first messenger: Tauri client, zero-trust Go relay, PostgreSQL, E2EE-ready architecture with resilient fallback transport.

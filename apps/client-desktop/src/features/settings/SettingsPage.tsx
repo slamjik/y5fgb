@@ -1,18 +1,33 @@
 import { useTranslation } from "react-i18next";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 
 import { appConfig } from "@/lib/config";
+import { clearSession } from "@/services/authSession";
 import { type AppLanguage, changeLanguage } from "@/services/i18n";
+import { messagingRuntime } from "@/services/messaging/runtime";
+import { clearServerConfig, getActiveServerConfig, getServerHostForDisplay } from "@/services/serverConnection";
 import { useAppStore } from "@/state/appStore";
 import { useAuthStore } from "@/state/authStore";
+import { useMessagingStore } from "@/state/messagingStore";
 
 export function SettingsPage() {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const session = useAuthStore((state) => state.session);
   const language = useAppStore((state) => state.language);
   const setLanguage = useAppStore((state) => state.setLanguage);
   const onboardingCompleted = useAppStore((state) => state.onboardingCompleted);
   const setOnboardingCompleted = useAppStore((state) => state.setOnboardingCompleted);
+  const activeServer = getActiveServerConfig();
+
+  async function handleChangeServer() {
+    await clearSession();
+    messagingRuntime.stop();
+    useMessagingStore.getState().reset();
+    clearServerConfig();
+    setOnboardingCompleted(false);
+    navigate("/connect-server", { replace: true });
+  }
 
   function onLanguageChange(nextLanguage: AppLanguage) {
     setLanguage(nextLanguage);
@@ -40,10 +55,20 @@ export function SettingsPage() {
         <article className="card">
           <h2>{t("settings.networkTitle")}</h2>
           <p>
-            <strong>{t("settings.apiBase")}:</strong> {appConfig.apiBaseUrl}
+            <strong>{t("settings.serverHost")}:</strong> {getServerHostForDisplay(activeServer)}
           </p>
           <p>
-            <strong>{t("settings.wsBase")}:</strong> {appConfig.wsUrl}
+            <strong>{t("settings.serverSource")}:</strong>{" "}
+            {activeServer.source === "saved" ? t("settings.serverSourceSaved") : t("settings.serverSourceEnv")}
+          </p>
+          <p>
+            <strong>{t("settings.apiBase")}:</strong> {activeServer.apiBaseUrl}
+          </p>
+          <p>
+            <strong>{t("settings.wsBase")}:</strong> {activeServer.wsUrl}
+          </p>
+          <p>
+            <strong>{t("settings.apiPrefix")}:</strong> {activeServer.apiPrefix}
           </p>
           <p>
             <strong>{t("settings.wsQueryFallback")}:</strong> {String(appConfig.wsQueryTokenFallback)}
@@ -54,6 +79,12 @@ export function SettingsPage() {
               ? appConfig.transportEndpointOverrides.join(", ")
               : t("common.none")}
           </p>
+          <div className="inline-actions" style={{ marginTop: 12 }}>
+            <button type="button" onClick={() => void handleChangeServer()}>
+              {t("settings.changeServer")}
+            </button>
+          </div>
+          <p className="text-muted">{t("settings.changeServerHelp")}</p>
         </article>
 
         <article className="card">

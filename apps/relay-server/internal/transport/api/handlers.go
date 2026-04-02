@@ -101,6 +101,7 @@ func RegisterRoutes(mux *http.ServeMux, prefix string, handler *Handler, authSer
 	mux.Handle(base+"/sync/bootstrap", middleware.AuthRequired(authService, http.HandlerFunc(handler.handleSyncBootstrap)))
 	mux.Handle(base+"/sync/poll", middleware.AuthRequired(authService, http.HandlerFunc(handler.handleSyncPoll)))
 	mux.Handle(base+"/transport/endpoints", middleware.AuthRequired(authService, http.HandlerFunc(handler.handleTransportEndpoints)))
+	mux.HandleFunc(base+"/config", handler.handlePublicConfig)
 }
 
 func (h *Handler) handleRegister(w http.ResponseWriter, r *http.Request) {
@@ -1101,6 +1102,31 @@ func (h *Handler) handleTransportEndpoints(w http.ResponseWriter, r *http.Reques
 	})
 }
 
+func (h *Handler) handlePublicConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "method not allowed"), http.StatusMethodNotAllowed)
+		return
+	}
+
+	host := requestHost(r)
+	if host == "" {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeInternal, "failed to resolve host"), http.StatusInternalServerError)
+		return
+	}
+
+	scheme := requestScheme(r)
+	wsScheme := "ws"
+	if scheme == "https" {
+		wsScheme = "wss"
+	}
+
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"api_base":   fmt.Sprintf("%s://%s", scheme, host),
+		"ws_url":     fmt.Sprintf("%s://%s%s", wsScheme, host, h.cfg.HTTP.WebSocketPath),
+		"api_prefix": h.cfg.HTTP.APIPrefix,
+	})
+}
+
 func mapSyncBatch(batch messaging.SyncBatch) syncBatchDTO {
 	events := make([]syncEventDTO, 0, len(batch.Messages))
 	for _, message := range batch.Messages {
@@ -1206,4 +1232,32 @@ func defaultSyncQueryLimit(raw string) int {
 		return 200
 	}
 	return parsed
+}
+
+func requestScheme(r *http.Request) string {
+	if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); forwarded != "" {
+		parts := strings.Split(forwarded, ",")
+		candidate := strings.ToLower(strings.TrimSpace(parts[0]))
+		if candidate == "https" {
+			return "https"
+		}
+		if candidate == "http" {
+			return "http"
+		}
+	}
+	if r.TLS != nil {
+		return "https"
+	}
+	return "http"
+}
+
+func requestHost(r *http.Request) string {
+	if forwardedHost := strings.TrimSpace(r.Header.Get("X-Forwarded-Host")); forwardedHost != "" {
+		parts := strings.Split(forwardedHost, ",")
+		candidate := strings.TrimSpace(parts[0])
+		if candidate != "" {
+			return candidate
+		}
+	}
+	return strings.TrimSpace(r.Host)
 }

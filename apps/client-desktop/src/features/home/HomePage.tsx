@@ -2,6 +2,7 @@ import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 
 import { appConfig } from "@/lib/config";
+import { getActiveServerConfig } from "@/services/serverConnection";
 import { useAppStore } from "@/state/appStore";
 import { useAuthStore } from "@/state/authStore";
 import { useMessagingStore } from "@/state/messagingStore";
@@ -13,6 +14,7 @@ export function HomePage() {
   const session = useAuthStore((state) => state.session);
   const transport = useMessagingStore((state) => state.transport);
   const conversationsCount = useMessagingStore((state) => state.conversations.length);
+  const activeServer = getActiveServerConfig();
 
   return (
     <section>
@@ -23,7 +25,7 @@ export function HomePage() {
         <article className="card">
           <h2>{t("home.environment")}</h2>
           <p>{appConfig.environment}</p>
-          <p className="text-muted">API: {`${appConfig.apiBaseUrl}${appConfig.apiPrefix}`}</p>
+          <p className="text-muted">API: {`${activeServer.apiBaseUrl}${activeServer.apiPrefix}`}</p>
         </article>
 
         <article className="card">
@@ -80,4 +82,3 @@ export function HomePage() {
     </section>
   );
 }
-

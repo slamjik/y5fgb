@@ -1,6 +1,9 @@
 package api
 
-import "testing"
+import (
+	"net/http/httptest"
+	"testing"
+)
 
 func TestParseConversationRoute(t *testing.T) {
 	conversationID, action, err := parseConversationRoute("/api/v1/conversations/11111111-1111-1111-1111-111111111111/messages")
@@ -43,5 +46,24 @@ func TestDefaultSyncQueryLimit(t *testing.T) {
 	}
 	if got := defaultSyncQueryLimit("5"); got != 5 {
 		t.Fatalf("expected parsed limit 5, got %d", got)
+	}
+}
+
+func TestRequestSchemePrefersForwardedProto(t *testing.T) {
+	req := httptest.NewRequest("GET", "http://localhost/api/v1/config", nil)
+	req.Header.Set("X-Forwarded-Proto", "https")
+
+	if got := requestScheme(req); got != "https" {
+		t.Fatalf("expected https, got %s", got)
+	}
+}
+
+func TestRequestHostPrefersForwardedHost(t *testing.T) {
+	req := httptest.NewRequest("GET", "http://localhost/api/v1/config", nil)
+	req.Header.Set("X-Forwarded-Host", "chat.example.com")
+	req.Host = "localhost:8080"
+
+	if got := requestHost(req); got != "chat.example.com" {
+		t.Fatalf("expected forwarded host, got %s", got)
 	}
 }

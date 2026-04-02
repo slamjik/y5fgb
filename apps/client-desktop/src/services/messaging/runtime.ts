@@ -16,6 +16,7 @@ import { cryptoProvider } from "@/services/messaging/cryptoProvider";
 import { localEncryptedStore } from "@/services/messaging/localEncryptedStore";
 import { messagingApi } from "@/services/messaging/messagingApi";
 import { WebSocketTransport } from "@/services/messaging/transportClients";
+import { getActiveServerConfig } from "@/services/serverConnection";
 import { useAuthStore } from "@/state/authStore";
 import { type LocalMessage, useMessagingStore } from "@/state/messagingStore";
 
@@ -355,7 +356,8 @@ class MessagingRuntime {
     this.longPollEndpoints = dedupeEndpoints(this.longPollEndpoints);
 
     if (this.longPollEndpoints.length === 0 && this.longPollEnabled) {
-      this.longPollEndpoints = [`${appConfig.apiBaseUrl}${appConfig.apiPrefix}/sync/poll`];
+      const server = getActiveServerConfig();
+      this.longPollEndpoints = [`${server.apiBaseUrl}${server.apiPrefix}/sync/poll`];
     }
   }
 
@@ -492,7 +494,8 @@ class MessagingRuntime {
 
   private resolveLongPollEndpoint(): string {
     if (this.longPollEndpoints.length === 0) {
-      return `${appConfig.apiBaseUrl}${appConfig.apiPrefix}/sync/poll`;
+      const server = getActiveServerConfig();
+      return `${server.apiBaseUrl}${server.apiPrefix}/sync/poll`;
     }
     return this.longPollEndpoints[this.longPollEndpointIndex % this.longPollEndpoints.length];
   }
