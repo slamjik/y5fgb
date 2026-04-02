@@ -29,7 +29,8 @@ export class WebSocketTransport {
     this.disconnect();
 
     const url = new URL(endpoint);
-    if (appConfig.wsQueryTokenFallback) {
+    const allowQueryFallback = appConfig.wsQueryTokenFallback || url.protocol === "ws:";
+    if (allowQueryFallback) {
       url.searchParams.set("access_token", accessToken);
     }
     const protocolAuth = `sm.auth.${accessToken}`;

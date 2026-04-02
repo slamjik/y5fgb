@@ -5,6 +5,7 @@ import { initApp } from "@/app/init";
 import { router } from "@/app/router";
 import i18n from "@/services/i18n";
 import { logger } from "@/services/logger";
+import { classifyMessagingError } from "@/services/messaging/errorModel";
 import { messagingRuntime } from "@/services/messaging/runtime";
 import { useAppStore } from "@/state/appStore";
 import { useAuthStore } from "@/state/authStore";
@@ -39,11 +40,12 @@ export function App() {
         if (cancelled) {
           return;
         }
+        const classified = classifyMessagingError(error);
         logger.warn("failed to start messaging runtime", { error });
         useMessagingStore.getState().setTransportState({
           mode: "none",
           status: "offline",
-          lastError: "local_storage_unavailable",
+          lastError: classified.code === "unknown" ? classified.message : classified.code,
         });
       }
     }

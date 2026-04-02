@@ -27,6 +27,7 @@ export function DevicesPage() {
   const [disableCode, setDisableCode] = useState("");
   const [rotatingKey, setRotatingKey] = useState(false);
   const [logoutAllRunning, setLogoutAllRunning] = useState(false);
+  const [copiedAccountId, setCopiedAccountId] = useState(false);
 
   useEffect(() => {
     if (!accessToken) {
@@ -143,6 +144,16 @@ export function DevicesPage() {
     }
   }
 
+  async function copyAccountID(value: string) {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopiedAccountId(true);
+      window.setTimeout(() => setCopiedAccountId(false), 1500);
+    } catch (copyError) {
+      setError(extractApiErrorMessage(copyError));
+    }
+  }
+
   async function startTwoFA() {
     if (!accessToken) {
       return;
@@ -219,6 +230,11 @@ export function DevicesPage() {
           <p>
             {t("devices.accountIdLabel")}: {session.accountId}
           </p>
+          <div className="inline-actions">
+            <button type="button" onClick={() => void copyAccountID(session.accountId)}>
+              {copiedAccountId ? "Copied" : "Copy Account ID"}
+            </button>
+          </div>
           <p>{t("home.email")}: {session.email || "-"}</p>
           <p>
             {t("devices.fingerprint")}: {session.identity.fingerprint.value}

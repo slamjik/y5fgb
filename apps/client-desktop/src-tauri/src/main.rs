@@ -48,7 +48,10 @@ fn secure_store_get(key: String) -> Result<Option<String>, String> {
         Ok(value) => Ok(Some(value)),
         Err(error) => {
             let message = error.to_string().to_lowercase();
-            if message.contains("no entry") || message.contains("not found") {
+            if message.contains("no entry")
+                || message.contains("not found")
+                || message.contains("no matching entry")
+            {
                 Ok(None)
             } else {
                 Err(format!("failed to get secret: {error}"))
@@ -65,7 +68,10 @@ fn secure_store_delete(key: String) -> Result<(), String> {
         Ok(_) => Ok(()),
         Err(error) => {
             let message = error.to_string().to_lowercase();
-            if message.contains("no entry") || message.contains("not found") {
+            if message.contains("no entry")
+                || message.contains("not found")
+                || message.contains("no matching entry")
+            {
                 Ok(())
             } else {
                 Err(format!("failed to delete secret: {error}"))
