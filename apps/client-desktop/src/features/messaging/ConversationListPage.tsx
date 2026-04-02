@@ -9,6 +9,7 @@ import { useMessagingStore } from "@/state/messagingStore";
 export function ConversationListPage() {
   const { t } = useTranslation();
   const loading = useMessagingStore((state) => state.loading);
+  const initialized = useMessagingStore((state) => state.initialized);
   const conversations = useMessagingStore((state) => state.conversations);
   const transport = useMessagingStore((state) => state.transport);
   const outbox = useMessagingStore((state) => state.outbox);
@@ -32,6 +33,8 @@ export function ConversationListPage() {
       }),
     [conversations],
   );
+
+  const canCreateConversation = initialized && !loading && !working;
 
   async function handleCreateDirect(event: FormEvent) {
     event.preventDefault();
@@ -85,7 +88,7 @@ export function ConversationListPage() {
               {t("messaging.peerAccountId")}
               <input value={directAccountId} onChange={(event) => setDirectAccountId(event.target.value)} placeholder="account uuid" />
             </label>
-            <button type="submit" disabled={working || !directAccountId.trim()}>
+            <button type="submit" disabled={!canCreateConversation || !directAccountId.trim()}>
               {t("messaging.createDirectAction")}
             </button>
           </form>
@@ -107,7 +110,7 @@ export function ConversationListPage() {
                 placeholder="uuid-1, uuid-2"
               />
             </label>
-            <button type="submit" disabled={working || !groupTitle.trim()}>
+            <button type="submit" disabled={!canCreateConversation || !groupTitle.trim()}>
               {t("messaging.createGroupAction")}
             </button>
           </form>
@@ -137,6 +140,7 @@ export function ConversationListPage() {
       </div>
 
       {error ? <p className="error-text">{error}</p> : null}
+      {!initialized ? <p className="text-muted">{t("common.loadingSession")}</p> : null}
 
       <section className="page-stack section-offset-sm">
         <h2>{t("messaging.listTitle")}</h2>

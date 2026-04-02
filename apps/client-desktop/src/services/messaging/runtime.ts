@@ -768,6 +768,12 @@ class MessagingRuntime {
 
   private requireAccessToken() {
     if (!this.accessToken) {
+      const fromStore = useAuthStore.getState().accessToken;
+      if (fromStore) {
+        this.accessToken = fromStore;
+      }
+    }
+    if (!this.accessToken) {
       throw new Error("missing access token for messaging runtime");
     }
     return this.accessToken;

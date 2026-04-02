@@ -52,9 +52,9 @@ export const localEncryptedStore = {
   async saveConversation(conversation: ConversationDTO): Promise<void> {
     const payload = await encryptPayload(conversation);
     await invoke("messaging_store_upsert_conversation", {
-      conversation_id: conversation.id,
+      conversationId: conversation.id,
       payload,
-      updated_at: conversation.updatedAt,
+      updatedAt: conversation.updatedAt,
     });
   },
 
@@ -70,17 +70,17 @@ export const localEncryptedStore = {
   async saveMessage(message: MessageDTO): Promise<void> {
     const payload = await encryptPayload(message);
     await invoke("messaging_store_upsert_message", {
-      message_id: message.envelope.id,
-      conversation_id: message.envelope.conversationId,
-      server_sequence: message.envelope.serverSequence,
+      messageId: message.envelope.id,
+      conversationId: message.envelope.conversationId,
+      serverSequence: message.envelope.serverSequence,
       payload,
-      created_at: message.envelope.createdAt,
+      createdAt: message.envelope.createdAt,
     });
   },
 
   async listMessages(conversationId: string, limit = 200): Promise<MessageDTO[]> {
     const rows = await invoke<string[]>("messaging_store_list_messages", {
-      conversation_id: conversationId,
+      conversationId,
       limit,
     });
     const result: MessageDTO[] = [];
@@ -93,10 +93,10 @@ export const localEncryptedStore = {
   async enqueueOutbox(item: { clientMessageId: string; conversationId: string; payload: SendMessageRequest; createdAt: string }): Promise<void> {
     const encryptedPayload = await encryptPayload(item.payload);
     await invoke("messaging_store_enqueue_outbox", {
-      client_message_id: item.clientMessageId,
-      conversation_id: item.conversationId,
+      clientMessageId: item.clientMessageId,
+      conversationId: item.conversationId,
       payload: encryptedPayload,
-      created_at: item.createdAt,
+      createdAt: item.createdAt,
     });
   },
 
@@ -125,11 +125,11 @@ export const localEncryptedStore = {
   },
 
   async deleteOutbox(clientMessageId: string): Promise<void> {
-    await invoke("messaging_store_delete_outbox", { client_message_id: clientMessageId });
+    await invoke("messaging_store_delete_outbox", { clientMessageId });
   },
 
   async incrementOutboxRetry(clientMessageId: string): Promise<void> {
-    await invoke("messaging_store_increment_outbox_retry", { client_message_id: clientMessageId });
+    await invoke("messaging_store_increment_outbox_retry", { clientMessageId });
   },
 
   async readSyncCursor(): Promise<number> {
@@ -139,7 +139,7 @@ export const localEncryptedStore = {
   async writeSyncCursor(cursor: number): Promise<void> {
     await invoke("messaging_store_write_sync_cursor", {
       cursor,
-      updated_at: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     });
   },
 };
