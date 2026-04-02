@@ -81,7 +81,13 @@ func allowCORSOrigin(origin string) bool {
 	}
 
 	host := strings.ToLower(parsed.Hostname())
-	return host == "localhost" || host == "127.0.0.1"
+	if host == "localhost" || host == "127.0.0.1" {
+		return true
+	}
+
+	// Tauri production webview origins are commonly hosted on *.localhost
+	// (for example https://tauri.localhost). Allow only localhost-scoped hosts.
+	return strings.HasSuffix(host, ".localhost")
 }
 
 func BodyLimit(maxBytes int64, next http.Handler) http.Handler {
