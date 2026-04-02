@@ -41,14 +41,14 @@ export function SecurityEventsPage() {
   }
 
   return (
-    <section>
+    <section className="page-stack">
       <h1>{t("securityEvents.title")}</h1>
       <p className="text-muted">{t("securityEvents.subtitle")}</p>
       <button type="button" onClick={load} disabled={loading}>
         {loading ? t("common.loading") : t("common.refresh")}
       </button>
 
-      {events.length === 0 ? <p>{t("securityEvents.noEvents")}</p> : null}
+      {events.length === 0 ? <p className="state-message">{t("securityEvents.noEvents")}</p> : null}
       <div className="card-grid">
         {events.map((event) => (
           <article className="card" key={event.id}>
@@ -73,4 +73,3 @@ export function SecurityEventsPage() {
     </section>
   );
 }
-

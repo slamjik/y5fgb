@@ -68,7 +68,7 @@ export function LoginPage() {
   }
 
   return (
-    <section className="form-shell">
+    <section className="form-shell page-stack">
       <h1>{t("auth.signIn")}</h1>
       <p className="text-muted">{t("auth.signInSubtitle")}</p>
       <form className="form-grid" onSubmit={onSubmit}>
@@ -96,4 +96,3 @@ export function LoginPage() {
     </section>
   );
 }
-

@@ -5,7 +5,7 @@ import { useParams } from "react-router-dom";
 import { extractApiErrorMessage } from "@/services/apiClient";
 import { messagingRuntime } from "@/services/messaging/runtime";
 import { useAuthStore } from "@/state/authStore";
-import { type LocalMessage, useMessagingStore } from "@/state/messagingStore";
+import { useMessagingStore } from "@/state/messagingStore";
 
 type PlaintextAttachment = {
   attachmentId: string;
@@ -19,7 +19,7 @@ type PlaintextAttachment = {
 };
 
 export function ConversationPage() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { conversationId = "" } = useParams();
   const session = useAuthStore((state) => state.session);
   const conversation = useMessagingStore((state) => state.conversations.find((item) => item.id === conversationId) ?? null);
@@ -72,8 +72,24 @@ export function ConversationPage() {
     () => [...messages].sort((left, right) => left.envelope.serverSequence - right.envelope.serverSequence),
     [messages],
   );
+  const dateFormatter = useMemo(
+    () =>
+      new Intl.DateTimeFormat(i18n.language === "ru" ? "ru-RU" : "en-US", {
+        dateStyle: "short",
+        timeStyle: "medium",
+      }),
+    [i18n.language],
+  );
 
   const conversationOutbox = useMemo(() => outbox.filter((item) => item.conversationId === conversationId), [conversationId, outbox]);
+
+  function formatTimestamp(value: string) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return value;
+    }
+    return dateFormatter.format(date);
+  }
 
   async function handleSend(event: FormEvent) {
     event.preventDefault();
@@ -137,33 +153,37 @@ export function ConversationPage() {
 
   if (!conversation) {
     return (
-      <section>
+      <section className="page-stack">
         <h1>{t("messaging.conversationsTitle")}</h1>
-        <p className="text-muted">{t("messaging.conversationNotFound")}</p>
+        <p className="state-message">{t("messaging.conversationNotFound")}</p>
       </section>
     );
   }
 
+  const conversationKindLabel = conversation.type === "group" ? t("messaging.messageTypeGroup") : t("messaging.messageTypeDirect");
+
   return (
-    <section>
+    <section className="page-stack conversation-shell">
       <h1>{conversation.title || t("messaging.chatTitleFallback")}</h1>
-      <p className="text-muted">
-        {conversation.type} | {t("groups.membersTitle").toLowerCase()} {conversation.members.length} | {t("messaging.defaultTtl")}{" "}
+      <p className="conversation-meta">
+        {conversationKindLabel} | {t("groups.membersTitle").toLowerCase()} {conversation.members.length} | {t("messaging.defaultTtl")}{" "}
         {conversation.disappearingPolicy.defaultTtlSeconds || 0}s
       </p>
 
-      <div className="card" style={{ marginBottom: 12 }}>
+      <div className="card">
         <p>
           <strong>{t("home.transport")}:</strong> {transport.mode} / {transport.status}
         </p>
-        <p className="text-muted">Endpoint: {transport.endpoint ?? "-"}</p>
+        <p className="text-muted">
+          {t("common.endpoint")}: {transport.endpoint ?? "-"}
+        </p>
         {transport.lastError ? <p className="error-text">{transport.lastError}</p> : null}
         <p className="text-muted">
           {t("nav.outbox")}: {conversationOutbox.length}
         </p>
       </div>
 
-      <form className="card form-grid" onSubmit={handleSend}>
+      <form className="card form-grid message-compose" onSubmit={handleSend}>
         <label>
           {t("messaging.messageLabel")}
           <textarea value={messageText} onChange={(event) => setMessageText(event.target.value)} rows={4} placeholder={t("messaging.messagePlaceholder")} />
@@ -186,7 +206,7 @@ export function ConversationPage() {
         </button>
       </form>
 
-      <div className="inline-actions" style={{ marginTop: 12 }}>
+      <div className="inline-actions section-offset-sm">
         <button type="button" onClick={() => void messagingRuntime.retryOutbox()}>
           {t("messaging.retryQueue")}
         </button>
@@ -197,60 +217,69 @@ export function ConversationPage() {
 
       {error ? <p className="error-text">{error}</p> : null}
 
-      <section style={{ marginTop: 20 }}>
+      <section className="page-stack section-offset-sm">
         <h2>{t("messaging.messageLabel")}</h2>
-        {loadingMessages ? <p className="text-muted">{t("messaging.loadingHistory")}</p> : null}
-        {!loadingMessages && sortedMessages.length === 0 ? <p className="text-muted">{t("messaging.noMessages")}</p> : null}
+        {loadingMessages ? <p className="state-message">{t("messaging.loadingHistory")}</p> : null}
+        {!loadingMessages && sortedMessages.length === 0 ? <p className="state-message">{t("messaging.noMessages")}</p> : null}
 
-        {sortedMessages.map((message) => {
-          const senderTag = message.envelope.senderDeviceId === session?.device.id ? "me" : message.envelope.senderAccountId.slice(0, 8);
-          const isExpired = message.envelope.expiresAt ? new Date(message.envelope.expiresAt).getTime() <= clock : false;
-          const statusLabel = t(`messaging.status.${message.lifecycle}` as const);
-          return (
-            <article className="list-item message-item" key={`${message.envelope.id}-${message.envelope.senderDeviceId}`}>
-              <p>
-                <strong>{senderTag}</strong> | seq {message.envelope.serverSequence || "local"} | {t("common.status")}{" "}
-                <span className={`status-chip status-${message.lifecycle}`}>{statusLabel}</span>
-              </p>
-              <p className="text-muted">{message.envelope.createdAt}</p>
+        <div className="messages-feed">
+          {sortedMessages.map((message) => {
+            const isMine = message.envelope.senderDeviceId === session?.device.id;
+            const senderTag = isMine ? t("messaging.senderMe") : message.envelope.senderAccountId.slice(0, 8);
+            const isExpired = message.envelope.expiresAt ? new Date(message.envelope.expiresAt).getTime() <= clock : false;
+            const statusLabel = t(`messaging.status.${message.lifecycle}` as const);
+            const hasPreview = Boolean(message.plaintext?.text);
 
-              {isExpired ? <p className="text-muted">[{t("messaging.expired")}]</p> : null}
-              {!isExpired && message.plaintext?.text ? <p>{message.plaintext.text}</p> : null}
-              {!isExpired && !message.plaintext?.text ? <p className="text-muted">{message.decryptError || `[${t("messaging.encryptedContent")}]`}</p> : null}
-
-              {message.failureCode ? (
-                <p className="error-text">
-                  {t("messaging.failure")}: {message.failureCode}
-                </p>
-              ) : null}
-
-              {!isExpired && message.plaintext?.attachments && message.plaintext.attachments.length > 0 ? (
-                <div className="inline-actions">
-                  {message.plaintext.attachments.map((attachment) => (
-                    <button
-                      key={attachment.attachmentId}
-                      type="button"
-                      disabled={Boolean(downloadingByAttachment[attachment.attachmentId])}
-                      onClick={() => void handleDownloadAttachment(attachment)}
-                    >
-                      {downloadingByAttachment[attachment.attachmentId]
-                        ? t("messaging.downloading")
-                        : `${t("messaging.download")} ${attachment.fileName}`}
-                    </button>
-                  ))}
+            return (
+              <article className={`message-item ${isMine ? "mine" : "theirs"}`} key={`${message.envelope.id}-${message.envelope.senderDeviceId}`}>
+                <div className="message-topline">
+                  <strong>{senderTag}</strong>
+                  <span className="message-meta">seq {message.envelope.serverSequence || "local"}</span>
+                  <span className={`status-chip status-${message.lifecycle}`}>{statusLabel}</span>
                 </div>
-              ) : null}
+                <p className="message-meta">{formatTimestamp(message.envelope.createdAt)}</p>
 
-              {message.receipts.length > 0 ? (
-                <p className="text-muted">
-                  {t("messaging.receipts")}: {message.receipts.map((receipt) => `${receipt.receiptType}@${receipt.deviceId.slice(0, 6)}`).join(", ")}
-                </p>
-              ) : null}
-            </article>
-          );
-        })}
+                {isExpired ? <p className="message-text text-muted">[{t("messaging.expired")}]</p> : null}
+                {!isExpired && hasPreview ? <p className="message-text">{message.plaintext?.text}</p> : null}
+                {!isExpired && !hasPreview ? (
+                  <p className="message-text text-muted">{message.decryptError || `[${t("messaging.encryptedContent")}]`}</p>
+                ) : null}
+
+                {message.failureCode ? (
+                  <p className="error-text">
+                    {t("messaging.failure")}: {message.failureCode}
+                  </p>
+                ) : null}
+
+                {!isExpired && message.plaintext?.attachments && message.plaintext.attachments.length > 0 ? (
+                  <div className="attachment-list">
+                    {message.plaintext.attachments.map((attachment) => (
+                      <button
+                        key={attachment.attachmentId}
+                        type="button"
+                        disabled={Boolean(downloadingByAttachment[attachment.attachmentId])}
+                        onClick={() => void handleDownloadAttachment(attachment)}
+                      >
+                        {downloadingByAttachment[attachment.attachmentId]
+                          ? t("messaging.downloading")
+                          : `${t("messaging.download")} ${attachment.fileName}`}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+
+                {message.receipts.length > 0 ? (
+                  <p className="message-meta">
+                    {t("messaging.receipts")}: {message.receipts.map((receipt) => `${receipt.receiptType}@${receipt.deviceId.slice(0, 6)}`).join(", ")}
+                  </p>
+                ) : null}
+
+                {!isExpired && !hasPreview && !message.decryptError ? <p className="message-meta">{t("messaging.noPreview")}</p> : null}
+              </article>
+            );
+          })}
+        </div>
       </section>
     </section>
   );
 }
-

@@ -34,14 +34,14 @@ export function PendingApprovalPage() {
     try {
       const status = await devicesApi.approvalStatus(currentPending.approvalRequestId, currentPending.approvalPollToken);
       if (status.status === "approved") {
-        setStatusMessage("Device approved. Please sign in again.");
+        setStatusMessage(t("auth.pendingStatusApproved"));
         setPendingApproval(null);
       } else if (status.status === "rejected") {
-        setStatusMessage("Device request rejected.");
+        setStatusMessage(t("auth.pendingStatusRejected"));
       } else if (status.status === "expired") {
-        setStatusMessage("Approval request expired. Sign in again to create a new request.");
+        setStatusMessage(t("auth.pendingStatusExpired"));
       } else {
-        setStatusMessage("Approval still pending.");
+        setStatusMessage(t("auth.pendingStatusWaiting"));
       }
     } catch (statusError) {
       setError(extractApiErrorMessage(statusError));
@@ -59,7 +59,7 @@ export function PendingApprovalPage() {
       });
       setRecoveryFlowID(response.recoveryFlowId);
       setRecoveryToken(response.recoveryToken);
-      setStatusMessage("Recovery flow started. Complete with a valid recovery code.");
+      setStatusMessage(t("auth.recoveryStarted"));
     } catch (recoveryError) {
       setError(extractApiErrorMessage(recoveryError));
     }
@@ -67,7 +67,7 @@ export function PendingApprovalPage() {
 
   async function completeRecovery() {
     if (!recoveryFlowId || !recoveryToken) {
-      setError("Start recovery flow first.");
+      setError(t("auth.recoveryNeedsStart"));
       return;
     }
 
@@ -80,7 +80,7 @@ export function PendingApprovalPage() {
         recoveryCode,
         twoFactorCode: twoFactorCode || undefined,
       });
-      setStatusMessage("Recovery complete. Device trusted now. Sign in again.");
+      setStatusMessage(t("auth.recoveryCompleted"));
       setPendingApproval(null);
       navigate("/auth/login", { replace: true });
     } catch (recoveryError) {
@@ -89,7 +89,7 @@ export function PendingApprovalPage() {
   }
 
   return (
-    <section className="form-shell">
+    <section className="form-shell page-stack">
       <h1>{t("auth.pendingTitle")}</h1>
       <p className="text-muted">{t("auth.pendingSubtitle")}</p>
 
@@ -131,7 +131,7 @@ export function PendingApprovalPage() {
         </article>
       </div>
 
-      {statusMessage ? <p>{statusMessage}</p> : null}
+      {statusMessage ? <p className="state-message">{statusMessage}</p> : null}
       {error ? <p className="error-text">{error}</p> : null}
 
       <p>
@@ -140,4 +140,3 @@ export function PendingApprovalPage() {
     </section>
   );
 }
-

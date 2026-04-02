@@ -189,7 +189,7 @@ export function DevicesPage() {
   }
 
   return (
-    <section>
+    <section className="page-stack">
       <h1>{t("devices.title")}</h1>
       <p className="text-muted">{t("devices.subtitle")}</p>
 
@@ -205,17 +205,27 @@ export function DevicesPage() {
         </button>
         <label>
           {t("devices.stepUpCode")}
-          <input value={twoFactorCode} onChange={(event) => setTwoFactorCode(event.target.value)} placeholder="optional if 2FA enabled" />
+          <input
+            value={twoFactorCode}
+            onChange={(event) => setTwoFactorCode(event.target.value)}
+            placeholder={t("devices.optionalTwoFAPlaceholder")}
+          />
         </label>
       </div>
 
       {session ? (
         <article className="card">
           <h2>{t("devices.accountIdentity")}</h2>
-          <p>Account ID: {session.accountId}</p>
+          <p>
+            {t("devices.accountIdLabel")}: {session.accountId}
+          </p>
           <p>{t("home.email")}: {session.email || "-"}</p>
-          <p>Fingerprint: {session.identity.fingerprint.value}</p>
-          <p>Safety: {session.identity.fingerprint.safetyNumber}</p>
+          <p>
+            {t("devices.fingerprint")}: {session.identity.fingerprint.value}
+          </p>
+          <p>
+            {t("devices.safetyNumber")}: {session.identity.fingerprint.safetyNumber}
+          </p>
           {session.session.trustWarnings && session.session.trustWarnings.length > 0 ? (
             <div>
               <p className="error-text">{t("home.trustWarnings")}:</p>
@@ -239,11 +249,19 @@ export function DevicesPage() {
               <p>
                 {t("common.status")}: {device.status}
               </p>
-              <p>Fingerprint: {device.fingerprint.value}</p>
-              <p>Safety: {device.fingerprint.safetyNumber}</p>
-              <p>Key version: {device.keyInfo.version}</p>
-              <p>Rotation due: {device.keyInfo.rotationDueAt ?? "-"}</p>
-              {device.keyInfo.rotationRecommended ? <p className="error-text">Key rotation is recommended.</p> : null}
+              <p>
+                {t("devices.fingerprint")}: {device.fingerprint.value}
+              </p>
+              <p>
+                {t("devices.safetyNumber")}: {device.fingerprint.safetyNumber}
+              </p>
+              <p>
+                {t("devices.keyVersion")}: {device.keyInfo.version}
+              </p>
+              <p>
+                {t("devices.rotationDue")}: {device.keyInfo.rotationDueAt ?? "-"}
+              </p>
+              {device.keyInfo.rotationRecommended ? <p className="error-text">{t("devices.keyRotationRecommended")}</p> : null}
               {device.id !== data.currentDeviceId ? (
                 <button type="button" onClick={() => revoke(device.id)}>
                   {t("devices.revoke")}
@@ -260,8 +278,12 @@ export function DevicesPage() {
           {data?.approvals.length ? null : <p>{t("common.none")}</p>}
           {data?.approvals.map((approval) => (
             <div className="list-item" key={approval.id}>
-              <p>Request: {approval.id}</p>
-              <p>Device: {approval.deviceId}</p>
+              <p>
+                {t("devices.requestId")}: {approval.id}
+              </p>
+              <p>
+                {t("devices.deviceLabel")}: {approval.deviceId}
+              </p>
               <p>
                 {t("common.status")}: {approval.status}
               </p>
@@ -289,8 +311,12 @@ export function DevicesPage() {
           </button>
           {setupSecret ? (
             <div>
-              <p>Secret: {setupSecret}</p>
-              <p>URI: {setupProvisioningUri}</p>
+              <p>
+                {t("devices.secret")}: {setupSecret}
+              </p>
+              <p>
+                {t("devices.provisioningUri")}: {setupProvisioningUri}
+              </p>
             </div>
           ) : null}
 
@@ -313,7 +339,7 @@ export function DevicesPage() {
 
         <article className="card">
           <h2>{t("devices.recoveryCodes")}</h2>
-          <p className="text-muted">Store these offline. Used for device recovery flow.</p>
+          <p className="text-muted">{t("devices.recoveryHint")}</p>
           {recoveryCodes.length === 0 ? <p>{t("devices.noRecoveryCodes")}</p> : null}
           {recoveryCodes.map((code) => (
             <code key={code} className="inline-code">
@@ -327,4 +353,3 @@ export function DevicesPage() {
     </section>
   );
 }
-

@@ -44,11 +44,11 @@ export function PluginsPage() {
   }
 
   return (
-    <section>
+    <section className="page-stack">
       <h1>{t("plugins.title")}</h1>
       <p className="text-muted">{t("plugins.subtitle")}</p>
 
-      <div className="inline-actions" style={{ marginBottom: 12 }}>
+      <div className="inline-actions">
         <button type="button" onClick={() => void refresh()} disabled={refreshing}>
           {refreshing ? t("plugins.refreshing") : t("plugins.discover")}
         </button>
@@ -100,7 +100,7 @@ export function PluginsPage() {
                 </div>
               )}
 
-              <div className="inline-actions" style={{ marginTop: 12 }}>
+              <div className="inline-actions section-offset-sm">
                 {plugin.status === "discovered" ? (
                   <button type="button" onClick={() => pluginRuntime.install(String(plugin.manifest.id))} disabled={isBusy}>
                     {t("plugins.install")}
@@ -121,7 +121,7 @@ export function PluginsPage() {
         })}
       </div>
 
-      <section style={{ marginTop: 18 }}>
+      <section className="page-stack section-offset-sm">
         <h2>{t("plugins.commandsTitle")}</h2>
         {commands.length === 0 ? <p className="text-muted">{t("plugins.noCommands")}</p> : null}
         {commands.map((command) => (
@@ -139,7 +139,7 @@ export function PluginsPage() {
         ))}
       </section>
 
-      <section style={{ marginTop: 18 }}>
+      <section className="page-stack section-offset-sm">
         <h2>{t("plugins.noticesTitle")}</h2>
         {notices.length === 0 ? <p className="text-muted">{t("plugins.noNotices")}</p> : null}
         {notices.slice(0, 20).map((notice) => (
@@ -167,4 +167,3 @@ function mapPluginStatus(status: string) {
       return "sent";
   }
 }
-

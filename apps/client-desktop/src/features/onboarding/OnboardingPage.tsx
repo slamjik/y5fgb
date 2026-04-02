@@ -15,7 +15,7 @@ export function OnboardingPage() {
   }
 
   return (
-    <section>
+    <section className="page-stack">
       <h1>{t("onboarding.title")}</h1>
       <p className="text-muted">{t("onboarding.subtitle")}</p>
 
@@ -43,7 +43,7 @@ export function OnboardingPage() {
         </div>
       </article>
 
-      <div className="inline-actions" style={{ marginTop: 12 }}>
+      <div className="inline-actions section-offset-sm">
         <button type="button" onClick={finishOnboarding}>
           {t("onboarding.complete")}
         </button>
@@ -52,4 +52,3 @@ export function OnboardingPage() {
     </section>
   );
 }
-

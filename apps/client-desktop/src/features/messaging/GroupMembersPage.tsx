@@ -42,7 +42,7 @@ export function GroupMembersPage() {
 
   if (!conversation || conversation.type !== "group") {
     return (
-      <section>
+      <section className="page-stack">
         <h1>{t("groups.membersTitle")}</h1>
         <p className="text-muted">{t("errors.codes.conversation_not_found")}</p>
       </section>
@@ -50,7 +50,7 @@ export function GroupMembersPage() {
   }
 
   return (
-    <section>
+    <section className="page-stack">
       <h1>{t("groups.membersTitle")}</h1>
       <p className="text-muted">{conversation.title || conversation.id}</p>
 
@@ -73,18 +73,19 @@ export function GroupMembersPage() {
 
       {error ? <p className="error-text">{error}</p> : null}
 
-      <section style={{ marginTop: 20 }}>
+      <section className="section-offset-sm">
         {conversation.members.length === 0 ? <p className="text-muted">{t("groups.noMembers")}</p> : null}
         {conversation.members.map((member) => (
           <article className="list-item" key={member.accountId}>
             <p>
-              <strong>{member.accountId}</strong> | {member.role} | {member.isActive ? "active" : "inactive"}
+              <strong>{member.accountId}</strong> | {member.role} | {member.isActive ? t("home.enabled") : t("home.disabled")}
             </p>
-            <p className="text-muted">Trusted devices: {member.trustedDevices.length}</p>
+            <p className="text-muted">
+              {t("groups.trustedDevices")}: {member.trustedDevices.length}
+            </p>
           </article>
         ))}
       </section>
     </section>
   );
 }
-

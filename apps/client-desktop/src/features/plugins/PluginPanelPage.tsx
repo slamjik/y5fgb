@@ -13,12 +13,12 @@ export function PluginPanelPage() {
   const headerTitle = useMemo(() => panel?.title ?? plugin?.manifest.name ?? "Plugin Panel", [panel?.title, plugin?.manifest.name]);
 
   return (
-    <section>
+    <section className="page-stack">
       <h1>{headerTitle}</h1>
       <p className="text-muted">
-        Plugin: <code>{pluginId}</code> | Panel: <code>{panelId}</code>
+        {t("plugins.pluginName")}: <code>{pluginId}</code> | {t("plugins.panelName")}: <code>{panelId}</code>
       </p>
-      <div className="inline-actions" style={{ marginBottom: 12 }}>
+      <div className="inline-actions">
         <Link className="button-link" to="/plugins">
           {t("plugins.backToPlugins")}
         </Link>
@@ -28,10 +28,9 @@ export function PluginPanelPage() {
         <p className="text-muted">{t("plugins.panelUnavailable")}</p>
       ) : (
         <article className="card">
-          <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{panel.content || "No panel content yet."}</pre>
+          <pre className="plugin-panel-content">{panel.content || t("plugins.noPanelContent")}</pre>
         </article>
       )}
     </section>
   );
 }
-

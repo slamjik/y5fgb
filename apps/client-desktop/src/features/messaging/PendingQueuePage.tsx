@@ -26,18 +26,20 @@ export function PendingQueuePage() {
   }
 
   return (
-    <section>
+    <section className="page-stack">
       <h1>{t("messaging.pendingQueueTitle")}</h1>
       <p className="text-muted">{t("messaging.pendingQueueSubtitle")}</p>
 
-      <article className="card" style={{ marginBottom: 12 }}>
+      <article className="card">
         <p>
           <strong>{t("home.transport")}:</strong> {transport.mode} / {transport.status}
         </p>
-        <p className="text-muted">Endpoint: {transport.endpoint ?? "-"}</p>
+        <p className="text-muted">
+          {t("common.endpoint")}: {transport.endpoint ?? "-"}
+        </p>
       </article>
 
-      <div className="inline-actions" style={{ marginBottom: 12 }}>
+      <div className="inline-actions">
         <button type="button" disabled={working || outbox.length === 0} onClick={() => void retryAll()}>
           {working ? t("messaging.retrying") : t("messaging.retryAll")}
         </button>
@@ -54,11 +56,12 @@ export function PendingQueuePage() {
               <strong>{item.clientMessageId}</strong>
             </p>
             <p className="text-muted">conversation {item.conversationId}</p>
-            <p className="text-muted">retries {item.retryCount} | created {item.createdAt}</p>
+            <p className="text-muted">
+              {t("common.retries")} {item.retryCount} | {t("common.created")} {item.createdAt}
+            </p>
           </article>
         ))
       )}
     </section>
   );
 }
-

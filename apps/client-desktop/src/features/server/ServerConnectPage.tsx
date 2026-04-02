@@ -42,7 +42,7 @@ export function ServerConnectPage() {
   }
 
   return (
-    <section className="form-shell">
+    <section className="form-shell page-stack">
       <h1>{t("serverConnect.title")}</h1>
       <p className="text-muted">{t("serverConnect.subtitle")}</p>
 

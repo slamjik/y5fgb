@@ -57,7 +57,32 @@ Require-Command "docker" "Install Docker Desktop or Docker Engine"
 Require-Command "curl" "Install curl"
 
 docker info | Out-Null
-docker compose version | Out-Null
+
+$composeMode = "docker-compose-plugin"
+try {
+  docker compose version | Out-Null
+}
+catch {
+  if (Get-Command "docker-compose" -ErrorAction SilentlyContinue) {
+    $composeMode = "docker-compose-legacy"
+  }
+  else {
+    throw "[install] Docker Compose is missing (neither 'docker compose' nor 'docker-compose' found)."
+  }
+}
+
+function Invoke-Compose {
+  param(
+    [Parameter(ValueFromRemainingArguments = $true)]
+    [string[]]$Args
+  )
+  if ($composeMode -eq "docker-compose-legacy") {
+    & docker-compose @Args
+  }
+  else {
+    & docker compose @Args
+  }
+}
 
 if (-not (Test-Path $baseCompose)) {
   throw "[install] missing compose file: $baseCompose"
@@ -162,18 +187,18 @@ RELAY_PUBLISH_PORT=8080
 [System.IO.File]::WriteAllText($envFile, $envContent, [System.Text.UTF8Encoding]::new($false))
 Write-Host "[install] .env generated: $envFile"
 
-$composeArgs = @("compose", "-f", $baseCompose, "-f", $prodOverride, "--env-file", $envFile)
+$composeArgs = @("-f", $baseCompose, "-f", $prodOverride, "--env-file", $envFile)
 
 if ($mode -eq "domain") {
   Write-Host "[install] starting stack in DOMAIN mode (TLS via Caddy)"
-  docker @composeArgs up -d --build
+  Invoke-Compose @composeArgs up -d --build
   $healthUrl = "https://$serverHost/health"
   $configUrl = "https://$serverHost/api/v1/config"
   $fallbackHealthUrl = "http://127.0.0.1/health"
 }
 else {
   Write-Host "[install] starting stack in IP mode (direct HTTP on :8080, no Caddy)"
-  docker @composeArgs up -d --build postgres relay-migrate relay-server
+  Invoke-Compose @composeArgs up -d --build postgres relay-migrate relay-server
   $healthUrl = "http://$serverHost:8080/health"
   $configUrl = "http://$serverHost:8080/api/v1/config"
   $fallbackHealthUrl = $null
@@ -189,8 +214,8 @@ if (-not $healthOk -and $mode -eq "domain") {
 }
 
 if (-not $healthOk) {
-  docker @composeArgs ps
-  docker @composeArgs logs --tail=120
+  Invoke-Compose @composeArgs ps
+  Invoke-Compose @composeArgs logs --tail=120
   throw "[install] health check failed"
 }
 
@@ -198,7 +223,7 @@ if (-not (Wait-HttpReady -Url $configUrl)) {
   Write-Warning "[install] warning: /api/v1/config is not reachable yet at $configUrl"
 }
 
-docker @composeArgs ps
+Invoke-Compose @composeArgs ps
 
 Write-Host ""
 Write-Host "=============================="

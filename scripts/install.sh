@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env bash
+#!/usr/bin/env bash
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -104,8 +104,12 @@ if ! docker info >/dev/null 2>&1; then
   exit 1
 fi
 
-if ! docker compose version >/dev/null 2>&1; then
-  echo "[install] Docker Compose plugin is missing." >&2
+if docker compose version >/dev/null 2>&1; then
+  COMPOSE_BIN=(docker compose)
+elif command -v docker-compose >/dev/null 2>&1; then
+  COMPOSE_BIN=(docker-compose)
+else
+  echo "[install] Docker Compose is missing (neither 'docker compose' nor 'docker-compose' found)." >&2
   exit 1
 fi
 
@@ -225,7 +229,7 @@ EOF
 
 echo "[install] .env generated: $ENV_FILE"
 
-compose_cmd=(docker compose -f "$BASE_COMPOSE_FILE" -f "$PROD_OVERRIDE_FILE" --env-file "$ENV_FILE")
+compose_cmd=("${COMPOSE_BIN[@]}" -f "$BASE_COMPOSE_FILE" -f "$PROD_OVERRIDE_FILE" --env-file "$ENV_FILE")
 
 if [[ "$mode" == "domain" ]]; then
   echo "[install] starting stack in DOMAIN mode (TLS via Caddy)"

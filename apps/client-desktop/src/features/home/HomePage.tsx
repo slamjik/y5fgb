@@ -17,7 +17,7 @@ export function HomePage() {
   const activeServer = getActiveServerConfig();
 
   return (
-    <section>
+    <section className="page-stack">
       <h1>{t("home.title")}</h1>
       <p className="text-muted">{t("home.subtitle")}</p>
 
@@ -65,7 +65,7 @@ export function HomePage() {
         </article>
       </div>
 
-      <div className="inline-actions" style={{ marginTop: 20 }}>
+      <div className="inline-actions section-offset-sm">
         <Link className="button-link" to="/">
           {t("nav.conversations")}
         </Link>

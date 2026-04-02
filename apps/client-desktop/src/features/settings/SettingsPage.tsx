@@ -35,7 +35,7 @@ export function SettingsPage() {
   }
 
   return (
-    <section>
+    <section className="page-stack">
       <h1>{t("settings.title")}</h1>
       <p className="text-muted">{t("settings.subtitle")}</p>
 
@@ -79,7 +79,7 @@ export function SettingsPage() {
               ? appConfig.transportEndpointOverrides.join(", ")
               : t("common.none")}
           </p>
-          <div className="inline-actions" style={{ marginTop: 12 }}>
+          <div className="inline-actions section-offset-sm">
             <button type="button" onClick={() => void handleChangeServer()}>
               {t("settings.changeServer")}
             </button>

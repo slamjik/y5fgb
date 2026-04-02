@@ -73,7 +73,7 @@ export function ConversationListPage() {
   }
 
   return (
-    <section>
+    <section className="page-stack">
       <h1>{t("messaging.conversationsTitle")}</h1>
       <p className="text-muted">{t("messaging.conversationsSubtitle")}</p>
 
@@ -116,14 +116,16 @@ export function ConversationListPage() {
         <article className="card">
           <h2>{t("nav.transport")}</h2>
           <p>
-            <strong>Mode:</strong> {transport.mode}
+            <strong>{t("common.mode")}:</strong> {transport.mode}
           </p>
           <p>
             <strong>{t("common.status")}:</strong> {transport.status}
           </p>
-          <p className="text-muted">{transport.endpoint ?? "-"}</p>
+          <p className="text-muted">
+            {t("common.endpoint")}: {transport.endpoint ?? "-"}
+          </p>
           {transport.lastError ? <p className="error-text">{transport.lastError}</p> : null}
-          <div className="inline-actions" style={{ marginTop: 12 }}>
+          <div className="inline-actions section-offset-sm">
             <Link className="button-link" to="/messaging/transport">
               {t("settings.transportHealth")}
             </Link>
@@ -136,7 +138,7 @@ export function ConversationListPage() {
 
       {error ? <p className="error-text">{error}</p> : null}
 
-      <section style={{ marginTop: 20 }}>
+      <section className="page-stack section-offset-sm">
         <h2>{t("messaging.listTitle")}</h2>
         {loading ? <p className="text-muted">{t("messaging.loadingConversations")}</p> : null}
 
@@ -150,7 +152,8 @@ export function ConversationListPage() {
                   <strong>{conversation.title || `${t("messaging.chatTitleFallback")} ${conversation.id.slice(0, 8)}`}</strong>
                 </p>
                 <p className="text-muted">
-                  {conversation.type} | {t("groups.membersTitle").toLowerCase()} {conversation.members.length} | {t("messaging.defaultTtl")}{" "}
+                  {conversation.type === "group" ? t("messaging.messageTypeGroup") : t("messaging.messageTypeDirect")} |{" "}
+                  {t("groups.membersTitle").toLowerCase()} {conversation.members.length} | {t("messaging.defaultTtl")}{" "}
                   {conversation.disappearingPolicy.defaultTtlSeconds || 0}s
                 </p>
                 <div className="inline-actions">
@@ -171,4 +174,3 @@ export function ConversationListPage() {
     </section>
   );
 }
-
