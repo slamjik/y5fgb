@@ -1,11 +1,16 @@
 $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $PSScriptRoot
-$composeFile = Join-Path $root "docker-compose.production.yml"
+$composeBaseFile = Join-Path $root "docker-compose.production.yml"
+$composeOverrideFile = Join-Path $root "docker-compose.prod.yml"
 $envFile = if ($args.Count -gt 0) { $args[0] } else { Join-Path $root ".env" }
 
-if (!(Test-Path $composeFile)) {
-  throw "[deploy-prod] missing compose file: $composeFile"
+if (!(Test-Path $composeBaseFile)) {
+  throw "[deploy-prod] missing compose file: $composeBaseFile"
+}
+
+if (!(Test-Path $composeOverrideFile)) {
+  throw "[deploy-prod] missing compose override file: $composeOverrideFile"
 }
 
 if (!(Test-Path $envFile)) {
@@ -57,10 +62,10 @@ foreach ($key in $required) {
 }
 
 Write-Host "[deploy-prod] starting stack with $envFile"
-docker compose -f $composeFile --env-file $envFile up -d --build
+docker compose -f $composeBaseFile -f $composeOverrideFile --env-file $envFile up -d --build
 
 Write-Host "[deploy-prod] container status"
-docker compose -f $composeFile --env-file $envFile ps
+docker compose -f $composeBaseFile -f $composeOverrideFile --env-file $envFile ps
 
 $publicHost = Get-EnvValue -Path $envFile -Key "PUBLIC_HOST"
 $readyPath = Get-EnvValue -Path $envFile -Key "READY_PATH"
@@ -84,7 +89,7 @@ for ($i = 0; $i -lt 30; $i++) {
 }
 
 if (-not $ready) {
-  throw "[deploy-prod] readiness check failed. Inspect logs with: docker compose -f $composeFile --env-file $envFile logs --tail=100"
+  throw "[deploy-prod] readiness check failed. Inspect logs with: docker compose -f $composeBaseFile -f $composeOverrideFile --env-file $envFile logs --tail=100"
 }
 
 Write-Host "[deploy-prod] readiness check passed"

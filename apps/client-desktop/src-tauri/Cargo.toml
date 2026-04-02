@@ -3,8 +3,9 @@ name = "client-desktop"
 version = "1.0.0-rc.1"
 description = "Secure messenger desktop client shell"
 authors = ["Project Team"]
-license = "Proprietary"
-repository = ""
+license = "SEE LICENSE IN ../../LICENSE"
+repository = "https://github.com/example/secure-messenger"
+homepage = "https://github.com/example/secure-messenger"
 edition = "2021"
 rust-version = "1.77"
 

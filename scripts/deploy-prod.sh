@@ -3,10 +3,16 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="${1:-$ROOT_DIR/.env}"
-COMPOSE_FILE="$ROOT_DIR/docker-compose.production.yml"
+COMPOSE_BASE_FILE="$ROOT_DIR/docker-compose.production.yml"
+COMPOSE_OVERRIDE_FILE="$ROOT_DIR/docker-compose.prod.yml"
 
-if [[ ! -f "$COMPOSE_FILE" ]]; then
-  echo "[deploy-prod] missing compose file: $COMPOSE_FILE" >&2
+if [[ ! -f "$COMPOSE_BASE_FILE" ]]; then
+  echo "[deploy-prod] missing compose file: $COMPOSE_BASE_FILE" >&2
+  exit 1
+fi
+
+if [[ ! -f "$COMPOSE_OVERRIDE_FILE" ]]; then
+  echo "[deploy-prod] missing compose override file: $COMPOSE_OVERRIDE_FILE" >&2
   exit 1
 fi
 
@@ -81,10 +87,10 @@ for key in "${required_vars[@]}"; do
 done
 
 echo "[deploy-prod] starting stack with $ENV_FILE"
-docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d --build
+docker compose -f "$COMPOSE_BASE_FILE" -f "$COMPOSE_OVERRIDE_FILE" --env-file "$ENV_FILE" up -d --build
 
 echo "[deploy-prod] container status"
-docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" ps
+docker compose -f "$COMPOSE_BASE_FILE" -f "$COMPOSE_OVERRIDE_FILE" --env-file "$ENV_FILE" ps
 
 public_host="$(read_env_value PUBLIC_HOST)"
 ready_path="$(read_env_value READY_PATH)"
@@ -108,7 +114,7 @@ if [[ "$ready_ok" -eq 1 ]]; then
   echo "[deploy-prod] readiness check passed"
 else
   echo "[deploy-prod] readiness check failed. Inspect logs:" >&2
-  echo "docker compose -f $COMPOSE_FILE --env-file $ENV_FILE logs --tail=100" >&2
+  echo "docker compose -f $COMPOSE_BASE_FILE -f $COMPOSE_OVERRIDE_FILE --env-file $ENV_FILE logs --tail=100" >&2
   exit 1
 fi
 

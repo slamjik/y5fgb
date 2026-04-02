@@ -1,6 +1,20 @@
 {
   "bundle": {
-    "targets": ["nsis"]
+    "targets": ["nsis"],
+    "windows": {
+      "allowDowngrades": false,
+      "webviewInstallMode": {
+        "type": "embedBootstrapper",
+        "silent": true
+      },
+      "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "installMode": "both",
+        "languages": ["English", "Russian"],
+        "displayLanguageSelector": false,
+        "compression": "lzma",
+        "startMenuFolder": "Secure Messenger"
+      }
+    }
   }
 }
-

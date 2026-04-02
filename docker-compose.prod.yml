@@ -1,0 +1,4 @@
+﻿services:
+  relay-server:
+    ports:
+      - "${RELAY_PUBLISH_ADDRESS:-127.0.0.1}:${RELAY_PUBLISH_PORT:-8080}:8080"

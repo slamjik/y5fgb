@@ -19,11 +19,17 @@
     "db:migrate:down": "cd apps/relay-server && go run ./cmd/migrate -mode down",
     "dev:infra": "docker compose up --build",
     "dev:infra:down": "docker compose down -v",
-    "build:desktop:windows": "npm run tauri:build --workspace apps/client-desktop -- --bundles nsis --ci",
+    "build:desktop:windows": "npm run build:desktop:windows:raw",
+    "build:desktop:windows:raw": "npm run tauri:build --workspace apps/client-desktop -- --bundles nsis --ci",
+    "build:desktop:windows:installer": "node ./scripts/windows-installer.mjs build",
+    "build:desktop:windows:artifacts": "node ./scripts/windows-installer.mjs summary",
+    "build:desktop:windows:clean": "node ./scripts/windows-installer.mjs clean",
     "build:desktop:linux": "npm run tauri:build --workspace apps/client-desktop -- --bundles appimage,deb --ci",
     "build:desktop:rc": "npm run tauri:build --workspace apps/client-desktop -- --ci",
     "release:rc:sh": "bash ./scripts/release-rc.sh",
     "release:rc:ps1": "powershell -ExecutionPolicy Bypass -File ./scripts/release-rc.ps1",
+    "install:server:sh": "bash ./scripts/install.sh",
+    "install:server:ps1": "powershell -ExecutionPolicy Bypass -File ./scripts/install.ps1",
     "deploy:prod:sh": "bash ./scripts/deploy-prod.sh",
     "deploy:prod:ps1": "powershell -ExecutionPolicy Bypass -File ./scripts/deploy-prod.ps1"
   }

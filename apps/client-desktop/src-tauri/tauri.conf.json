@@ -21,12 +21,18 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' http://localhost:8080 ws://localhost:8080 https://relay.example.com wss://relay.example.com; frame-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none';"
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https: wss: http: ws:; frame-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none';"
     }
   },
   "bundle": {
     "active": true,
     "targets": ["nsis", "appimage", "deb"],
+    "publisher": "Secure Messenger Team",
+    "homepage": "https://github.com/example/secure-messenger",
+    "category": "SocialNetworking",
+    "shortDescription": "Secure desktop-first messenger with resilient transport fallback.",
+    "longDescription": "Secure Messenger is a desktop-first secure messaging client with device trust, encrypted envelopes, and resilient transport fallback for unstable networks.",
+    "copyright": "Copyright (c) 2026 Secure Messenger contributors",
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.png", "icons/icon.ico"]
   }
 }

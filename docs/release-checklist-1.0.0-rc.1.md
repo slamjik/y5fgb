@@ -9,6 +9,7 @@
 
 ## Desktop Artifacts
 - [ ] Windows NSIS build passed.
+- [ ] Canonical Windows artifact copied to `artifacts/windows/SecureMessenger_<version>_<arch>_Setup.exe`.
 - [ ] Linux AppImage build passed.
 - [ ] Linux DEB build passed.
 
@@ -20,9 +21,9 @@
 - [ ] WS fallback long-poll and reconnect/resync.
 - [ ] Plugin isolation and capability enforcement.
 - [ ] Onboarding/settings/i18n RU/EN.
+- [ ] Windows install/uninstall/reinstall sanity (shortcuts, launch, uninstall entry).
 
 ## Docs
 - [ ] README updated.
 - [ ] User/Admin/Dev guides updated.
 - [ ] Runbook links valid.
-
