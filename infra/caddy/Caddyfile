@@ -1,0 +1,43 @@
+{
+    email {$ACME_EMAIL}
+}
+
+{$PUBLIC_HOST} {
+    encode zstd gzip
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "no-referrer"
+        Permissions-Policy "geolocation=(), microphone=(), camera=()"
+    }
+
+    @ws path {$WS_PATH}
+    reverse_proxy @ws relay-server:8080 {
+        transport http {
+            dial_timeout 10s
+            response_header_timeout 90s
+            read_timeout 90s
+            write_timeout 90s
+        }
+    }
+
+    @api path {$API_PREFIX} {$API_PREFIX}/*
+    reverse_proxy @api relay-server:8080 {
+        transport http {
+            dial_timeout 10s
+            response_header_timeout 90s
+            read_timeout 90s
+            write_timeout 90s
+        }
+    }
+
+    @health path /health
+    reverse_proxy @health relay-server:8080
+
+    @ready path /ready
+    reverse_proxy @ready relay-server:8080
+
+    respond "not found" 404
+}

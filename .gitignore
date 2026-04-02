@@ -1,0 +1,31 @@
+﻿# Node
+node_modules/
+*/node_modules/
+
+# Build outputs
+dist/
+coverage/
+apps/client-desktop/src-tauri/target/
+apps/relay-server/bin/
+
+# Env
+.env
+.env.*
+!.env.example
+!.env.production.example
+!.env.development
+!.env.production
+!apps/**/.env.development
+!apps/**/.env.production
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Runtime data
+apps/relay-server/data/

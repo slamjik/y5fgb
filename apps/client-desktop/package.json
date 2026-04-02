@@ -1,0 +1,35 @@
+{
+  "name": "@project/client-desktop",
+  "version": "1.0.0-rc.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
+  },
+  "dependencies": {
+    "@project/protocol": "0.1.0",
+    "@project/shared-types": "0.1.0",
+    "i18next": "^23.16.8",
+    "libsodium-wrappers": "^0.8.2",
+    "libsodium-wrappers-sumo": "^0.7.15",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-i18next": "^15.2.2",
+    "react-router-dom": "^6.30.1",
+    "zustand": "^4.5.7"
+  },
+  "devDependencies": {
+    "@tauri-apps/api": "^2.3.0",
+    "@tauri-apps/cli": "^2.3.1",
+    "@types/node": "^25.5.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.3",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10"
+  }
+}

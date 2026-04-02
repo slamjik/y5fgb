@@ -1,0 +1,30 @@
+{
+  "name": "secure-messenger-monorepo",
+  "version": "1.0.0-rc.1",
+  "private": true,
+  "workspaces": [
+    "apps/client-desktop",
+    "packages/protocol",
+    "packages/shared-types"
+  ],
+  "scripts": {
+    "dev:client": "npm run dev --workspace apps/client-desktop",
+    "build:client": "npm run build --workspace apps/client-desktop",
+    "dev:server": "cd apps/relay-server && go run ./cmd/relay-server",
+    "test:server": "cd apps/relay-server && go test ./...",
+    "test:plugins:unit": "node ./scripts/plugin-unit-checks.mjs",
+    "test:smoke:v4": "node ./scripts/smoke-v4.mjs",
+    "test:release:rc": "node ./scripts/release-sanity.mjs",
+    "db:migrate:up": "cd apps/relay-server && go run ./cmd/migrate -mode up",
+    "db:migrate:down": "cd apps/relay-server && go run ./cmd/migrate -mode down",
+    "dev:infra": "docker compose up --build",
+    "dev:infra:down": "docker compose down -v",
+    "build:desktop:windows": "npm run tauri:build --workspace apps/client-desktop -- --bundles nsis --ci",
+    "build:desktop:linux": "npm run tauri:build --workspace apps/client-desktop -- --bundles appimage,deb --ci",
+    "build:desktop:rc": "npm run tauri:build --workspace apps/client-desktop -- --ci",
+    "release:rc:sh": "bash ./scripts/release-rc.sh",
+    "release:rc:ps1": "powershell -ExecutionPolicy Bypass -File ./scripts/release-rc.ps1",
+    "deploy:prod:sh": "bash ./scripts/deploy-prod.sh",
+    "deploy:prod:ps1": "powershell -ExecutionPolicy Bypass -File ./scripts/deploy-prod.ps1"
+  }
+}

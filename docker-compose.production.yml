@@ -1,0 +1,125 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - backend
+
+  relay-migrate:
+    image: secure-messenger-relay:${RELAY_IMAGE_TAG:-latest}
+    build:
+      context: ./apps/relay-server
+      dockerfile: Dockerfile
+    command: ["/app/migrate", "-mode", "up"]
+    environment: &relay_env
+      APP_ENV: ${APP_ENV:-production}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      HTTP_HOST: ${HTTP_HOST:-0.0.0.0}
+      HTTP_PORT: ${HTTP_PORT:-8080}
+      HEALTH_PATH: ${HEALTH_PATH:-/health}
+      READY_PATH: ${READY_PATH:-/ready}
+      WS_PATH: ${WS_PATH:-/ws}
+      API_PREFIX: ${API_PREFIX:-/api/v1}
+      RUN_MIGRATIONS_ON_START: "false"
+      DATABASE_URL: ${DATABASE_URL}
+      HTTP_READ_TIMEOUT_SEC: ${HTTP_READ_TIMEOUT_SEC:-10}
+      HTTP_WRITE_TIMEOUT_SEC: ${HTTP_WRITE_TIMEOUT_SEC:-10}
+      HTTP_IDLE_TIMEOUT_SEC: ${HTTP_IDLE_TIMEOUT_SEC:-60}
+      HTTP_SHUTDOWN_TIMEOUT_SEC: ${HTTP_SHUTDOWN_TIMEOUT_SEC:-10}
+      AUTH_ACCESS_TOKEN_TTL_MIN: ${AUTH_ACCESS_TOKEN_TTL_MIN:-15}
+      AUTH_REFRESH_TOKEN_TTL_HOURS: ${AUTH_REFRESH_TOKEN_TTL_HOURS:-720}
+      AUTH_2FA_CHALLENGE_TTL_MIN: ${AUTH_2FA_CHALLENGE_TTL_MIN:-5}
+      AUTH_2FA_ISSUER: ${AUTH_2FA_ISSUER:-SecureMessenger}
+      AUTH_TOKEN_PEPPER: ${AUTH_TOKEN_PEPPER}
+      SECURITY_ENCRYPTION_KEY: ${SECURITY_ENCRYPTION_KEY}
+      MESSAGING_ATTACHMENTS_DIR: ${MESSAGING_ATTACHMENTS_DIR:-/app/data/attachments}
+      MESSAGING_ATTACHMENT_MAX_BYTES: ${MESSAGING_ATTACHMENT_MAX_BYTES:-20971520}
+      MESSAGING_UNATTACHED_TTL_HOURS: ${MESSAGING_UNATTACHED_TTL_HOURS:-24}
+      TRANSPORT_PRIMARY_WS_ENDPOINT: ${TRANSPORT_PRIMARY_WS_ENDPOINT}
+      TRANSPORT_ALTERNATE_ENDPOINTS: ${TRANSPORT_ALTERNATE_ENDPOINTS:-}
+      TRANSPORT_WS_QUERY_TOKEN_FALLBACK: ${TRANSPORT_WS_QUERY_TOKEN_FALLBACK:-false}
+      TRANSPORT_LONG_POLL_ENABLED: ${TRANSPORT_LONG_POLL_ENABLED:-true}
+      TRANSPORT_LONG_POLL_TIMEOUT_SEC: ${TRANSPORT_LONG_POLL_TIMEOUT_SEC:-25}
+      TRANSPORT_RECONNECT_BACKOFF_MIN_MS: ${TRANSPORT_RECONNECT_BACKOFF_MIN_MS:-500}
+      TRANSPORT_RECONNECT_BACKOFF_MAX_MS: ${TRANSPORT_RECONNECT_BACKOFF_MAX_MS:-10000}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - backend
+
+  relay-server:
+    image: secure-messenger-relay:${RELAY_IMAGE_TAG:-latest}
+    build:
+      context: ./apps/relay-server
+      dockerfile: Dockerfile
+    environment:
+      <<: *relay_env
+    volumes:
+      - attachments:/app/data/attachments
+    expose:
+      - "8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      relay-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8080/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    restart: unless-stopped
+    networks:
+      - backend
+
+  caddy:
+    image: caddy:2.8-alpine
+    environment:
+      PUBLIC_HOST: ${PUBLIC_HOST}
+      ACME_EMAIL: ${ACME_EMAIL}
+      API_PREFIX: ${API_PREFIX:-/api/v1}
+      WS_PATH: ${WS_PATH:-/ws}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      relay-server:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "caddy", "validate", "--config", "/etc/caddy/Caddyfile"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - backend
+
+volumes:
+  pgdata:
+  attachments:
+  caddy_data:
+  caddy_config:
+
+networks:
+  backend:
+    driver: bridge
