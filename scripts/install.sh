@@ -136,7 +136,6 @@ if is_ipv4 "$server_host"; then
   mode="ip"
 fi
 
-acme_email=""
 if [[ "$mode" == "domain" ]]; then
   default_email="admin@$server_host"
   read -rp "Email для TLS сертификата [${default_email}]: " acme_email
@@ -144,8 +143,16 @@ if [[ "$mode" == "domain" ]]; then
   if [[ -z "$acme_email" ]]; then
     acme_email="$default_email"
   fi
+  tls_enabled="true"
+  api_base="https://${server_host}"
+  ws_url="wss://${server_host}/ws"
+  relay_publish_address="127.0.0.1"
 else
   acme_email="install@localhost"
+  tls_enabled="false"
+  api_base="http://${server_host}:8080"
+  ws_url="ws://${server_host}:8080/ws"
+  relay_publish_address="0.0.0.0"
 fi
 
 postgres_db="secure_messenger"
@@ -153,19 +160,6 @@ postgres_user="secure_messenger"
 postgres_password="$(generate_hex 16)"
 auth_token_pepper="$(generate_hex 32)"
 security_encryption_key="$(generate_base64 32)"
-
-if [[ "$mode" == "ip" ]]; then
-  tls_enabled="false"
-  api_base="http://${server_host}:8080"
-  ws_url="ws://${server_host}:8080/ws"
-  relay_publish_address="0.0.0.0"
-else
-  tls_enabled="true"
-  api_base="https://${server_host}"
-  ws_url="wss://${server_host}/ws"
-  relay_publish_address="127.0.0.1"
-fi
-
 database_url="postgres://${postgres_user}:${postgres_password}@postgres:5432/${postgres_db}?sslmode=disable"
 transport_alternates="${api_base}/api/v1/sync/poll"
 
@@ -191,7 +185,7 @@ HEALTH_PATH=/health
 READY_PATH=/ready
 WS_PATH=/ws
 API_PREFIX=/api/v1
-RUN_MIGRATIONS_ON_START=false
+RUN_MIGRATIONS_ON_START=true
 
 POSTGRES_DB=${postgres_db}
 POSTGRES_USER=${postgres_user}
@@ -231,16 +225,21 @@ echo "[install] .env generated: $ENV_FILE"
 
 compose_cmd=("${COMPOSE_BIN[@]}" -f "$BASE_COMPOSE_FILE" -f "$PROD_OVERRIDE_FILE" --env-file "$ENV_FILE")
 
+echo "[install] removing old orphan containers (if any)"
+"${compose_cmd[@]}" down --remove-orphans >/dev/null 2>&1 || true
+
 if [[ "$mode" == "domain" ]]; then
   echo "[install] starting stack in DOMAIN mode (TLS via Caddy)"
-  "${compose_cmd[@]}" up -d --build
+  "${compose_cmd[@]}" up -d --build --remove-orphans
   health_url="https://${server_host}/health"
+  ready_url="https://${server_host}/ready"
   config_url="https://${server_host}/api/v1/config"
   fallback_health_url="http://127.0.0.1/health"
 else
   echo "[install] starting stack in IP mode (direct HTTP on :8080, no Caddy)"
-  "${compose_cmd[@]}" up -d --build postgres relay-migrate relay-server
+  "${compose_cmd[@]}" up -d --build --remove-orphans postgres relay-server
   health_url="http://${server_host}:8080/health"
+  ready_url="http://${server_host}:8080/ready"
   config_url="http://${server_host}:8080/api/v1/config"
   fallback_health_url=""
 fi
@@ -252,9 +251,13 @@ if ! wait_for_http "$health_url"; then
   else
     echo "[install] health check failed." >&2
     "${compose_cmd[@]}" ps || true
-    "${compose_cmd[@]}" logs --tail=120 || true
+    "${compose_cmd[@]}" logs --tail=150 || true
     exit 1
   fi
+fi
+
+if ! wait_for_http "$ready_url"; then
+  echo "[install] warning: readiness endpoint is not reachable yet at $ready_url" >&2
 fi
 
 if ! wait_for_http "$config_url"; then

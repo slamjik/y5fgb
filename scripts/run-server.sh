@@ -6,5 +6,4 @@ set -a
 source .env.development
 set +a
 
-go run ./cmd/migrate -mode up
 go run ./cmd/relay-server

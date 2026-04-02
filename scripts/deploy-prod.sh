@@ -37,8 +37,12 @@ if ! docker info >/dev/null 2>&1; then
   exit 1
 fi
 
-if ! docker compose version >/dev/null 2>&1; then
-  echo "[deploy-prod] docker compose plugin is not available" >&2
+if docker compose version >/dev/null 2>&1; then
+  COMPOSE_BIN=(docker compose)
+elif command -v docker-compose >/dev/null 2>&1; then
+  COMPOSE_BIN=(docker-compose)
+else
+  echo "[deploy-prod] Docker Compose is missing (neither 'docker compose' nor 'docker-compose' found)." >&2
   exit 1
 fi
 
@@ -86,11 +90,13 @@ for key in "${required_vars[@]}"; do
   require_non_empty "$key"
 done
 
+compose_cmd=("${COMPOSE_BIN[@]}" -f "$COMPOSE_BASE_FILE" -f "$COMPOSE_OVERRIDE_FILE" --env-file "$ENV_FILE")
+
 echo "[deploy-prod] starting stack with $ENV_FILE"
-docker compose -f "$COMPOSE_BASE_FILE" -f "$COMPOSE_OVERRIDE_FILE" --env-file "$ENV_FILE" up -d --build
+"${compose_cmd[@]}" up -d --build --remove-orphans
 
 echo "[deploy-prod] container status"
-docker compose -f "$COMPOSE_BASE_FILE" -f "$COMPOSE_OVERRIDE_FILE" --env-file "$ENV_FILE" ps
+"${compose_cmd[@]}" ps
 
 public_host="$(read_env_value PUBLIC_HOST)"
 ready_path="$(read_env_value READY_PATH)"
@@ -114,7 +120,7 @@ if [[ "$ready_ok" -eq 1 ]]; then
   echo "[deploy-prod] readiness check passed"
 else
   echo "[deploy-prod] readiness check failed. Inspect logs:" >&2
-  echo "docker compose -f $COMPOSE_BASE_FILE -f $COMPOSE_OVERRIDE_FILE --env-file $ENV_FILE logs --tail=100" >&2
+  echo "${compose_cmd[*]} logs --tail=100" >&2
   exit 1
 fi
 

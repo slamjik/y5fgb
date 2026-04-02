@@ -84,13 +84,29 @@ npm run tauri:dev --workspace apps/client-desktop
 
 ```bash
 cp .env.production.example .env
-docker compose -f docker-compose.production.yml -f docker-compose.prod.yml --env-file .env up -d --build
+docker compose -f docker-compose.production.yml -f docker-compose.prod.yml --env-file .env up -d --build --remove-orphans
 ```
+
+Миграции применяются на старте `relay-server` (`RUN_MIGRATIONS_ON_START=true`).  
+Если миграции не применились, контейнер `relay-server` завершится с ошибкой и не будет висеть в полурабочем состоянии.
 
 Если нужен edge TLS через Caddy, запускайте все сервисы.  
 Если нужен только IP-режим, можно поднять без Caddy:
 ```bash
-docker compose -f docker-compose.production.yml -f docker-compose.prod.yml --env-file .env up -d --build postgres relay-migrate relay-server
+docker compose -f docker-compose.production.yml -f docker-compose.prod.yml --env-file .env up -d --build postgres relay-server
+```
+
+Для cleanup старых контейнеров после обновлений:
+```bash
+docker compose -f docker-compose.production.yml -f docker-compose.prod.yml --env-file .env up -d --build --remove-orphans
+```
+
+Пост-деплой sanity checks:
+```bash
+docker compose -f docker-compose.production.yml -f docker-compose.prod.yml --env-file .env ps
+docker compose -f docker-compose.production.yml -f docker-compose.prod.yml --env-file .env logs --tail=150
+curl -H "Host: <PUBLIC_HOST>" http://127.0.0.1/health
+curl -H "Host: <PUBLIC_HOST>" http://127.0.0.1/ready
 ```
 
 ## Как клиент подключается к серверу / Client Connection Flow

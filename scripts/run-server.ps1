@@ -8,5 +8,4 @@ Get-Content .env.development | ForEach-Object {
   }
 }
 
-go run ./cmd/migrate -mode up
 go run ./cmd/relay-server

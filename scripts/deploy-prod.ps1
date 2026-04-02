@@ -8,21 +8,43 @@ $envFile = if ($args.Count -gt 0) { $args[0] } else { Join-Path $root ".env" }
 if (!(Test-Path $composeBaseFile)) {
   throw "[deploy-prod] missing compose file: $composeBaseFile"
 }
-
 if (!(Test-Path $composeOverrideFile)) {
   throw "[deploy-prod] missing compose override file: $composeOverrideFile"
 }
-
 if (!(Test-Path $envFile)) {
   throw "[deploy-prod] missing env file: $envFile`nCopy .env.production.example to .env and fill required values."
 }
-
 if (!(Get-Command docker -ErrorAction SilentlyContinue)) {
   throw "[deploy-prod] docker is not installed"
 }
 
 docker info | Out-Null
-docker compose version | Out-Null
+
+$composeMode = "docker-compose-plugin"
+try {
+  docker compose version | Out-Null
+}
+catch {
+  if (Get-Command "docker-compose" -ErrorAction SilentlyContinue) {
+    $composeMode = "docker-compose-legacy"
+  }
+  else {
+    throw "[deploy-prod] Docker Compose is missing (neither 'docker compose' nor 'docker-compose' found)."
+  }
+}
+
+function Invoke-Compose {
+  param(
+    [Parameter(ValueFromRemainingArguments = $true)]
+    [string[]]$Args
+  )
+  if ($composeMode -eq "docker-compose-legacy") {
+    & docker-compose @Args
+  }
+  else {
+    & docker compose @Args
+  }
+}
 
 function Get-EnvValue([string]$Path, [string]$Key) {
   $line = Get-Content $Path |
@@ -56,16 +78,17 @@ $required = @(
   "SECURITY_ENCRYPTION_KEY",
   "TRANSPORT_PRIMARY_WS_ENDPOINT"
 )
-
 foreach ($key in $required) {
   Require-Env -Path $envFile -Key $key
 }
 
+$composeArgs = @("-f", $composeBaseFile, "-f", $composeOverrideFile, "--env-file", $envFile)
+
 Write-Host "[deploy-prod] starting stack with $envFile"
-docker compose -f $composeBaseFile -f $composeOverrideFile --env-file $envFile up -d --build
+Invoke-Compose @composeArgs up -d --build --remove-orphans
 
 Write-Host "[deploy-prod] container status"
-docker compose -f $composeBaseFile -f $composeOverrideFile --env-file $envFile ps
+Invoke-Compose @composeArgs ps
 
 $publicHost = Get-EnvValue -Path $envFile -Key "PUBLIC_HOST"
 $readyPath = Get-EnvValue -Path $envFile -Key "READY_PATH"

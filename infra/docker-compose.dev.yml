@@ -1,9 +1,6 @@
-﻿version: "3.9"
-
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: secure-messenger-postgres
     env_file:
       - ./env/postgres.dev.env
     ports:
@@ -17,7 +14,6 @@ services:
       retries: 10
 
   relay-server:
-    container_name: secure-messenger-relay
     build:
       context: ../apps/relay-server
       dockerfile: Dockerfile
@@ -30,6 +26,12 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8080/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
 
 volumes:
   pgdata:

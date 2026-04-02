@@ -1,4 +1,4 @@
-﻿$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $PSScriptRoot
 $envFile = Join-Path $root ".env"
@@ -55,7 +55,6 @@ function Wait-HttpReady([string]$Url, [hashtable]$Headers = $null) {
 
 Require-Command "docker" "Install Docker Desktop or Docker Engine"
 Require-Command "curl" "Install curl"
-
 docker info | Out-Null
 
 $composeMode = "docker-compose-plugin"
@@ -91,7 +90,7 @@ if (-not (Test-Path $prodOverride)) {
   throw "[install] missing compose override file: $prodOverride"
 }
 
-$serverInput = Read-Host "Введите домен или IP"
+$serverInput = Read-Host "Enter domain or IP"
 $serverHost = Normalize-ServerInput $serverInput
 if ([string]::IsNullOrWhiteSpace($serverHost)) {
   throw "[install] empty host value, aborting"
@@ -103,7 +102,7 @@ $mode = if ($isIp) { "ip" } else { "domain" }
 
 if ($mode -eq "domain") {
   $defaultEmail = "admin@$serverHost"
-  $emailInput = Read-Host "Email для TLS сертификата [$defaultEmail]"
+  $emailInput = Read-Host "Email for TLS certificate [$defaultEmail]"
   $acmeEmail = if ([string]::IsNullOrWhiteSpace($emailInput)) { $defaultEmail } else { $emailInput.Trim() }
   $tlsEnabled = "true"
   $apiBase = "https://$serverHost"
@@ -123,7 +122,7 @@ $postgresUser = "secure_messenger"
 $postgresPassword = New-RandomHex 16
 $authTokenPepper = New-RandomHex 32
 $securityEncryptionKey = New-RandomBase64 32
-$databaseUrl = "postgres://${postgresUser}:${postgresPassword}@postgres:5432/${postgresDb}?sslmode=disable"
+$databaseUrl = "postgres://{0}:{1}@postgres:5432/{2}?sslmode=disable" -f $postgresUser, $postgresPassword, $postgresDb
 $transportAlternates = "$apiBase/api/v1/sync/poll"
 
 if (Test-Path $envFile) {
@@ -148,7 +147,7 @@ HEALTH_PATH=/health
 READY_PATH=/ready
 WS_PATH=/ws
 API_PREFIX=/api/v1
-RUN_MIGRATIONS_ON_START=false
+RUN_MIGRATIONS_ON_START=true
 
 POSTGRES_DB=$postgresDb
 POSTGRES_USER=$postgresUser
@@ -189,17 +188,27 @@ Write-Host "[install] .env generated: $envFile"
 
 $composeArgs = @("-f", $baseCompose, "-f", $prodOverride, "--env-file", $envFile)
 
+Write-Host "[install] removing old orphan containers (if any)"
+try {
+  Invoke-Compose @composeArgs down --remove-orphans | Out-Null
+}
+catch {
+  # Best effort cleanup.
+}
+
 if ($mode -eq "domain") {
   Write-Host "[install] starting stack in DOMAIN mode (TLS via Caddy)"
-  Invoke-Compose @composeArgs up -d --build
+  Invoke-Compose @composeArgs up -d --build --remove-orphans
   $healthUrl = "https://$serverHost/health"
+  $readyUrl = "https://$serverHost/ready"
   $configUrl = "https://$serverHost/api/v1/config"
   $fallbackHealthUrl = "http://127.0.0.1/health"
 }
 else {
   Write-Host "[install] starting stack in IP mode (direct HTTP on :8080, no Caddy)"
-  Invoke-Compose @composeArgs up -d --build postgres relay-migrate relay-server
+  Invoke-Compose @composeArgs up -d --build --remove-orphans postgres relay-server
   $healthUrl = "http://$serverHost:8080/health"
+  $readyUrl = "http://$serverHost:8080/ready"
   $configUrl = "http://$serverHost:8080/api/v1/config"
   $fallbackHealthUrl = $null
 }
@@ -215,10 +224,13 @@ if (-not $healthOk -and $mode -eq "domain") {
 
 if (-not $healthOk) {
   Invoke-Compose @composeArgs ps
-  Invoke-Compose @composeArgs logs --tail=120
+  Invoke-Compose @composeArgs logs --tail=150
   throw "[install] health check failed"
 }
 
+if (-not (Wait-HttpReady -Url $readyUrl)) {
+  Write-Warning "[install] warning: readiness endpoint is not reachable yet at $readyUrl"
+}
 if (-not (Wait-HttpReady -Url $configUrl)) {
   Write-Warning "[install] warning: /api/v1/config is not reachable yet at $configUrl"
 }
@@ -227,10 +239,10 @@ Invoke-Compose @composeArgs ps
 
 Write-Host ""
 Write-Host "=============================="
-Write-Host "СЕРВЕР ГОТОВ"
+Write-Host "SERVER READY"
 Write-Host ""
-Write-Host "Адрес:"
+Write-Host "Address:"
 Write-Host $apiBase
 Write-Host ""
-Write-Host "Введите этот адрес в клиенте"
+Write-Host "Use this address in the client"
 Write-Host "=============================="
