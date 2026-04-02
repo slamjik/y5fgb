@@ -28,7 +28,8 @@ cp .env.production.example .env
 ```
 
 Fill required values in `.env`:
-- `PUBLIC_HOST`, `ACME_EMAIL`
+- `PUBLIC_HOST`
+- `ACME_EMAIL` (required only in domain/TLS mode)
 - `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `DATABASE_URL`
 - `AUTH_TOKEN_PEPPER`, `SECURITY_ENCRYPTION_KEY`
 - `TRANSPORT_PRIMARY_WS_ENDPOINT`
@@ -36,6 +37,10 @@ Fill required values in `.env`:
 Deploy:
 - Linux/macOS: `./scripts/deploy-prod.sh`
 - Windows PowerShell: `./scripts/deploy-prod.ps1`
+
+Auto mode selection in deploy scripts:
+- **IP mode**: `PUBLIC_HOST=<ip>` or `TLS_ENABLED=false` -> starts `postgres + relay-server`.
+- **Domain mode**: `PUBLIC_HOST=<domain>` with TLS enabled -> starts full stack with `caddy`.
 
 Equivalent command:
 
@@ -73,11 +78,25 @@ curl -H "Host: ${PUBLIC_HOST}" http://127.0.0.1/health
 curl -H "Host: ${PUBLIC_HOST}" http://127.0.0.1/ready
 ```
 
+IP mode alternative:
+
+```bash
+curl http://${PUBLIC_HOST}:8080/health
+curl http://${PUBLIC_HOST}:8080/ready
+```
+
 ### Public checks (TLS mode)
 
 ```bash
 curl -I https://${PUBLIC_HOST}/health
 curl -I https://${PUBLIC_HOST}/ready
+```
+
+Public checks (IP mode):
+
+```bash
+curl -I http://${PUBLIC_HOST}:8080/health
+curl -I http://${PUBLIC_HOST}:8080/ready
 ```
 
 ### WS/long-poll smoke

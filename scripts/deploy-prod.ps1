@@ -67,9 +67,20 @@ function Require-Env([string]$Path, [string]$Key) {
   }
 }
 
+$publicHost = Get-EnvValue -Path $envFile -Key "PUBLIC_HOST"
+if ([string]::IsNullOrWhiteSpace($publicHost)) {
+  throw "[deploy-prod] required env 'PUBLIC_HOST' is missing or empty in $envFile"
+}
+
+$tlsEnabled = Get-EnvValue -Path $envFile -Key "TLS_ENABLED"
+$parsedIp = $null
+$isIpMode = [System.Net.IPAddress]::TryParse($publicHost, [ref]$parsedIp)
+if ($tlsEnabled -match '^(?i:false|0|no)$') {
+  $isIpMode = $true
+}
+$mode = if ($isIpMode) { "ip" } else { "domain" }
+
 $required = @(
-  "PUBLIC_HOST",
-  "ACME_EMAIL",
   "POSTGRES_DB",
   "POSTGRES_USER",
   "POSTGRES_PASSWORD",
@@ -78,31 +89,56 @@ $required = @(
   "SECURITY_ENCRYPTION_KEY",
   "TRANSPORT_PRIMARY_WS_ENDPOINT"
 )
+if ($mode -eq "domain") {
+  $required += "ACME_EMAIL"
+}
 foreach ($key in $required) {
   Require-Env -Path $envFile -Key $key
 }
 
 $composeArgs = @("-f", $composeBaseFile, "-f", $composeOverrideFile, "--env-file", $envFile)
 
-Write-Host "[deploy-prod] starting stack with $envFile"
-Invoke-Compose @composeArgs up -d --build --remove-orphans
+Write-Host "[deploy-prod] starting stack with $envFile (mode: $mode)"
+if ($mode -eq "ip") {
+  Write-Host "[deploy-prod] IP mode detected: starting postgres + relay-server (without caddy)"
+  try {
+    Invoke-Compose @composeArgs rm -sf caddy | Out-Null
+  }
+  catch {
+    # Best-effort cleanup of old caddy container.
+  }
+  Invoke-Compose @composeArgs up -d --build --remove-orphans postgres relay-server
+}
+else {
+  Write-Host "[deploy-prod] domain mode detected: starting full stack with caddy"
+  Invoke-Compose @composeArgs up -d --build --remove-orphans
+}
 
 Write-Host "[deploy-prod] container status"
 Invoke-Compose @composeArgs ps
 
-$publicHost = Get-EnvValue -Path $envFile -Key "PUBLIC_HOST"
 $readyPath = Get-EnvValue -Path $envFile -Key "READY_PATH"
 if ([string]::IsNullOrWhiteSpace($readyPath)) {
   $readyPath = "/ready"
 }
 
 $readyUrl = "http://127.0.0.1$readyPath"
-Write-Host "[deploy-prod] waiting for readiness at $readyUrl (Host: $publicHost)"
+if ($mode -eq "domain") {
+  Write-Host "[deploy-prod] waiting for readiness at $readyUrl (Host: $publicHost)"
+}
+else {
+  Write-Host "[deploy-prod] waiting for readiness at $readyUrl"
+}
 
 $ready = $false
 for ($i = 0; $i -lt 30; $i++) {
   try {
-    $null = Invoke-WebRequest -Uri $readyUrl -Headers @{ Host = $publicHost } -UseBasicParsing -TimeoutSec 5
+    if ($mode -eq "domain") {
+      $null = Invoke-WebRequest -Uri $readyUrl -Headers @{ Host = $publicHost } -UseBasicParsing -TimeoutSec 5
+    }
+    else {
+      $null = Invoke-WebRequest -Uri $readyUrl -UseBasicParsing -TimeoutSec 5
+    }
     $ready = $true
     break
   }

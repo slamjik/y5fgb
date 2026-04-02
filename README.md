@@ -101,6 +101,23 @@ docker compose -f docker-compose.production.yml -f docker-compose.prod.yml --env
 docker compose -f docker-compose.production.yml -f docker-compose.prod.yml --env-file .env up -d --build --remove-orphans
 ```
 
+### Auto mode deploy (recommended)
+
+Use one command and the script will auto-pick mode from `.env`:
+
+- IP mode: if `PUBLIC_HOST` is an IP or `TLS_ENABLED=false` -> starts `postgres + relay-server` (no Caddy/TLS).
+- Domain mode: if `PUBLIC_HOST` is a domain and TLS is enabled -> starts full stack with Caddy + ACME TLS.
+
+Linux:
+```bash
+./scripts/deploy-prod.sh
+```
+
+Windows PowerShell:
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\deploy-prod.ps1
+```
+
 Пост-деплой sanity checks:
 ```bash
 docker compose -f docker-compose.production.yml -f docker-compose.prod.yml --env-file .env ps

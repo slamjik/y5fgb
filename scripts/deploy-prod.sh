@@ -64,6 +64,22 @@ read_env_value() {
   echo "$value"
 }
 
+is_ipv4() {
+  local value="$1"
+  if [[ ! "$value" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+    return 1
+  fi
+
+  local part
+  IFS='.' read -r -a parts <<<"$value"
+  for part in "${parts[@]}"; do
+    if (( part < 0 || part > 255 )); then
+      return 1
+    fi
+  done
+  return 0
+}
+
 require_non_empty() {
   local key="$1"
   local value
@@ -74,9 +90,21 @@ require_non_empty() {
   fi
 }
 
+require_non_empty PUBLIC_HOST
+public_host="$(read_env_value PUBLIC_HOST)"
+tls_enabled="$(read_env_value TLS_ENABLED)"
+
+mode="domain"
+if is_ipv4 "$public_host"; then
+  mode="ip"
+fi
+case "${tls_enabled,,}" in
+  false|0|no)
+    mode="ip"
+    ;;
+esac
+
 required_vars=(
-  PUBLIC_HOST
-  ACME_EMAIL
   POSTGRES_DB
   POSTGRES_USER
   POSTGRES_PASSWORD
@@ -85,6 +113,9 @@ required_vars=(
   SECURITY_ENCRYPTION_KEY
   TRANSPORT_PRIMARY_WS_ENDPOINT
 )
+if [[ "$mode" == "domain" ]]; then
+  required_vars+=(ACME_EMAIL)
+fi
 
 for key in "${required_vars[@]}"; do
   require_non_empty "$key"
@@ -92,24 +123,36 @@ done
 
 compose_cmd=("${COMPOSE_BIN[@]}" -f "$COMPOSE_BASE_FILE" -f "$COMPOSE_OVERRIDE_FILE" --env-file "$ENV_FILE")
 
-echo "[deploy-prod] starting stack with $ENV_FILE"
-"${compose_cmd[@]}" up -d --build --remove-orphans
+echo "[deploy-prod] starting stack with $ENV_FILE (mode: $mode)"
+if [[ "$mode" == "ip" ]]; then
+  echo "[deploy-prod] IP mode detected: starting postgres + relay-server (without caddy)"
+  "${compose_cmd[@]}" rm -sf caddy >/dev/null 2>&1 || true
+  "${compose_cmd[@]}" up -d --build --remove-orphans postgres relay-server
+else
+  echo "[deploy-prod] domain mode detected: starting full stack with caddy"
+  "${compose_cmd[@]}" up -d --build --remove-orphans
+fi
 
 echo "[deploy-prod] container status"
 "${compose_cmd[@]}" ps
 
-public_host="$(read_env_value PUBLIC_HOST)"
 ready_path="$(read_env_value READY_PATH)"
 if [[ -z "$ready_path" ]]; then
   ready_path="/ready"
 fi
 
 check_url="http://127.0.0.1${ready_path}"
-echo "[deploy-prod] waiting for readiness at $check_url (Host: $public_host)"
+echo "[deploy-prod] waiting for readiness at $check_url"
 
 ready_ok=0
 for _ in {1..30}; do
-  if curl -fsS -H "Host: $public_host" "$check_url" >/dev/null 2>&1; then
+  if [[ "$mode" == "domain" ]]; then
+    curl_cmd=(curl -fsS -H "Host: $public_host" "$check_url")
+  else
+    curl_cmd=(curl -fsS "$check_url")
+  fi
+
+  if "${curl_cmd[@]}" >/dev/null 2>&1; then
     ready_ok=1
     break
   fi
