@@ -206,7 +206,9 @@ function normalizeServerInput(input: string): { origin: string; inputHost: strin
     throw new ServerConnectionError("invalid_input", "server input is empty");
   }
 
-  const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  const withProtocol = /^https?:\/\//i.test(trimmed)
+    ? trimmed
+    : `${shouldDefaultToHTTP(trimmed) ? "http" : "https"}://${trimmed}`;
 
   let parsed: URL;
   try {
@@ -223,6 +225,14 @@ function normalizeServerInput(input: string): { origin: string; inputHost: strin
     origin: parsed.origin,
     inputHost: parsed.host,
   };
+}
+
+function shouldDefaultToHTTP(value: string): boolean {
+  const candidate = value.trim().replace(/\/.*$/, "");
+  if (candidate === "localhost") {
+    return true;
+  }
+  return /^([0-9]{1,3}\.){3}[0-9]{1,3}(:[0-9]{1,5})?$/.test(candidate);
 }
 
 function buildFallbackConfig(apiBaseOrigin: string): Pick<PersistedServerConfig, "apiBaseUrl" | "wsUrl" | "apiPrefix"> {

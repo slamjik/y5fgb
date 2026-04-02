@@ -62,7 +62,7 @@ func New(cfg config.Config, logger *slog.Logger) (*RelayServer, error) {
 	})
 
 	addr := net.JoinHostPort(cfg.HTTP.Host, strconv.Itoa(cfg.HTTP.Port))
-	hardeningChain := middleware.SecurityHeaders(middleware.RequestID(middleware.BodyLimit(32<<20, mux)))
+	hardeningChain := middleware.CORS(middleware.SecurityHeaders(middleware.RequestID(middleware.BodyLimit(32<<20, mux))))
 	httpServer := &http.Server{
 		Addr:         addr,
 		Handler:      hardeningChain,
