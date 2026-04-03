@@ -2,7 +2,7 @@
   "plugins": {
     "updater": {
       "endpoints": [
-        "https://github.com/example/secure-messenger/releases/latest/download/latest-beta.json"
+        "https://github.com/slamjik/y5fgb/releases/latest/download/latest-beta.json"
       ]
     }
   }
