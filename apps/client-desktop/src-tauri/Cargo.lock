@@ -556,7 +556,7 @@ dependencies = [
 
 [[package]]
 name = "client-desktop"
-version = "1.0.0-rc.3"
+version = "1.0.1"
 dependencies = [
  "keyring",
  "rusqlite",

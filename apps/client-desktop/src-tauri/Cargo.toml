@@ -1,6 +1,6 @@
 [package]
 name = "client-desktop"
-version = "1.0.0-rc.3"
+version = "1.0.1"
 description = "Secure messenger desktop client shell"
 authors = ["Project Team"]
 license = "SEE LICENSE IN ../../LICENSE"
