@@ -111,6 +111,9 @@ function isMissingSecureEntryError(error: unknown): boolean {
   return (
     message.includes("no entry") ||
     message.includes("not found") ||
-    message.includes("no matching entry")
+    message.includes("no matching entry") ||
+    message.includes("cannot find") ||
+    message.includes("element not found") ||
+    message.includes("file specified")
   );
 }

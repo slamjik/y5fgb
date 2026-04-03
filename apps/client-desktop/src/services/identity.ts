@@ -1,5 +1,6 @@
 import { cryptoProvider } from "@/services/messaging/cryptoProvider";
 import { secureStorage } from "@/services/secureStorage";
+import { randomID } from "@/lib/randomId";
 
 const ACCOUNT_PRIVATE_KEY = "identity.account.private";
 const ACCOUNT_PUBLIC_KEY = "identity.account.public";
@@ -47,7 +48,7 @@ export async function loadOrCreateDeviceIdentity(deviceName: string): Promise<De
   }
 
   const generated = await generateIdentityPair();
-  const deviceId = crypto.randomUUID();
+  const deviceId = randomID();
 
   await secureStorage.set(DEVICE_PRIVATE_KEY, generated.privateMaterial);
   await secureStorage.set(DEVICE_PUBLIC_KEY, generated.publicMaterial);

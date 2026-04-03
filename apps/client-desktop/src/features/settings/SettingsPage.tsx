@@ -9,6 +9,7 @@ import { clearServerConfig, getActiveServerConfig, getServerHostForDisplay } fro
 import { useAppStore } from "@/state/appStore";
 import { useAuthStore } from "@/state/authStore";
 import { useMessagingStore } from "@/state/messagingStore";
+import { useSocialStore } from "@/state/socialStore";
 
 export function SettingsPage() {
   const { t } = useTranslation();
@@ -18,6 +19,8 @@ export function SettingsPage() {
   const setLanguage = useAppStore((state) => state.setLanguage);
   const onboardingCompleted = useAppStore((state) => state.onboardingCompleted);
   const setOnboardingCompleted = useAppStore((state) => state.setOnboardingCompleted);
+  const profile = useSocialStore((state) => state.profile);
+  const updateProfile = useSocialStore((state) => state.updateProfile);
   const activeServer = getActiveServerConfig();
 
   async function handleChangeServer() {
@@ -50,6 +53,22 @@ export function SettingsPage() {
             </select>
           </label>
           <p className="text-muted">{t("settings.languageHelp")}</p>
+        </article>
+
+        <article className="card">
+          <h2>{t("friends.myProfile")}</h2>
+          <label>
+            {t("friends.profileName")}
+            <input value={profile.displayName} onChange={(event) => updateProfile({ displayName: event.target.value })} />
+          </label>
+          <label>
+            {t("friends.profileBio")}
+            <input value={profile.bio} onChange={(event) => updateProfile({ bio: event.target.value })} />
+          </label>
+          <label>
+            {t("friends.profileAvatarColor")}
+            <input type="color" value={profile.avatarColor} onChange={(event) => updateProfile({ avatarColor: event.target.value })} />
+          </label>
         </article>
 
         <article className="card">
@@ -92,6 +111,9 @@ export function SettingsPage() {
           <div className="inline-actions">
             <Link className="button-link" to="/devices">
               {t("settings.accountDevices")}
+            </Link>
+            <Link className="button-link" to="/friends">
+              {t("nav.friends")}
             </Link>
             <Link className="button-link" to="/plugins">
               {t("settings.pluginManager")}

@@ -6,6 +6,7 @@ import { LoginPage } from "@/features/auth/LoginPage";
 import { RegisterPage } from "@/features/auth/RegisterPage";
 import { TwoFAVerifyPage } from "@/features/auth/TwoFAVerifyPage";
 import { DevicesPage } from "@/features/devices/DevicesPage";
+import { FriendsPage } from "@/features/friends/FriendsPage";
 import { HomePage } from "@/features/home/HomePage";
 import { ConversationListPage } from "@/features/messaging/ConversationListPage";
 import { ConversationPage } from "@/features/messaging/ConversationPage";
@@ -35,6 +36,7 @@ export const router = createBrowserRouter([
           { index: true, element: <ConversationListPage /> },
           { path: "home", element: <HomePage /> },
           { path: "devices", element: <DevicesPage /> },
+          { path: "friends", element: <FriendsPage /> },
           { path: "security-events", element: <SecurityEventsPage /> },
           { path: "plugins", element: <PluginsPage /> },
           { path: "plugins/panels/:pluginId/:panelId", element: <PluginPanelPage /> },

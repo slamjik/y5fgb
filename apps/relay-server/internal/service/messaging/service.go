@@ -532,6 +532,18 @@ func (s *Service) ListConversationMessages(ctx context.Context, principal auth.A
 	if err != nil {
 		return nil, service.NewError(service.ErrorCodeInternal, "failed to list conversation messages")
 	}
+	for index := range rows {
+		if rows[index].Recipient == nil || rows[index].Recipient.DeliveryState == domain.DeliveryStateDelivered {
+			continue
+		}
+		deliveredAt := time.Now().UTC()
+		if markErr := s.repo.MarkMessageDelivered(ctx, rows[index].Envelope.ID, principal.DeviceID); markErr != nil {
+			s.logger.Warn("failed to mark listed message delivered", "message_id", rows[index].Envelope.ID, "device_id", principal.DeviceID, "error", markErr)
+			continue
+		}
+		rows[index].Recipient.DeliveryState = domain.DeliveryStateDelivered
+		rows[index].Recipient.DeliveredAt = &deliveredAt
+	}
 	return s.hydrateMessageRows(ctx, rows)
 }
 
@@ -814,12 +826,19 @@ func (s *Service) syncFromCursor(ctx context.Context, principal auth.AuthPrincip
 	}
 
 	toCursor := fromCursor
-	for _, message := range messages {
+	for index, message := range messages {
 		if message.Envelope.ServerSequence > toCursor {
 			toCursor = message.Envelope.ServerSequence
 		}
 		if message.Recipient != nil && message.Recipient.DeliveryState != domain.DeliveryStateDelivered {
-			_ = s.repo.MarkMessageDelivered(ctx, message.Envelope.ID, principal.DeviceID)
+			deliveredAt := time.Now().UTC()
+			if markErr := s.repo.MarkMessageDelivered(ctx, message.Envelope.ID, principal.DeviceID); markErr != nil {
+				s.logger.Warn("failed to mark sync message delivered", "message_id", message.Envelope.ID, "device_id", principal.DeviceID, "error", markErr)
+				continue
+			}
+			message.Recipient.DeliveryState = domain.DeliveryStateDelivered
+			message.Recipient.DeliveredAt = &deliveredAt
+			messages[index] = message
 			deviceID := principal.DeviceID
 			s.events.Record(ctx, principal.AccountID, &deviceID, domain.SecurityEventMessageDelivered, domain.SecurityEventSeverityInfo, "trusted", map[string]any{
 				"messageId":      message.Envelope.ID,

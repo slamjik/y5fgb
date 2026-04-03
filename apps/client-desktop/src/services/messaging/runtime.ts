@@ -8,6 +8,7 @@ import type {
 } from "@project/protocol";
 
 import { appConfig } from "@/lib/config";
+import { randomID } from "@/lib/randomId";
 import { loadAllDeviceKeyMaterials } from "@/services/identity";
 import { logger } from "@/services/logger";
 import { classifyMessagingError } from "@/services/messaging/errorModel";
@@ -176,7 +177,7 @@ class MessagingRuntime {
   }) {
     const accessToken = this.requireAccessToken();
     const session = this.requireSession();
-    const clientMessageId = crypto.randomUUID();
+    const clientMessageId = randomID();
     const recipients = this.resolveRecipients(input.conversation);
     if (recipients.length === 0) {
       throw new Error("conversation has no trusted recipient devices");
@@ -387,11 +388,7 @@ class MessagingRuntime {
         if (this.stopped) {
           return;
         }
-        useMessagingStore.getState().setTransportState({
-          mode: "websocket",
-          status: "degraded",
-          lastError: reason ?? "websocket disconnected",
-        });
+        this.reportWebSocketIssue(reason ?? "websocket disconnected", endpoint);
         this.ensureLongPollLoop();
         this.scheduleReconnect();
       },
@@ -399,11 +396,7 @@ class MessagingRuntime {
         if (this.stopped) {
           return;
         }
-        useMessagingStore.getState().setTransportState({
-          mode: "websocket",
-          status: "degraded",
-          lastError: errorMessage,
-        });
+        this.reportWebSocketIssue(errorMessage, endpoint);
       },
       onSyncAvailable: (cursor) => {
         void this.requestSync(Math.max(cursor, 0));
@@ -774,7 +767,7 @@ class MessagingRuntime {
       }
     }
     if (!this.accessToken) {
-      throw new Error("missing access token for messaging runtime");
+      throw new Error("unauthorized");
     }
     return this.accessToken;
   }
@@ -838,6 +831,20 @@ class MessagingRuntime {
 
   private sleep(ms: number) {
     return new Promise((resolve) => window.setTimeout(resolve, ms));
+  }
+
+  private reportWebSocketIssue(lastError: string, endpoint: string) {
+    const currentTransport = useMessagingStore.getState().transport;
+    if (currentTransport.mode === "long_poll") {
+      useMessagingStore.getState().setTransportState({ lastError });
+      return;
+    }
+    useMessagingStore.getState().setTransportState({
+      mode: "websocket",
+      status: this.longPollEnabled ? "degraded" : "offline",
+      endpoint,
+      lastError,
+    });
   }
 }
 

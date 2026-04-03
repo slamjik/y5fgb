@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -120,12 +121,7 @@ func NewWebSocketHandler(logger *slog.Logger, authService *auth.Service, notifie
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
 				origin := strings.TrimSpace(r.Header.Get("Origin"))
-				if origin == "" {
-					return true
-				}
-				return strings.HasPrefix(origin, "http://localhost") ||
-					strings.HasPrefix(origin, "http://127.0.0.1") ||
-					strings.HasPrefix(origin, "tauri://localhost")
+				return isAllowedWebSocketOrigin(origin)
 			},
 		},
 	}
@@ -279,4 +275,25 @@ func writeWSError(w http.ResponseWriter, status int, message string) {
 			"message": message,
 		},
 	})
+}
+
+func isAllowedWebSocketOrigin(origin string) bool {
+	if origin == "" || origin == "null" || origin == "tauri://localhost" {
+		return true
+	}
+
+	parsed, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return false
+	}
+
+	host := strings.ToLower(parsed.Hostname())
+	if host == "localhost" || host == "127.0.0.1" {
+		return true
+	}
+
+	return strings.HasSuffix(host, ".localhost")
 }

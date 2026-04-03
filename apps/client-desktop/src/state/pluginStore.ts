@@ -3,6 +3,8 @@ import type { PluginStatus } from "@project/shared-types";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
+import { randomID } from "@/lib/randomId";
+
 type PluginNotice = {
   id: string;
   pluginId: string;
@@ -117,7 +119,7 @@ export const usePluginStore = create<PluginStore>()(
         set((state) => ({
           notices: [
             {
-              id: crypto.randomUUID(),
+              id: randomID(),
               pluginId,
               message,
               createdAt: new Date().toISOString(),

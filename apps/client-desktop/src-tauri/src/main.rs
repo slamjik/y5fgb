@@ -51,6 +51,9 @@ fn secure_store_get(key: String) -> Result<Option<String>, String> {
             if message.contains("no entry")
                 || message.contains("not found")
                 || message.contains("no matching entry")
+                || message.contains("cannot find")
+                || message.contains("element not found")
+                || message.contains("file specified")
             {
                 Ok(None)
             } else {
@@ -71,6 +74,9 @@ fn secure_store_delete(key: String) -> Result<(), String> {
             if message.contains("no entry")
                 || message.contains("not found")
                 || message.contains("no matching entry")
+                || message.contains("cannot find")
+                || message.contains("element not found")
+                || message.contains("file specified")
             {
                 Ok(())
             } else {

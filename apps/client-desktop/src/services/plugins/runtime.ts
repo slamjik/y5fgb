@@ -10,6 +10,7 @@ import type {
 } from "@project/protocol";
 import type { PluginCapability } from "@project/shared-types";
 
+import { randomID } from "@/lib/randomId";
 import { logger } from "@/services/logger";
 import { bundledPluginDescriptors } from "@/services/plugins/bundled";
 import { isCapabilityAllowedInV1, pluginCapabilityByMethod } from "@/services/plugins/capabilities";
@@ -21,9 +22,9 @@ import { usePluginStore } from "@/state/pluginStore";
 type PluginBridgeRequestEnvelope = PluginBridgeRequest & { kind: "plugin.bridge.request"; runtimeToken?: string };
 
 type PluginRuntimeMessage =
-  | { kind: "plugin.runtime.ready"; pluginId?: string }
-  | { kind: "plugin.runtime.initialized"; pluginId: string; runtimeToken?: string }
-  | { kind: "plugin.runtime.error"; pluginId?: string; message: string; runtimeToken?: string }
+  | { kind: "plugin.runtime.ready"; pluginId?: string; bootstrapToken?: string }
+  | { kind: "plugin.runtime.initialized"; pluginId: string; runtimeToken?: string; bootstrapToken?: string }
+  | { kind: "plugin.runtime.error"; pluginId?: string; message: string; runtimeToken?: string; bootstrapToken?: string }
   | PluginBridgeRequestEnvelope;
 
 type RuntimeEventType = PluginDeclaredHook;
@@ -31,6 +32,7 @@ type RuntimeEventType = PluginDeclaredHook;
 type ActivePluginInstance = {
   descriptor: LoadedPluginDescriptor;
   iframe: HTMLIFrameElement;
+  bootstrapToken: string;
   runtimeToken: string;
   grantedPermissions: Set<PluginCapability>;
   subscriptions: Set<RuntimeEventType>;
@@ -42,7 +44,7 @@ type ActivePluginInstance = {
   initializedPromise: Promise<void>;
 };
 
-const RUNTIME_READY_TIMEOUT_MS = 3_000;
+const RUNTIME_READY_TIMEOUT_MS = 5_000;
 const RUNTIME_INIT_TIMEOUT_MS = 5_000;
 const sandboxRootID = "plugin-sandbox-root";
 const MAX_BRIDGE_PAYLOAD_BYTES = 64 * 1024;
@@ -205,9 +207,10 @@ export class PluginRuntime {
     const iframe = document.createElement("iframe");
     iframe.setAttribute("sandbox", "allow-scripts");
     iframe.style.display = "none";
-    iframe.srcdoc = this.buildPluginSandboxDocument(descriptor);
+    const bootstrapToken = randomID();
+    iframe.srcdoc = this.buildPluginSandboxDocument(descriptor, bootstrapToken);
 
-    const instance = this.createActiveInstance(descriptor, iframe);
+    const instance = this.createActiveInstance(descriptor, iframe, bootstrapToken);
     this.activeInstances.set(pluginId, instance);
 
     const root = this.ensureSandboxRoot();
@@ -311,9 +314,10 @@ export class PluginRuntime {
     return root;
   }
 
-  private buildPluginSandboxDocument(descriptor: LoadedPluginDescriptor): string {
+  private buildPluginSandboxDocument(descriptor: LoadedPluginDescriptor, bootstrapToken: string): string {
     const sanitizedEntryCode = sanitizeForScript(descriptor.entrypointCode);
     const manifestJSON = JSON.stringify(descriptor.manifest);
+    const safeBootstrapToken = sanitizeForScript(bootstrapToken);
 
     return `<!doctype html>
 <html>
@@ -329,6 +333,7 @@ export class PluginRuntime {
         const manifest = ${manifestJSON};
         const state = {
           pluginId: manifest.id,
+          bootstrapToken: "${safeBootstrapToken}",
           runtimeToken: null,
           hostOrigin: "*",
           requestCounter: 0,
@@ -435,6 +440,7 @@ export class PluginRuntime {
               kind: "plugin.runtime.initialized",
               pluginId: state.pluginId,
               runtimeToken: state.runtimeToken,
+              bootstrapToken: state.bootstrapToken,
             });
           } catch (error) {
             const message = error instanceof Error ? error.message : "plugin runtime init failure";
@@ -442,6 +448,7 @@ export class PluginRuntime {
               kind: "plugin.runtime.error",
               pluginId: state.pluginId,
               runtimeToken: state.runtimeToken,
+              bootstrapToken: state.bootstrapToken,
               message,
             });
           }
@@ -459,6 +466,7 @@ export class PluginRuntime {
                 kind: "plugin.runtime.error",
                 pluginId: state.pluginId,
                 runtimeToken: state.runtimeToken,
+                bootstrapToken: state.bootstrapToken,
                 message: "invalid runtime token from host",
               });
               return;
@@ -475,6 +483,7 @@ export class PluginRuntime {
                 kind: "plugin.runtime.error",
                 pluginId: state.pluginId,
                 runtimeToken: state.runtimeToken,
+                bootstrapToken: state.bootstrapToken,
                 message: "host bridge runtime token mismatch",
               });
               return;
@@ -503,7 +512,7 @@ export class PluginRuntime {
                 await handler({ eventType: data.eventType, payload: data.payload || {} });
               } catch (error) {
                 const message = error instanceof Error ? error.message : "event handler failed";
-                send({ kind: "plugin.runtime.error", pluginId: state.pluginId, message });
+                send({ kind: "plugin.runtime.error", pluginId: state.pluginId, bootstrapToken: state.bootstrapToken, message });
               }
             }
             return;
@@ -519,7 +528,7 @@ export class PluginRuntime {
                 await handler({ commandId: data.commandId, payload: data.payload || {} });
               } catch (error) {
                 const message = error instanceof Error ? error.message : "command handler failed";
-                send({ kind: "plugin.runtime.error", pluginId: state.pluginId, message });
+                send({ kind: "plugin.runtime.error", pluginId: state.pluginId, bootstrapToken: state.bootstrapToken, message });
               }
             }
           }
@@ -530,18 +539,19 @@ export class PluginRuntime {
             kind: "plugin.runtime.error",
             pluginId: state.pluginId,
             runtimeToken: state.runtimeToken,
+            bootstrapToken: state.bootstrapToken,
             message: event && event.message ? String(event.message) : "unhandled runtime error",
           });
         });
 
-        send({ kind: "plugin.runtime.ready", pluginId: manifest.id });
+        send({ kind: "plugin.runtime.ready", pluginId: manifest.id, bootstrapToken: state.bootstrapToken });
       })();
     </script>
   </body>
 </html>`;
   }
 
-  private createActiveInstance(descriptor: LoadedPluginDescriptor, iframe: HTMLIFrameElement): ActivePluginInstance {
+  private createActiveInstance(descriptor: LoadedPluginDescriptor, iframe: HTMLIFrameElement, bootstrapToken: string): ActivePluginInstance {
     let readyResolve: (() => void) | null = null;
     let initializedResolve: (() => void) | null = null;
 
@@ -555,7 +565,8 @@ export class PluginRuntime {
     return {
       descriptor,
       iframe,
-      runtimeToken: crypto.randomUUID(),
+      bootstrapToken,
+      runtimeToken: randomID(),
       grantedPermissions: new Set(descriptor.manifest.requestedPermissions),
       subscriptions: new Set(),
       commands: [],
@@ -607,7 +618,7 @@ export class PluginRuntime {
     }
 
     const data = event.data as PluginRuntimeMessage;
-    const instance = this.findInstanceByWindow(event.source);
+    const instance = this.findInstanceForMessage(event.source, data);
     if (!instance) {
       return;
     }
@@ -621,12 +632,20 @@ export class PluginRuntime {
     }
 
     if (data.kind === "plugin.runtime.ready") {
+      if (data.bootstrapToken !== instance.bootstrapToken) {
+        this.failPlugin(instance.descriptor.manifest.id as string, "plugin bootstrap token mismatch");
+        return;
+      }
       instance.readyResolve?.();
       instance.readyResolve = null;
       return;
     }
 
     if (data.kind === "plugin.runtime.initialized") {
+      if (data.bootstrapToken !== instance.bootstrapToken) {
+        this.failPlugin(instance.descriptor.manifest.id as string, "plugin bootstrap token mismatch");
+        return;
+      }
       if (data.runtimeToken !== instance.runtimeToken) {
         this.failPlugin(instance.descriptor.manifest.id as string, "plugin runtime token mismatch");
         return;
@@ -637,7 +656,11 @@ export class PluginRuntime {
     }
 
     if (data.kind === "plugin.runtime.error") {
-      if (data.runtimeToken !== instance.runtimeToken) {
+      if (data.bootstrapToken !== instance.bootstrapToken) {
+        this.failPlugin(instance.descriptor.manifest.id as string, "plugin bootstrap token mismatch");
+        return;
+      }
+      if (data.runtimeToken && data.runtimeToken !== instance.runtimeToken) {
         this.failPlugin(instance.descriptor.manifest.id as string, "plugin runtime token mismatch");
         return;
       }
@@ -660,16 +683,26 @@ export class PluginRuntime {
     }
   }
 
-  private findInstanceByWindow(source: MessageEventSource | null): ActivePluginInstance | null {
-    if (!source || typeof source !== "object") {
-      return null;
-    }
-    for (const instance of this.activeInstances.values()) {
-      if (instance.iframe.contentWindow === source) {
-        return instance;
+  private findInstanceForMessage(source: MessageEventSource | null, data: PluginRuntimeMessage): ActivePluginInstance | null {
+    if (source && typeof source === "object") {
+      for (const instance of this.activeInstances.values()) {
+        if (instance.iframe.contentWindow === source) {
+          return instance;
+        }
       }
     }
-    return null;
+
+    if (!("pluginId" in data) || !data.pluginId) {
+      return null;
+    }
+    const candidate = this.activeInstances.get(String(data.pluginId));
+    if (!candidate) {
+      return null;
+    }
+    if ("bootstrapToken" in data && data.bootstrapToken && data.bootstrapToken !== candidate.bootstrapToken) {
+      return null;
+    }
+    return candidate;
   }
 
   private async processBridgeRequest(
@@ -953,7 +986,7 @@ export class PluginRuntime {
 
   private emitEvent(eventType: RuntimeEventType, payload: Record<string, unknown>) {
     const eventEnvelope: PluginEventPayload = {
-      id: crypto.randomUUID() as PluginEventPayload["id"],
+      id: randomID() as PluginEventPayload["id"],
       pluginId: "host.runtime" as PluginEventPayload["pluginId"],
       eventType,
       payload,

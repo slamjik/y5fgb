@@ -171,15 +171,18 @@ export function ConversationPage() {
       </p>
 
       <div className="card">
-        <p>
-          <strong>{t("home.transport")}:</strong> {transport.mode} / {transport.status}
-        </p>
-        <p className="text-muted">
-          {t("common.endpoint")}: {transport.endpoint ?? "-"}
-        </p>
+        <div className="message-topline">
+          <p>
+            <strong>{t("home.transport")}:</strong> {transport.mode} / {transport.status}
+          </p>
+          <span className={`status-chip status-${transport.status === "offline" ? "failed" : transport.status === "degraded" ? "queued" : "delivered"}`}>
+            {transport.status}
+          </span>
+        </div>
+        <p className="text-muted">{t("common.endpoint")}: {transport.endpoint ?? "-"}</p>
         {transport.lastError ? <p className="error-text">{transport.lastError}</p> : null}
         <p className="text-muted">
-          {t("nav.outbox")}: {conversationOutbox.length}
+          {t("nav.outbox")}: {conversationOutbox.length} | {t("common.syncCursor")}: {transport.lastCursor}
         </p>
       </div>
 
@@ -229,6 +232,9 @@ export function ConversationPage() {
             const isExpired = message.envelope.expiresAt ? new Date(message.envelope.expiresAt).getTime() <= clock : false;
             const statusLabel = t(`messaging.status.${message.lifecycle}` as const);
             const hasPreview = Boolean(message.plaintext?.text);
+            const timeToExpireSec = message.envelope.expiresAt
+              ? Math.max(0, Math.floor((new Date(message.envelope.expiresAt).getTime() - clock) / 1000))
+              : null;
 
             return (
               <article className={`message-item ${isMine ? "mine" : "theirs"}`} key={`${message.envelope.id}-${message.envelope.senderDeviceId}`}>
@@ -238,6 +244,11 @@ export function ConversationPage() {
                   <span className={`status-chip status-${message.lifecycle}`}>{statusLabel}</span>
                 </div>
                 <p className="message-meta">{formatTimestamp(message.envelope.createdAt)}</p>
+                {!isExpired && timeToExpireSec !== null ? (
+                  <p className="message-meta">
+                    TTL: {timeToExpireSec}s
+                  </p>
+                ) : null}
 
                 {isExpired ? <p className="message-text text-muted">[{t("messaging.expired")}]</p> : null}
                 {!isExpired && hasPreview ? <p className="message-text">{message.plaintext?.text}</p> : null}

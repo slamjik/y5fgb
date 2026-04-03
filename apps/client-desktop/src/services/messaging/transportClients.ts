@@ -36,7 +36,14 @@ export class WebSocketTransport {
     const protocolAuth = `sm.auth.${accessToken}`;
 
     this.endpoint = endpoint;
-    this.ws = new WebSocket(url.toString(), [protocolAuth, "sm.v1"]);
+    try {
+      this.ws = new WebSocket(url.toString(), [protocolAuth, "sm.v1"]);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "failed to initialize websocket";
+      this.handlers.onError(endpoint, message);
+      this.handlers.onDisconnected(endpoint, message);
+      return;
+    }
 
     this.ws.onopen = () => {
       this.handlers.onConnected(endpoint);
@@ -51,8 +58,7 @@ export class WebSocketTransport {
     };
 
     this.ws.onclose = (event) => {
-      const reason = event.reason?.trim();
-      const composedReason = reason ? `${reason} (code=${event.code})` : `code=${event.code}`;
+      const composedReason = describeCloseReason(event);
       this.handlers.onDisconnected(endpoint, composedReason);
     };
   }
@@ -97,4 +103,21 @@ export class WebSocketTransport {
       logger.debug("failed to parse websocket message payload", { endpoint, error: String(error) });
     }
   }
+}
+
+function describeCloseReason(event: CloseEvent): string {
+  const reason = event.reason?.trim();
+  if (reason) {
+    return `${reason} (code=${event.code})`;
+  }
+  if (event.code === 1000) {
+    return "websocket closed normally (code=1000)";
+  }
+  if (event.code === 1006) {
+    return "websocket closed unexpectedly (code=1006)";
+  }
+  if (event.code === 1001) {
+    return "websocket endpoint became unavailable (code=1001)";
+  }
+  return `code=${event.code}`;
 }

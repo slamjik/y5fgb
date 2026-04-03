@@ -43,6 +43,33 @@ export function OnboardingPage() {
         </div>
       </article>
 
+      <div className="card-grid">
+        <article className="card">
+          <h2>{t("onboarding.serverConnectTitle")}</h2>
+          <p className="text-muted">{t("onboarding.serverConnectHint")}</p>
+          <ol className="checklist">
+            <li>{t("onboarding.serverConnectStepInput")}</li>
+            <li>{t("onboarding.serverConnectStepResolve")}</li>
+            <li>{t("onboarding.serverConnectStepFallback")}</li>
+          </ol>
+        </article>
+
+        <article className="card">
+          <h2>{t("onboarding.twoFATitle")}</h2>
+          <p className="text-muted">{t("onboarding.twoFAHint")}</p>
+          <ol className="checklist">
+            <li>{t("onboarding.twoFAStepStart")}</li>
+            <li>{t("onboarding.twoFAStepConfirm")}</li>
+            <li>{t("onboarding.twoFAStepRecovery")}</li>
+          </ol>
+          <div className="inline-actions section-offset-sm">
+            <Link className="button-link" to="/devices">
+              {t("onboarding.openDevices")}
+            </Link>
+          </div>
+        </article>
+      </div>
+
       <div className="inline-actions section-offset-sm">
         <button type="button" onClick={finishOnboarding}>
           {t("onboarding.complete")}

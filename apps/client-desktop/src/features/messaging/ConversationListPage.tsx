@@ -5,6 +5,7 @@ import { Link } from "react-router-dom";
 import { extractApiErrorMessage } from "@/services/apiClient";
 import { messagingRuntime } from "@/services/messaging/runtime";
 import { useMessagingStore } from "@/state/messagingStore";
+import { useAuthStore } from "@/state/authStore";
 
 export function ConversationListPage() {
   const { t } = useTranslation();
@@ -13,12 +14,14 @@ export function ConversationListPage() {
   const conversations = useMessagingStore((state) => state.conversations);
   const transport = useMessagingStore((state) => state.transport);
   const outbox = useMessagingStore((state) => state.outbox);
+  const session = useAuthStore((state) => state.session);
 
   const [directAccountId, setDirectAccountId] = useState("");
   const [groupTitle, setGroupTitle] = useState("");
   const [groupMembers, setGroupMembers] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const sortedConversations = useMemo(
     () =>
@@ -72,6 +75,19 @@ export function ConversationListPage() {
       setError(extractApiErrorMessage(createError));
     } finally {
       setWorking(false);
+    }
+  }
+
+  async function copyMyAccountID() {
+    if (!session?.accountId) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(session.accountId);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1200);
+    } catch (copyError) {
+      setError(extractApiErrorMessage(copyError));
     }
   }
 
@@ -134,6 +150,22 @@ export function ConversationListPage() {
             </Link>
             <Link className="button-link" to="/messaging/outbox">
               {t("nav.outbox")} ({outbox.length})
+            </Link>
+          </div>
+        </article>
+
+        <article className="card">
+          <h2>{t("devices.accountIdentity")}</h2>
+          <p className="text-muted">{t("messaging.peerAccountId")}</p>
+          <p>
+            <code>{session?.accountId ?? "-"}</code>
+          </p>
+          <div className="inline-actions section-offset-sm">
+            <button type="button" onClick={() => void copyMyAccountID()} disabled={!session?.accountId}>
+              {copied ? t("common.copied") : t("devices.copyAccountId")}
+            </button>
+            <Link className="button-link" to="/devices">
+              {t("settings.accountDevices")}
             </Link>
           </div>
         </article>

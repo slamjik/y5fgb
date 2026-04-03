@@ -62,6 +62,9 @@ export function Sidebar() {
             <NavLink className="sidebar-link" to="/devices">
               {t("nav.devices")}
             </NavLink>
+            <NavLink className="sidebar-link" to="/friends">
+              {t("nav.friends")}
+            </NavLink>
             <NavLink className="sidebar-link" to="/security-events">
               {t("nav.securityEvents")}
             </NavLink>

@@ -232,7 +232,7 @@ export function DevicesPage() {
           </p>
           <div className="inline-actions">
             <button type="button" onClick={() => void copyAccountID(session.accountId)}>
-              {copiedAccountId ? "Copied" : "Copy Account ID"}
+              {copiedAccountId ? t("common.copied") : t("devices.copyAccountId")}
             </button>
           </div>
           <p>{t("home.email")}: {session.email || "-"}</p>
@@ -356,7 +356,12 @@ export function DevicesPage() {
         <article className="card">
           <h2>{t("devices.recoveryCodes")}</h2>
           <p className="text-muted">{t("devices.recoveryHint")}</p>
-          {recoveryCodes.length === 0 ? <p>{t("devices.noRecoveryCodes")}</p> : null}
+          {recoveryCodes.length === 0 ? (
+            <>
+              <p>{t("devices.noRecoveryCodes")}</p>
+              <p className="text-muted">{t("devices.recoveryCodesSessionNote")}</p>
+            </>
+          ) : null}
           {recoveryCodes.map((code) => (
             <code key={code} className="inline-code">
               {code}
