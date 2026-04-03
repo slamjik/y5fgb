@@ -1,4 +1,5 @@
-﻿import { useTranslation } from "react-i18next";
+import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 
 import { MessengerShell } from "@/features/messaging/MessengerShell";
@@ -7,6 +8,20 @@ import { useAuthStore } from "@/state/authStore";
 export function ConversationListPage() {
   const { t } = useTranslation();
   const session = useAuthStore((state) => state.session);
+  const [copied, setCopied] = useState(false);
+
+  async function copyAccountId() {
+    if (!session?.accountId) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(session.accountId);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setCopied(false);
+    }
+  }
 
   return (
     <MessengerShell>
@@ -26,9 +41,17 @@ export function ConversationListPage() {
           </Link>
         </div>
 
-        <div className="inline-code-wrap">
-          <span className="inline-code">{t("devices.accountIdLabel")}: {session?.accountId ?? "-"}</span>
-        </div>
+        {session?.accountId ? (
+          <div className="account-share-card">
+            <div>
+              <p className="text-muted">{t("devices.accountIdLabel")}</p>
+              <code className="account-share-code">{session.accountId}</code>
+            </div>
+            <button type="button" className="button-ghost" onClick={() => void copyAccountId()}>
+              {copied ? t("common.copied") : t("devices.copyAccountId")}
+            </button>
+          </div>
+        ) : null}
       </article>
     </MessengerShell>
   );

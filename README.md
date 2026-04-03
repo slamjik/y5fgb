@@ -182,6 +182,7 @@ CI workflow: [`.github/workflows/desktop-release.yml`](.github/workflows/desktop
 - [`docs/desktop-auto-update.md`](docs/desktop-auto-update.md)
 - [`docs/web-readiness.md`](docs/web-readiness.md)
 - [`docs/frontend-layering.md`](docs/frontend-layering.md)
+- [`docs/product-web-foundation.md`](docs/product-web-foundation.md)
 - [`docs/browser-security-model.md`](docs/browser-security-model.md)
 - [`docs/deployment-web-architecture.md`](docs/deployment-web-architecture.md)
 - [`docs/session-model.md`](docs/session-model.md)

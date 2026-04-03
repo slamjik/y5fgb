@@ -166,6 +166,14 @@ export function MessengerShell({ activeConversationId = null, children }: Messen
     return dateFormatter.format(date);
   }
 
+  function formatConversationMeta(conversation: ConversationPreview) {
+    const kind = conversation.type === "group" ? t("messaging.messageTypeGroup") : t("messaging.messageTypeDirect");
+    if (conversation.defaultTtlSeconds > 0) {
+      return `${kind} · ${t("groups.membersTitle")}: ${conversation.membersCount} · TTL ${conversation.defaultTtlSeconds}s`;
+    }
+    return `${kind} · ${t("groups.membersTitle")}: ${conversation.membersCount}`;
+  }
+
   return (
     <section className="messenger-layout">
       <aside className="messenger-list-pane card">
@@ -193,7 +201,11 @@ export function MessengerShell({ activeConversationId = null, children }: Messen
           <form className="messenger-creator form-grid" onSubmit={handleCreateDirect}>
             <label>
               {t("messaging.peerAccountId")}
-              <input value={directAccountId} onChange={(event) => setDirectAccountId(event.target.value)} placeholder="account uuid" />
+              <input
+                value={directAccountId}
+                onChange={(event) => setDirectAccountId(event.target.value)}
+                placeholder={t("devices.accountIdLabel")}
+              />
             </label>
             <button type="submit" disabled={!canCreateConversation || !directAccountId.trim()}>
               {t("messaging.createDirectAction")}
@@ -209,7 +221,12 @@ export function MessengerShell({ activeConversationId = null, children }: Messen
             </label>
             <label>
               {t("messaging.groupMembers")}
-              <textarea value={groupMembers} onChange={(event) => setGroupMembers(event.target.value)} rows={2} placeholder="uuid-1, uuid-2" />
+              <textarea
+                value={groupMembers}
+                onChange={(event) => setGroupMembers(event.target.value)}
+                rows={2}
+                placeholder={`${t("devices.accountIdLabel")} 1, ${t("devices.accountIdLabel")} 2`}
+              />
             </label>
             <button type="submit" disabled={!canCreateConversation || !groupTitle.trim()}>
               {t("messaging.createGroupAction")}
@@ -243,9 +260,7 @@ export function MessengerShell({ activeConversationId = null, children }: Messen
                     <span className="conversation-preview">{conversation.lastText}</span>
                     {conversation.unreadCount > 0 ? <span className="unread-pill">{conversation.unreadCount}</span> : null}
                   </span>
-                  <span className="conversation-meta-row text-muted">
-                    {conversation.type === "group" ? t("messaging.messageTypeGroup") : t("messaging.messageTypeDirect")} · {t("groups.membersTitle")}: {conversation.membersCount} · TTL {conversation.defaultTtlSeconds}s
-                  </span>
+                  <span className="conversation-meta-row text-muted">{formatConversationMeta(conversation)}</span>
                 </span>
               </button>
             );
@@ -253,10 +268,10 @@ export function MessengerShell({ activeConversationId = null, children }: Messen
         </div>
 
         <footer className="messenger-list-footer">
-          <div>
+          <div className="messenger-footer-line">
             <strong>{t("home.transport")}</strong>: {transport.mode} / {transport.status}
           </div>
-          <div className="text-muted">{t("nav.outbox")}: {outbox.length}</div>
+          <div className="text-muted messenger-footer-line">{t("nav.outbox")}: {outbox.length}</div>
           {transport.lastError ? <p className="error-text">{transport.lastError}</p> : null}
           <Link className="button-link" to="/messaging/transport">
             {t("settings.transportHealth")}

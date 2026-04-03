@@ -28,6 +28,21 @@ export function Sidebar() {
   );
 
   const profileLabel = profile.displayName.trim() || session?.email || t("friends.profileFallback");
+  const connectionLabel = hasServerConnection ? t("home.ready") : t("home.disabled");
+  const navItems = hasServerConnection
+    ? session
+      ? [
+          { to: "/", label: t("nav.conversations"), icon: "💬" },
+          { to: "/friends", label: t("nav.friends"), icon: "🤝" },
+          { to: "/devices", label: t("nav.devices"), icon: "🛡️" },
+          { to: "/plugins", label: t("nav.plugins"), icon: "🧩" },
+          { to: "/settings", label: t("nav.settings"), icon: "⚙️" },
+        ]
+      : [
+          { to: "/auth/login", label: t("nav.login"), icon: "🔐" },
+          { to: "/auth/register", label: t("nav.register"), icon: "📝" },
+        ]
+    : [{ to: "/connect-server", label: t("serverConnect.title"), icon: "🌐" }];
 
   async function logout() {
     const refreshToken = await secureStorage.get(REFRESH_TOKEN_KEY);
@@ -44,7 +59,13 @@ export function Sidebar() {
 
   return (
     <aside className="app-sidebar">
-      <div className="sidebar-brand">{t("common.appName")}</div>
+      <div className="sidebar-brand-wrap">
+        <div className="sidebar-brand-row">
+          <div className="sidebar-brand">{t("common.appName")}</div>
+          <span className={`status-chip ${hasServerConnection ? "status-delivered" : "status-failed"}`}>{connectionLabel}</span>
+        </div>
+        <p className="sidebar-brand-subtitle">{t("messaging.conversationsSubtitle")}</p>
+      </div>
 
       <section className="sidebar-profile-card">
         <div className="avatar-badge" style={{ backgroundColor: profile.avatarColor }} aria-hidden="true">
@@ -63,47 +84,36 @@ export function Sidebar() {
       </div>
 
       <nav className="sidebar-nav">
-        {!hasServerConnection ? (
-          <NavLink className="sidebar-link" to="/connect-server">
-            {t("serverConnect.title")}
+        {!onboardingCompleted && session ? (
+          <NavLink className="sidebar-link" to="/onboarding">
+            <span className="sidebar-link-content">
+              <span className="sidebar-link-icon" aria-hidden="true">
+                🚀
+              </span>
+              <span className="sidebar-link-label">{t("nav.onboarding")}</span>
+            </span>
           </NavLink>
-        ) : session ? (
-          <>
-            {!onboardingCompleted ? (
-              <NavLink className="sidebar-link" to="/onboarding">
-                {t("nav.onboarding")}
-              </NavLink>
-            ) : null}
-            <NavLink className="sidebar-link" to="/">
-              {t("nav.conversations")}
-            </NavLink>
-            <NavLink className="sidebar-link" to="/friends">
-              {t("nav.friends")}
-            </NavLink>
-            <NavLink className="sidebar-link" to="/devices">
-              {t("nav.devices")}
-            </NavLink>
-            <NavLink className="sidebar-link" to="/plugins">
-              {t("nav.plugins")}
-            </NavLink>
-            <NavLink className="sidebar-link" to="/settings">
-              {t("nav.settings")}
-            </NavLink>
-          </>
-        ) : (
-          <>
-            <NavLink className="sidebar-link" to="/auth/login">
-              {t("nav.login")}
-            </NavLink>
-            <NavLink className="sidebar-link" to="/auth/register">
-              {t("nav.register")}
-            </NavLink>
-          </>
-        )}
+        ) : null}
+
+        {navItems.map((item) => (
+          <NavLink key={item.to} className="sidebar-link" to={item.to}>
+            <span className="sidebar-link-content">
+              <span className="sidebar-link-icon" aria-hidden="true">
+                {item.icon}
+              </span>
+              <span className="sidebar-link-label">{item.label}</span>
+            </span>
+          </NavLink>
+        ))}
 
         {session ? (
           <button className="sidebar-link" type="button" onClick={logout}>
-            {t("nav.logout")}
+            <span className="sidebar-link-content">
+              <span className="sidebar-link-icon" aria-hidden="true">
+                ↩️
+              </span>
+              <span className="sidebar-link-label">{t("nav.logout")}</span>
+            </span>
           </button>
         ) : null}
       </nav>

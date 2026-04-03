@@ -109,6 +109,24 @@ h2 {
   letter-spacing: 0.2px;
 }
 
+.sidebar-brand-wrap {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.sidebar-brand-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.sidebar-brand-subtitle {
+  color: var(--color-text-muted);
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
 .sidebar-profile-card {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -167,6 +185,27 @@ h2 {
 .sidebar-link.active {
   border-color: rgba(90, 167, 255, 0.68);
   background: rgba(85, 167, 255, 0.24);
+}
+
+.sidebar-link-content {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.sidebar-link-icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(77, 146, 224, 0.2);
+  border: 1px solid rgba(126, 186, 255, 0.24);
+}
+
+.sidebar-link-label {
+  font-weight: 500;
 }
 
 .sidebar-primary-link {
@@ -292,6 +331,54 @@ h2 {
   border-color: rgba(96, 172, 255, 0.42);
   box-shadow: var(--shadow-md);
   transform: translateY(-1px);
+}
+
+.home-hero-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.home-hero-main {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.home-hero-badges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.home-stats-grid {
+  align-items: stretch;
+}
+
+.home-stat-card {
+  align-content: start;
+}
+
+.home-kpi-list {
+  display: grid;
+  gap: 8px;
+}
+
+.home-kpi-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  border: 1px solid rgba(150, 178, 219, 0.2);
+  border-radius: var(--radius-sm);
+  background: rgba(14, 22, 35, 0.62);
+  padding: 9px 10px;
+}
+
+.home-quick-actions {
+  gap: var(--space-3);
 }
 
 .list-item {
@@ -530,6 +617,18 @@ button:disabled {
   color: #d0ddee;
 }
 
+.status-warning {
+  background: rgba(255, 190, 87, 0.2);
+  border-color: rgba(255, 190, 87, 0.44);
+  color: #ffd494;
+}
+
+.status-trusted {
+  background: rgba(73, 211, 168, 0.18);
+  border-color: rgba(73, 211, 168, 0.4);
+  color: #9af1d4;
+}
+
 .messenger-layout {
   display: grid;
   gap: var(--space-4);
@@ -690,6 +789,12 @@ button:disabled {
   border-top: 1px solid rgba(144, 170, 211, 0.2);
 }
 
+.messenger-footer-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .messenger-content-pane {
   min-width: 0;
 }
@@ -703,6 +808,25 @@ button:disabled {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
+}
+
+.account-share-card {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: center;
+  justify-content: space-between;
+  border: 1px solid rgba(139, 174, 221, 0.32);
+  border-radius: var(--radius-md);
+  background: rgba(11, 19, 31, 0.82);
+  padding: var(--space-3);
+}
+
+.account-share-code {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: #d7eaff;
+  word-break: break-all;
 }
 
 .chat-workspace {
@@ -1029,6 +1153,10 @@ button:disabled {
 @media (max-width: 900px) {
   .app-main {
     padding: var(--space-4);
+  }
+
+  .home-hero-badges {
+    justify-content: flex-start;
   }
 
   .messenger-layout {
