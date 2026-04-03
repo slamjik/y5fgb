@@ -164,11 +164,31 @@ func (s *Service) Register(ctx context.Context, input RegisterInput) (*SessionEn
 		Device:   device,
 	})
 	if err != nil {
-		if strings.Contains(strings.ToLower(err.Error()), "duplicate") {
+		if errors.Is(err, postgres.ErrDuplicateAccountEmail) {
 			return nil, nil, service.NewError(service.ErrorCodeAccountAlreadyExists, "account already exists")
 		}
+
+		// A device id can already exist (for example when the same desktop re-registers a new account).
+		// Retry once with a fresh server-side device id instead of misreporting "account already exists".
+		if errors.Is(err, postgres.ErrDuplicateDeviceID) {
+			device.ID = security.NewID()
+			createdAccount, createdIdentity, createdDevice, err = s.repo.CreateAccountWithIdentityAndFirstDevice(ctx, postgres.CreateAccountParams{
+				Account:  account,
+				Identity: identity,
+				Device:   device,
+			})
+			if err == nil {
+				goto registrationCreated
+			}
+			if errors.Is(err, postgres.ErrDuplicateAccountEmail) {
+				return nil, nil, service.NewError(service.ErrorCodeAccountAlreadyExists, "account already exists")
+			}
+		}
+
 		return nil, nil, service.NewError(service.ErrorCodeInternal, "failed to create account")
 	}
+
+registrationCreated:
 
 	recoveryCodes, recoveryCodeModels, err := s.generateRecoveryCodes(createdAccount.ID, 10)
 	if err != nil {

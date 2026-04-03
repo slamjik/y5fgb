@@ -46,7 +46,7 @@ func (s *Store) CreateAccountWithIdentityAndFirstDevice(ctx context.Context, par
 		VALUES ($1, $2, $3, $4, $5, $6)
 	`, params.Account.ID, params.Account.Email, params.Account.PasswordHash, params.Account.TwoFAEnabled, params.Account.CreatedAt, params.Account.UpdatedAt)
 	if err != nil {
-		return domain.Account{}, domain.AccountIdentity{}, domain.Device{}, fmt.Errorf("failed to insert account: %w", err)
+		return domain.Account{}, domain.AccountIdentity{}, domain.Device{}, normalizeWriteError(fmt.Errorf("failed to insert account: %w", err))
 	}
 
 	_, err = tx.Exec(ctx, `
@@ -85,7 +85,7 @@ func (s *Store) CreateAccountWithIdentityAndFirstDevice(ctx context.Context, par
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 	`, params.Device.ID, params.Device.AccountID, params.Device.Name, params.Device.Platform, params.Device.PublicDeviceMaterial, params.Device.Fingerprint, params.Device.Status, params.Device.VerificationState, params.Device.KeyVersion, params.Device.RotatedAt, params.Device.RotationDueAt, params.Device.CreatedAt, params.Device.CreatedAt, params.Device.CreatedAt)
 	if err != nil {
-		return domain.Account{}, domain.AccountIdentity{}, domain.Device{}, fmt.Errorf("failed to insert first device: %w", err)
+		return domain.Account{}, domain.AccountIdentity{}, domain.Device{}, normalizeWriteError(fmt.Errorf("failed to insert first device: %w", err))
 	}
 
 	lastSeen := params.Device.CreatedAt
