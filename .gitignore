@@ -29,3 +29,7 @@ Thumbs.db
 
 # Runtime data
 apps/relay-server/data/
+
+# Web-first workflow: local desktop work goes here and is ignored
+desktop-workspace/*
+!desktop-workspace/README.md
