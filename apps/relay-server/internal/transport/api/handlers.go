@@ -69,11 +69,17 @@ func RegisterRoutes(mux *http.ServeMux, prefix string, handler *Handler, authSer
 
 	mux.HandleFunc(base+"/auth/register", handler.handleRegister)
 	mux.HandleFunc(base+"/auth/login", handler.handleLogin)
+	mux.HandleFunc(base+"/auth/web/login", handler.handleWebLogin)
 	mux.HandleFunc(base+"/auth/2fa/login/verify", handler.handleTwoFALoginVerify)
+	mux.HandleFunc(base+"/auth/web/2fa/verify", handler.handleWebTwoFALoginVerify)
 	mux.HandleFunc(base+"/auth/refresh", handler.handleRefresh)
+	mux.HandleFunc(base+"/auth/web/refresh", handler.handleWebRefresh)
 	mux.HandleFunc(base+"/auth/logout", handler.handleLogout)
+	mux.Handle(base+"/auth/web/logout", middleware.AuthRequired(authService, http.HandlerFunc(handler.handleWebLogout)))
 	mux.Handle(base+"/auth/logout-all", middleware.AuthRequired(authService, http.HandlerFunc(handler.handleLogoutAll)))
+	mux.Handle(base+"/auth/web/logout-all", middleware.AuthRequired(authService, http.HandlerFunc(handler.handleWebLogoutAll)))
 	mux.Handle(base+"/auth/session", middleware.AuthRequired(authService, http.HandlerFunc(handler.handleSession)))
+	mux.Handle(base+"/auth/web/session", middleware.AuthRequired(authService, http.HandlerFunc(handler.handleWebSession)))
 
 	mux.Handle(base+"/auth/2fa/setup/start", middleware.AuthRequired(authService, http.HandlerFunc(handler.handleTwoFASetupStart)))
 	mux.Handle(base+"/auth/2fa/setup/confirm", middleware.AuthRequired(authService, http.HandlerFunc(handler.handleTwoFASetupConfirm)))
@@ -209,6 +215,53 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, buildEnvelopeResponse(result.Session, nil))
 }
 
+func (h *Handler) handleWebLogin(w http.ResponseWriter, r *http.Request) {
+	if !h.enforceRateLimit(w, r, h.authRateLimiter) {
+		return
+	}
+	if r.Method != http.MethodPost {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "method not allowed"), http.StatusMethodNotAllowed)
+		return
+	}
+	if !h.enforceBodySize(w, r, maxAuthBodyBytes) {
+		return
+	}
+
+	var req webLoginRequest
+	if err := middleware.DecodeJSON(r, &req); err != nil {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "invalid request body"), http.StatusBadRequest)
+		return
+	}
+
+	result, err := h.authService.LoginWeb(r.Context(), auth.WebLoginInput{
+		Email:              req.Email,
+		Password:           req.Password,
+		SessionPersistence: req.SessionPersistence,
+		UserAgent:          r.UserAgent(),
+		IPAddress:          r.RemoteAddr,
+	})
+	if err != nil {
+		WriteServiceError(w, r, err, http.StatusUnauthorized)
+		return
+	}
+
+	if result.TwoFAChallengeID != "" {
+		WriteJSON(w, http.StatusUnauthorized, map[string]any{
+			"error": map[string]any{
+				"code":       service.ErrorCodeTwoFARequired,
+				"message":    "two-factor verification is required",
+				"request_id": middleware.RequestIDFromContext(r.Context()),
+			},
+			"challengeId": result.TwoFAChallengeID,
+			"loginToken":  result.TwoFALoginToken,
+			"expiresAt":   result.TwoFAChallengeExpires.UTC().Format(time.RFC3339),
+		})
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, buildEnvelopeResponse(result.Session, nil))
+}
+
 func (h *Handler) handleTwoFALoginVerify(w http.ResponseWriter, r *http.Request) {
 	if !h.enforceRateLimit(w, r, h.authRateLimiter) {
 		return
@@ -243,6 +296,40 @@ func (h *Handler) handleTwoFALoginVerify(w http.ResponseWriter, r *http.Request)
 	WriteJSON(w, http.StatusOK, buildEnvelopeResponse(result, nil))
 }
 
+func (h *Handler) handleWebTwoFALoginVerify(w http.ResponseWriter, r *http.Request) {
+	if !h.enforceRateLimit(w, r, h.authRateLimiter) {
+		return
+	}
+	if r.Method != http.MethodPost {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "method not allowed"), http.StatusMethodNotAllowed)
+		return
+	}
+	if !h.enforceBodySize(w, r, maxAuthBodyBytes) {
+		return
+	}
+
+	var req webTwoFALoginVerifyRequest
+	if err := middleware.DecodeJSON(r, &req); err != nil {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "invalid request body"), http.StatusBadRequest)
+		return
+	}
+
+	result, err := h.authService.VerifyWebTwoFALogin(r.Context(), auth.VerifyWebTwoFALoginInput{
+		ChallengeID:        req.ChallengeID,
+		LoginToken:         req.LoginToken,
+		Code:               req.Code,
+		SessionPersistence: req.SessionPersistence,
+		UserAgent:          r.UserAgent(),
+		IPAddress:          r.RemoteAddr,
+	})
+	if err != nil {
+		WriteServiceError(w, r, err, http.StatusUnauthorized)
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, buildEnvelopeResponse(result, nil))
+}
+
 func (h *Handler) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "method not allowed"), http.StatusMethodNotAllowed)
@@ -253,6 +340,30 @@ func (h *Handler) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req refreshRequest
+	if err := middleware.DecodeJSON(r, &req); err != nil {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "invalid request body"), http.StatusBadRequest)
+		return
+	}
+
+	result, err := h.authService.Refresh(r.Context(), req.RefreshToken)
+	if err != nil {
+		WriteServiceError(w, r, err, http.StatusUnauthorized)
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, buildEnvelopeResponse(result, nil))
+}
+
+func (h *Handler) handleWebRefresh(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "method not allowed"), http.StatusMethodNotAllowed)
+		return
+	}
+	if !h.enforceBodySize(w, r, maxAuthBodyBytes) {
+		return
+	}
+
+	var req webRefreshRequest
 	if err := middleware.DecodeJSON(r, &req); err != nil {
 		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "invalid request body"), http.StatusBadRequest)
 		return
@@ -301,6 +412,36 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+func (h *Handler) handleWebLogout(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "method not allowed"), http.StatusMethodNotAllowed)
+		return
+	}
+	if !h.enforceBodySize(w, r, maxAuthBodyBytes) {
+		return
+	}
+
+	var req webLogoutRequest
+	if r.ContentLength > 0 {
+		if err := middleware.DecodeJSON(r, &req); err != nil {
+			WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "invalid request body"), http.StatusBadRequest)
+			return
+		}
+	}
+
+	principal, ok := middleware.PrincipalFromContext(r.Context())
+	if !ok {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeUnauthorized, "missing auth context"), http.StatusUnauthorized)
+		return
+	}
+	if err := h.authService.Logout(r.Context(), &principal, req.RefreshToken); err != nil {
+		WriteServiceError(w, r, err, http.StatusUnauthorized)
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 func (h *Handler) handleLogoutAll(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "method not allowed"), http.StatusMethodNotAllowed)
@@ -318,6 +459,10 @@ func (h *Handler) handleLogoutAll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	WriteJSON(w, http.StatusOK, map[string]any{"revokedSessions": revoked})
+}
+
+func (h *Handler) handleWebLogoutAll(w http.ResponseWriter, r *http.Request) {
+	h.handleLogoutAll(w, r)
 }
 
 func (h *Handler) handleSession(w http.ResponseWriter, r *http.Request) {
@@ -346,6 +491,10 @@ func (h *Handler) handleSession(w http.ResponseWriter, r *http.Request) {
 		"device":           mapDevice(envelope.Device),
 		"session":          mapSession(envelope.Session, envelope.Device),
 	})
+}
+
+func (h *Handler) handleWebSession(w http.ResponseWriter, r *http.Request) {
+	h.handleSession(w, r)
 }
 
 func (h *Handler) handleTwoFASetupStart(w http.ResponseWriter, r *http.Request) {
@@ -1108,13 +1257,13 @@ func (h *Handler) handlePublicConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	host := requestHost(r)
+	host := requestHost(r, h.cfg.WebSecurity.TrustProxyHeaders)
 	if host == "" {
 		WriteServiceError(w, r, service.NewError(service.ErrorCodeInternal, "failed to resolve host"), http.StatusInternalServerError)
 		return
 	}
 
-	scheme := requestScheme(r)
+	scheme := requestScheme(r, h.cfg.WebSecurity.TrustProxyHeaders)
 	wsScheme := "ws"
 	if scheme == "https" {
 		wsScheme = "wss"
@@ -1124,6 +1273,17 @@ func (h *Handler) handlePublicConfig(w http.ResponseWriter, r *http.Request) {
 		"api_base":   fmt.Sprintf("%s://%s", scheme, host),
 		"ws_url":     fmt.Sprintf("%s://%s%s", wsScheme, host, h.cfg.HTTP.WebSocketPath),
 		"api_prefix": h.cfg.HTTP.APIPrefix,
+		"policy_hints": publicConfigPolicyHintsDTO{
+			AuthModesSupported:            []string{"device", "browser_session"},
+			BrowserSessionDefaultPersist:  h.cfg.WebSession.DefaultPersistence,
+			BrowserSessionAllowRemembered: h.cfg.WebSession.AllowRemembered,
+		},
+		"transport_profile_hints": publicConfigTransportHintsDTO{
+			ReconnectBackoffMinMS: int(h.cfg.Transport.ReconnectBackoffMin.Milliseconds()),
+			ReconnectBackoffMaxMS: int(h.cfg.Transport.ReconnectBackoffMax.Milliseconds()),
+			LongPollTimeoutSec:    int(h.cfg.Transport.LongPollTimeout.Seconds()),
+			LongPollEnabled:       h.cfg.Transport.LongPollEnabled,
+		},
 	})
 }
 
@@ -1234,15 +1394,17 @@ func defaultSyncQueryLimit(raw string) int {
 	return parsed
 }
 
-func requestScheme(r *http.Request) string {
-	if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); forwarded != "" {
-		parts := strings.Split(forwarded, ",")
-		candidate := strings.ToLower(strings.TrimSpace(parts[0]))
-		if candidate == "https" {
-			return "https"
-		}
-		if candidate == "http" {
-			return "http"
+func requestScheme(r *http.Request, trustProxyHeaders bool) string {
+	if trustProxyHeaders {
+		if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); forwarded != "" {
+			parts := strings.Split(forwarded, ",")
+			candidate := strings.ToLower(strings.TrimSpace(parts[0]))
+			if candidate == "https" {
+				return "https"
+			}
+			if candidate == "http" {
+				return "http"
+			}
 		}
 	}
 	if r.TLS != nil {
@@ -1251,12 +1413,14 @@ func requestScheme(r *http.Request) string {
 	return "http"
 }
 
-func requestHost(r *http.Request) string {
-	if forwardedHost := strings.TrimSpace(r.Header.Get("X-Forwarded-Host")); forwardedHost != "" {
-		parts := strings.Split(forwardedHost, ",")
-		candidate := strings.TrimSpace(parts[0])
-		if candidate != "" {
-			return candidate
+func requestHost(r *http.Request, trustProxyHeaders bool) string {
+	if trustProxyHeaders {
+		if forwardedHost := strings.TrimSpace(r.Header.Get("X-Forwarded-Host")); forwardedHost != "" {
+			parts := strings.Split(forwardedHost, ",")
+			candidate := strings.TrimSpace(parts[0])
+			if candidate != "" {
+				return candidate
+			}
 		}
 	}
 	return strings.TrimSpace(r.Host)

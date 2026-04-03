@@ -8,6 +8,7 @@
 ### Русский
 Репозиторий состоит из двух основных частей:
 - `apps/client-desktop` — desktop-клиент (UI, локальная криптография, device trust, плагины, локальное хранилище).
+- `apps/client-web` — web-клиент (архитектурный placeholder, финальный UI вне текущего этапа).
 - `apps/relay-server` — relay/backend (auth, device trust, sync, delivery queue, metadata attachments).
 
 Сервер **не расшифровывает** сообщения: хранит и ретранслирует только зашифрованные envelope и служебные метаданные.
@@ -15,6 +16,7 @@
 ### English
 The system has two main layers:
 - `apps/client-desktop` — desktop client (UI, local crypto, device trust, plugins, local storage).
+- `apps/client-web` — web client (architecture placeholder, final UI is out of this stage scope).
 - `apps/relay-server` — relay/backend (auth, device trust, sync, delivery queue, attachment metadata).
 
 The server **does not decrypt** message content: it stores and relays encrypted envelopes plus transport metadata only.
@@ -156,7 +158,10 @@ CI workflow: [`.github/workflows/desktop-release.yml`](.github/workflows/desktop
 - `npm run dev:infra:down` — stop dev infra
 - `npm run dev:server` — run relay locally
 - `npm run dev:client` — run client (Vite)
+- `npm run dev:web` — run web foundation shell
 - `npm run test:server` — Go tests
+- `npm run check:boundaries` — cross-platform import boundary checks
+- `npm run build:web-foundation` — run boundary checks and build web app
 - `npm run test:plugins:unit` — plugin unit checks
 - `npm run test:smoke:v4` — smoke checks
 - `npm run build:desktop:windows:installer` — build Windows NSIS installer + canonical artifact copy
@@ -175,3 +180,10 @@ CI workflow: [`.github/workflows/desktop-release.yml`](.github/workflows/desktop
 - [`docs/admin-guide.md`](docs/admin-guide.md)
 - [`docs/windows-installer-runbook.md`](docs/windows-installer-runbook.md)
 - [`docs/desktop-auto-update.md`](docs/desktop-auto-update.md)
+- [`docs/web-readiness.md`](docs/web-readiness.md)
+- [`docs/frontend-layering.md`](docs/frontend-layering.md)
+- [`docs/browser-security-model.md`](docs/browser-security-model.md)
+- [`docs/deployment-web-architecture.md`](docs/deployment-web-architecture.md)
+- [`docs/session-model.md`](docs/session-model.md)
+- [`docs/client-storage-model.md`](docs/client-storage-model.md)
+- [`docs/transport-lifecycle.md`](docs/transport-lifecycle.md)

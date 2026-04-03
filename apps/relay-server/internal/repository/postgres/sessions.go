@@ -15,12 +15,24 @@ func (s *Store) CreateSession(ctx context.Context, session domain.Session, userA
 	if session.CreatedAt.IsZero() {
 		session.CreatedAt = now
 	}
+	if session.ClientPlatform == "" {
+		session.ClientPlatform = domain.ClientPlatformDesktopTauri
+	}
+	if session.SessionClass == "" {
+		session.SessionClass = domain.SessionClassDevice
+	}
+	if session.SessionClass == domain.SessionClassDevice && !session.Persistent {
+		session.Persistent = true
+	}
 
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO sessions (
 			id,
 			account_id,
 			device_id,
+			client_platform,
+			session_class,
+			persistent,
 			access_token_hash,
 			refresh_token_hash,
 			previous_refresh_token_hash,
@@ -32,11 +44,14 @@ func (s *Store) CreateSession(ctx context.Context, session domain.Session, userA
 			user_agent,
 			ip_address
 		)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
 	`,
 		session.ID,
 		session.AccountID,
 		session.DeviceID,
+		session.ClientPlatform,
+		session.SessionClass,
+		session.Persistent,
 		session.AccessTokenHash,
 		session.RefreshTokenHash,
 		session.PreviousRefreshTokenHash,
@@ -60,7 +75,7 @@ func (s *Store) CreateSession(ctx context.Context, session domain.Session, userA
 func (s *Store) GetSessionByAccessHash(ctx context.Context, accessHash string) (domain.Session, error) {
 	var session domain.Session
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, account_id, device_id, access_token_hash, refresh_token_hash, previous_refresh_token_hash,
+		SELECT id, account_id, device_id, client_platform, session_class, persistent, access_token_hash, refresh_token_hash, previous_refresh_token_hash,
 			status, access_token_expires_at, refresh_token_expires_at, created_at, last_seen_at, revoked_at
 		FROM sessions
 		WHERE access_token_hash = $1
@@ -68,6 +83,9 @@ func (s *Store) GetSessionByAccessHash(ctx context.Context, accessHash string) (
 		&session.ID,
 		&session.AccountID,
 		&session.DeviceID,
+		&session.ClientPlatform,
+		&session.SessionClass,
+		&session.Persistent,
 		&session.AccessTokenHash,
 		&session.RefreshTokenHash,
 		&session.PreviousRefreshTokenHash,
@@ -91,7 +109,7 @@ func (s *Store) GetSessionByAccessHash(ctx context.Context, accessHash string) (
 func (s *Store) GetSessionByID(ctx context.Context, sessionID string) (domain.Session, error) {
 	var session domain.Session
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, account_id, device_id, access_token_hash, refresh_token_hash, previous_refresh_token_hash,
+		SELECT id, account_id, device_id, client_platform, session_class, persistent, access_token_hash, refresh_token_hash, previous_refresh_token_hash,
 			status, access_token_expires_at, refresh_token_expires_at, created_at, last_seen_at, revoked_at
 		FROM sessions
 		WHERE id = $1
@@ -99,6 +117,9 @@ func (s *Store) GetSessionByID(ctx context.Context, sessionID string) (domain.Se
 		&session.ID,
 		&session.AccountID,
 		&session.DeviceID,
+		&session.ClientPlatform,
+		&session.SessionClass,
+		&session.Persistent,
 		&session.AccessTokenHash,
 		&session.RefreshTokenHash,
 		&session.PreviousRefreshTokenHash,
@@ -122,7 +143,7 @@ func (s *Store) GetSessionByID(ctx context.Context, sessionID string) (domain.Se
 func (s *Store) GetSessionByRefreshHash(ctx context.Context, refreshHash string) (domain.Session, error) {
 	var session domain.Session
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, account_id, device_id, access_token_hash, refresh_token_hash, previous_refresh_token_hash,
+		SELECT id, account_id, device_id, client_platform, session_class, persistent, access_token_hash, refresh_token_hash, previous_refresh_token_hash,
 			status, access_token_expires_at, refresh_token_expires_at, created_at, last_seen_at, revoked_at
 		FROM sessions
 		WHERE refresh_token_hash = $1
@@ -130,6 +151,9 @@ func (s *Store) GetSessionByRefreshHash(ctx context.Context, refreshHash string)
 		&session.ID,
 		&session.AccountID,
 		&session.DeviceID,
+		&session.ClientPlatform,
+		&session.SessionClass,
+		&session.Persistent,
 		&session.AccessTokenHash,
 		&session.RefreshTokenHash,
 		&session.PreviousRefreshTokenHash,
@@ -153,7 +177,7 @@ func (s *Store) GetSessionByRefreshHash(ctx context.Context, refreshHash string)
 func (s *Store) GetSessionByPreviousRefreshHash(ctx context.Context, previousRefreshHash string) (domain.Session, error) {
 	var session domain.Session
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, account_id, device_id, access_token_hash, refresh_token_hash, previous_refresh_token_hash,
+		SELECT id, account_id, device_id, client_platform, session_class, persistent, access_token_hash, refresh_token_hash, previous_refresh_token_hash,
 			status, access_token_expires_at, refresh_token_expires_at, created_at, last_seen_at, revoked_at
 		FROM sessions
 		WHERE previous_refresh_token_hash = $1
@@ -161,6 +185,9 @@ func (s *Store) GetSessionByPreviousRefreshHash(ctx context.Context, previousRef
 		&session.ID,
 		&session.AccountID,
 		&session.DeviceID,
+		&session.ClientPlatform,
+		&session.SessionClass,
+		&session.Persistent,
 		&session.AccessTokenHash,
 		&session.RefreshTokenHash,
 		&session.PreviousRefreshTokenHash,

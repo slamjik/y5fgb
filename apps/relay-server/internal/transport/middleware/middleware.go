@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -46,17 +45,21 @@ func SecurityHeaders(next http.Handler) http.Handler {
 	})
 }
 
-func CORS(next http.Handler) http.Handler {
+func CORS(originPolicy OriginPolicy, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := strings.TrimSpace(r.Header.Get("Origin"))
 		if origin != "" {
-			if allowCORSOrigin(origin) {
-				w.Header().Set("Access-Control-Allow-Origin", origin)
-				w.Header().Set("Vary", "Origin")
-				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Request-ID")
-				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-				w.Header().Set("Access-Control-Max-Age", "600")
+			if !originPolicy.Allows(origin) {
+				writeError(w, RequestIDFromContext(r.Context()), http.StatusForbidden, service.NewError(service.ErrorCodeForbidden, "origin is not allowed"))
+				return
 			}
+
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Request-ID")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Max-Age", "600")
+
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusNoContent)
 				return
@@ -64,30 +67,6 @@ func CORS(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
-}
-
-func allowCORSOrigin(origin string) bool {
-	if origin == "tauri://localhost" || origin == "null" {
-		return true
-	}
-
-	parsed, err := url.Parse(origin)
-	if err != nil {
-		return false
-	}
-
-	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return false
-	}
-
-	host := strings.ToLower(parsed.Hostname())
-	if host == "localhost" || host == "127.0.0.1" {
-		return true
-	}
-
-	// Tauri production webview origins are commonly hosted on *.localhost
-	// (for example https://tauri.localhost). Allow only localhost-scoped hosts.
-	return strings.HasSuffix(host, ".localhost")
 }
 
 func BodyLimit(maxBytes int64, next http.Handler) http.Handler {

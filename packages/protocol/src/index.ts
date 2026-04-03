@@ -2,6 +2,7 @@ import type {
   AccountID,
   ApprovalRequestID,
   AttachmentID,
+  ClientPlatform,
   ConversationID,
   DeviceID,
   DeviceRecipientID,
@@ -16,8 +17,12 @@ import type {
   ReceiptID,
   RecoveryFlowID,
   SecurityEventID,
+  SessionClass,
+  SessionPersistenceMode,
   SessionID,
   SyncCursorID,
+  TransportLifecycleEvent,
+  TransportLifecycleState,
   TransportEndpointID,
   UserID,
 } from "@project/shared-types";
@@ -128,7 +133,9 @@ export interface ApiError {
     | "plugin_bridge_violation"
     | "plugin_load_failed"
     | "plugin_disabled"
-    | "plugin_storage_unavailable";
+    | "plugin_storage_unavailable"
+    | "session_class_not_allowed"
+    | "crypto_unavailable_for_platform";
   message: string;
   details?: Record<string, unknown>;
   request_id: string;
@@ -188,6 +195,9 @@ export interface SessionDTO {
   accountId: AccountID;
   deviceId: DeviceID;
   status: SessionStatus;
+  clientPlatform?: ClientPlatform;
+  sessionClass?: SessionClass;
+  persistent?: boolean;
   accessTokenExpiresAt: ISO8601Timestamp;
   refreshTokenExpiresAt: ISO8601Timestamp;
   createdAt: ISO8601Timestamp;
@@ -299,6 +309,27 @@ export interface AuthSessionResponse {
   identity: AccountIdentityDTO;
   device: DeviceDTO;
   session: SessionDTO;
+}
+
+export interface WebLoginRequest {
+  email: string;
+  password: string;
+  sessionPersistence?: SessionPersistenceMode;
+}
+
+export interface WebTwoFactorLoginVerifyRequest {
+  challengeId: string;
+  loginToken: string;
+  code: string;
+  sessionPersistence?: SessionPersistenceMode;
+}
+
+export interface WebRefreshRequest {
+  refreshToken: string;
+}
+
+export interface WebLogoutRequest {
+  refreshToken?: string;
 }
 
 export interface TwoFactorSetupStartResponse {
@@ -689,4 +720,33 @@ export interface PluginEventPayload {
   eventType: PluginEventType;
   payload: Record<string, unknown>;
   createdAt: ISO8601Timestamp;
+}
+
+export interface PublicClientConfigResponse {
+  api_base: string;
+  ws_url: string;
+  api_prefix: string;
+  policy_hints?: {
+    auth_modes_supported: Array<"device" | "browser_session">;
+    browser_session_default_persistence: SessionPersistenceMode;
+    browser_session_allow_remembered: boolean;
+  };
+  transport_profile_hints?: {
+    reconnect_backoff_min_ms: number;
+    reconnect_backoff_max_ms: number;
+    long_poll_timeout_sec: number;
+    long_poll_enabled: boolean;
+  };
+}
+
+export interface ClientBootstrapEnvelope {
+  config: PublicClientConfigResponse;
+  transport: {
+    supportsWebSocket: boolean;
+    supportsLongPoll: boolean;
+  };
+  session?: {
+    state: TransportLifecycleState;
+    recentEvents: TransportLifecycleEvent[];
+  };
 }

@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "types": ["vite/client", "node"],
+    "baseUrl": ".",
+    "paths": {
+      "@project/shared-types": ["../../packages/shared-types/src/index.ts"],
+      "@project/protocol": ["../../packages/protocol/src/index.ts"],
+      "@project/client-core": ["../../packages/client-core/src/index.ts"],
+      "@project/platform-adapters": ["../../packages/platform-adapters/src/index.ts"]
+    }
+  },
+  "include": ["src", "vite.config.ts"]
+}
+

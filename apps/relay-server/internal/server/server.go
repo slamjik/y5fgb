@@ -62,7 +62,8 @@ func New(cfg config.Config, logger *slog.Logger) (*RelayServer, error) {
 	})
 
 	addr := net.JoinHostPort(cfg.HTTP.Host, strconv.Itoa(cfg.HTTP.Port))
-	hardeningChain := middleware.CORS(middleware.SecurityHeaders(middleware.RequestID(middleware.BodyLimit(32<<20, mux))))
+	originPolicy := middleware.NewOriginPolicy(cfg.WebSecurity)
+	hardeningChain := middleware.CORS(originPolicy, middleware.SecurityHeaders(middleware.RequestID(middleware.BodyLimit(32<<20, mux))))
 	httpServer := &http.Server{
 		Addr:         addr,
 		Handler:      hardeningChain,
@@ -86,6 +87,11 @@ func (s *RelayServer) Start() error {
 		"ready_path", s.cfg.HTTP.ReadyPath,
 		"ws_path", s.cfg.HTTP.WebSocketPath,
 		"api_prefix", s.cfg.HTTP.APIPrefix,
+		"web_allowed_origins", len(s.cfg.WebSecurity.AllowedOrigins),
+		"web_allow_tauri_origin", s.cfg.WebSecurity.AllowTauriOrigin,
+		"web_allow_null_origin", s.cfg.WebSecurity.AllowNullOrigin,
+		"web_allow_localhost_origin", s.cfg.WebSecurity.AllowLocalhost,
+		"web_allow_localhost_subdomains", s.cfg.WebSecurity.AllowLocalhostSubd,
 	)
 
 	if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {

@@ -35,17 +35,38 @@ type loginRequest struct {
 	} `json:"device"`
 }
 
+type webLoginRequest struct {
+	Email              string `json:"email"`
+	Password           string `json:"password"`
+	SessionPersistence string `json:"sessionPersistence,omitempty"`
+}
+
 type twoFALoginVerifyRequest struct {
 	ChallengeID string `json:"challengeId"`
 	LoginToken  string `json:"loginToken"`
 	Code        string `json:"code"`
 }
 
+type webTwoFALoginVerifyRequest struct {
+	ChallengeID        string `json:"challengeId"`
+	LoginToken         string `json:"loginToken"`
+	Code               string `json:"code"`
+	SessionPersistence string `json:"sessionPersistence,omitempty"`
+}
+
 type refreshRequest struct {
 	RefreshToken string `json:"refreshToken"`
 }
 
+type webRefreshRequest struct {
+	RefreshToken string `json:"refreshToken"`
+}
+
 type logoutRequest struct {
+	RefreshToken string `json:"refreshToken,omitempty"`
+}
+
+type webLogoutRequest struct {
 	RefreshToken string `json:"refreshToken,omitempty"`
 }
 
@@ -142,6 +163,9 @@ type sessionDTO struct {
 	AccountID             string   `json:"accountId"`
 	DeviceID              string   `json:"deviceId"`
 	Status                string   `json:"status"`
+	ClientPlatform        string   `json:"clientPlatform,omitempty"`
+	SessionClass          string   `json:"sessionClass,omitempty"`
+	Persistent            bool     `json:"persistent,omitempty"`
 	AccessTokenExpiresAt  string   `json:"accessTokenExpiresAt"`
 	RefreshTokenExpiresAt string   `json:"refreshTokenExpiresAt"`
 	CreatedAt             string   `json:"createdAt"`
@@ -332,6 +356,19 @@ type transportProfileDTO struct {
 	LongPollEnabled        bool   `json:"longPollEnabled"`
 }
 
+type publicConfigPolicyHintsDTO struct {
+	AuthModesSupported             []string `json:"auth_modes_supported"`
+	BrowserSessionDefaultPersist   string   `json:"browser_session_default_persistence"`
+	BrowserSessionAllowRemembered  bool     `json:"browser_session_allow_remembered"`
+}
+
+type publicConfigTransportHintsDTO struct {
+	ReconnectBackoffMinMS int  `json:"reconnect_backoff_min_ms"`
+	ReconnectBackoffMaxMS int  `json:"reconnect_backoff_max_ms"`
+	LongPollTimeoutSec    int  `json:"long_poll_timeout_sec"`
+	LongPollEnabled       bool `json:"long_poll_enabled"`
+}
+
 func buildEnvelopeResponse(envelope *auth.SessionEnvelope, recoveryCodes []string) envelopeResponse {
 	return envelopeResponse{
 		AccountID:     envelope.Account.ID,
@@ -404,6 +441,9 @@ func mapSession(session domain.Session, device domain.Device) sessionDTO {
 		AccountID:             session.AccountID,
 		DeviceID:              session.DeviceID,
 		Status:                string(session.Status),
+		ClientPlatform:        string(session.ClientPlatform),
+		SessionClass:          string(session.SessionClass),
+		Persistent:            session.Persistent,
 		AccessTokenExpiresAt:  session.AccessTokenExpiresAt.UTC().Format(time.RFC3339),
 		RefreshTokenExpiresAt: session.RefreshTokenExpiresAt.UTC().Format(time.RFC3339),
 		CreatedAt:             session.CreatedAt.UTC().Format(time.RFC3339),

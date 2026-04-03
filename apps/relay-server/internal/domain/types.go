@@ -37,6 +37,20 @@ const (
 	SessionStatusExpired SessionStatus = "expired"
 )
 
+type ClientPlatform string
+
+const (
+	ClientPlatformDesktopTauri ClientPlatform = "desktop-tauri"
+	ClientPlatformWebBrowser   ClientPlatform = "web-browser"
+)
+
+type SessionClass string
+
+const (
+	SessionClassDevice  SessionClass = "device"
+	SessionClassBrowser SessionClass = "browser"
+)
+
 type RecoveryFlowStatus string
 
 const (
@@ -274,6 +288,9 @@ type Session struct {
 	ID                       string
 	AccountID                string
 	DeviceID                 string
+	ClientPlatform           ClientPlatform
+	SessionClass             SessionClass
+	Persistent               bool
 	AccessTokenHash          string
 	RefreshTokenHash         string
 	PreviousRefreshTokenHash *string

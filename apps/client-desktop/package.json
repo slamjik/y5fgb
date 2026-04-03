@@ -11,6 +11,8 @@
     "tauri:build": "tauri build"
   },
   "dependencies": {
+    "@project/client-core": "0.1.0",
+    "@project/platform-adapters": "0.1.0",
     "@project/protocol": "0.1.0",
     "@project/shared-types": "0.1.0",
     "@tauri-apps/plugin-process": "^2.3.1",

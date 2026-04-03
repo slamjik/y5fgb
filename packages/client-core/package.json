@@ -1,0 +1,14 @@
+{
+  "name": "@project/client-core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@project/protocol": "0.1.0",
+    "@project/shared-types": "0.1.0"
+  }
+}
+

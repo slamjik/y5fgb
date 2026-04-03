@@ -53,7 +53,7 @@ func TestRequestSchemePrefersForwardedProto(t *testing.T) {
 	req := httptest.NewRequest("GET", "http://localhost/api/v1/config", nil)
 	req.Header.Set("X-Forwarded-Proto", "https")
 
-	if got := requestScheme(req); got != "https" {
+	if got := requestScheme(req, true); got != "https" {
 		t.Fatalf("expected https, got %s", got)
 	}
 }
@@ -63,7 +63,7 @@ func TestRequestHostPrefersForwardedHost(t *testing.T) {
 	req.Header.Set("X-Forwarded-Host", "chat.example.com")
 	req.Host = "localhost:8080"
 
-	if got := requestHost(req); got != "chat.example.com" {
+	if got := requestHost(req, true); got != "chat.example.com" {
 		t.Fatalf("expected forwarded host, got %s", got)
 	}
 }

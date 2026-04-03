@@ -1,23 +1,21 @@
-﻿import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
+import { defaultStorageSegmentationPolicy, isSensitiveStorageKey } from "@project/client-core";
+import { createBrowserLocalStorageAdapter, isTauriDesktopRuntime } from "@project/platform-adapters";
 
 import { logger } from "@/services/logger";
 
 const fallbackPrefix = "secure-messenger-fallback:";
-const strictSensitivePrefixes = ["auth.", "identity.", "messaging.store.key."];
-
-function isTauriRuntime() {
-  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-}
+const browserFallbackStorage = createBrowserLocalStorageAdapter(fallbackPrefix);
 
 async function setStrict(key: string, value: string): Promise<void> {
-  if (!isTauriRuntime()) {
+  if (!isTauriDesktopRuntime()) {
     throw new Error("secure keyring is unavailable outside tauri runtime");
   }
   await invoke("secure_store_set", { key, value });
 }
 
 async function getStrict(key: string): Promise<string | null> {
-  if (!isTauriRuntime()) {
+  if (!isTauriDesktopRuntime()) {
     throw new Error("secure keyring is unavailable outside tauri runtime");
   }
   try {
@@ -32,7 +30,7 @@ async function getStrict(key: string): Promise<string | null> {
 }
 
 async function deleteStrict(key: string): Promise<void> {
-  if (!isTauriRuntime()) {
+  if (!isTauriDesktopRuntime()) {
     throw new Error("secure keyring is unavailable outside tauri runtime");
   }
   try {
@@ -52,7 +50,7 @@ export const secureStorage = {
       return;
     }
 
-    if (isTauriRuntime()) {
+    if (isTauriDesktopRuntime()) {
       try {
         await setStrict(key, value);
         return;
@@ -61,7 +59,7 @@ export const secureStorage = {
       }
     }
 
-    localStorage.setItem(fallbackPrefix + key, value);
+    await browserFallbackStorage.set(key, value);
   },
 
   async get(key: string): Promise<string | null> {
@@ -69,7 +67,7 @@ export const secureStorage = {
       return getStrict(key);
     }
 
-    if (isTauriRuntime()) {
+    if (isTauriDesktopRuntime()) {
       try {
         return await getStrict(key);
       } catch (error) {
@@ -77,7 +75,7 @@ export const secureStorage = {
       }
     }
 
-    return localStorage.getItem(fallbackPrefix + key);
+    return browserFallbackStorage.get(key);
   },
 
   async delete(key: string): Promise<void> {
@@ -86,7 +84,7 @@ export const secureStorage = {
       return;
     }
 
-    if (isTauriRuntime()) {
+    if (isTauriDesktopRuntime()) {
       try {
         await deleteStrict(key);
       } catch (error) {
@@ -94,7 +92,7 @@ export const secureStorage = {
       }
     }
 
-    localStorage.removeItem(fallbackPrefix + key);
+    await browserFallbackStorage.delete(key);
   },
 
   setStrict,
@@ -103,7 +101,7 @@ export const secureStorage = {
 };
 
 function isSensitiveKey(key: string): boolean {
-  return strictSensitivePrefixes.some((prefix) => key.startsWith(prefix));
+  return isSensitiveStorageKey(key, defaultStorageSegmentationPolicy);
 }
 
 function isMissingSecureEntryError(error: unknown): boolean {
@@ -117,3 +115,4 @@ function isMissingSecureEntryError(error: unknown): boolean {
     message.includes("file specified")
   );
 }
+

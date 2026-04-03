@@ -353,6 +353,39 @@ func (s *Store) ListDevices(ctx context.Context, accountID string) ([]domain.Dev
 	return result, nil
 }
 
+func (s *Store) GetLatestTrustedDeviceForAccount(ctx context.Context, accountID string) (domain.Device, error) {
+	var device domain.Device
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, account_id, name, platform, public_device_material, fingerprint, status, verification_state, key_version, rotated_at, rotation_due_at, created_at, last_seen_at, revoked_at
+		FROM devices
+		WHERE account_id = $1 AND status = 'trusted'
+		ORDER BY last_seen_at DESC NULLS LAST, created_at DESC
+		LIMIT 1
+	`, accountID).Scan(
+		&device.ID,
+		&device.AccountID,
+		&device.Name,
+		&device.Platform,
+		&device.PublicDeviceMaterial,
+		&device.Fingerprint,
+		&device.Status,
+		&device.VerificationState,
+		&device.KeyVersion,
+		&device.RotatedAt,
+		&device.RotationDueAt,
+		&device.CreatedAt,
+		&device.LastSeenAt,
+		&device.RevokedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.Device{}, ErrNotFound
+		}
+		return domain.Device{}, fmt.Errorf("failed to fetch latest trusted device: %w", err)
+	}
+	return device, nil
+}
+
 func (s *Store) ListApprovalRequests(ctx context.Context, accountID string) ([]domain.DeviceApprovalRequest, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, account_id, device_id, status, approved_by_device_id, poll_token_hash, poll_expires_at, created_at, resolved_at

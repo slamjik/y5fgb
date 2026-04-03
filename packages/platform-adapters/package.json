@@ -1,0 +1,13 @@
+{
+  "name": "@project/platform-adapters",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@project/client-core": "0.1.0"
+  }
+}
+

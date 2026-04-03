@@ -22,6 +22,32 @@ export type MessageID = Brand<string, "MessageID">;
 
 export type ISO8601Timestamp = Brand<string, "ISO8601Timestamp">;
 
+export type ClientPlatform = "desktop-tauri" | "web-browser";
+export type SessionClass = "device" | "browser";
+export type SessionPersistenceMode = "ephemeral" | "remembered";
+
+export type TransportLifecycleState =
+  | "bootstrapping"
+  | "unauthenticated"
+  | "restoring_session"
+  | "connecting"
+  | "connected"
+  | "degraded"
+  | "offline"
+  | "forbidden";
+
+export type TransportLifecycleEvent =
+  | "config_loaded"
+  | "auth_restored"
+  | "token_refreshed"
+  | "ws_connected"
+  | "ws_disconnected"
+  | "poll_fallback_entered"
+  | "resync_completed"
+  | "visibility_changed"
+  | "online_changed"
+  | "transport_leader_changed";
+
 export type PluginStatus = "discovered" | "installed" | "enabled" | "disabled" | "failed";
 
 export type PluginCapability =

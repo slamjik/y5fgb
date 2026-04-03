@@ -33,6 +33,11 @@ Fill required values in `.env`:
 - `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `DATABASE_URL`
 - `AUTH_TOKEN_PEPPER`, `SECURITY_ENCRYPTION_KEY`
 - `TRANSPORT_PRIMARY_WS_ENDPOINT`
+- `WEB_ALLOWED_ORIGINS` (for browser/web origin allowlist)
+- `WEB_ALLOW_TAURI_ORIGIN` (keep `true` while desktop app is used)
+- `WEB_TRUST_PROXY_HEADERS` (`true` behind reverse proxy, `false` for direct exposure)
+- `WEB_SESSION_DEFAULT_PERSISTENCE` (`ephemeral` recommended)
+- `WEB_SESSION_ALLOW_REMEMBERED` (toggle remembered browser sessions)
 
 Deploy:
 - Linux/macOS: `./scripts/deploy-prod.sh`

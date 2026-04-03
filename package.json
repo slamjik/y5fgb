@@ -4,12 +4,19 @@
   "private": true,
   "workspaces": [
     "apps/client-desktop",
+    "apps/client-web",
     "packages/protocol",
-    "packages/shared-types"
+    "packages/shared-types",
+    "packages/client-core",
+    "packages/platform-adapters"
   ],
   "scripts": {
     "dev:client": "npm run dev --workspace apps/client-desktop",
+    "dev:web": "npm run dev --workspace apps/client-web",
     "build:client": "npm run build --workspace apps/client-desktop",
+    "build:web": "npm run build --workspace apps/client-web",
+    "check:boundaries": "node ./scripts/check-boundaries.mjs",
+    "build:web-foundation": "npm run check:boundaries && npm run build:web",
     "dev:server": "cd apps/relay-server && go run ./cmd/relay-server",
     "test:server": "cd apps/relay-server && go test ./...",
     "test:plugins:unit": "node ./scripts/plugin-unit-checks.mjs",

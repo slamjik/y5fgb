@@ -1,8 +1,17 @@
+import {
+  buildFallbackConfig,
+  buildServerConfigEndpoint,
+  normalizeApiBase,
+  normalizeApiPrefix,
+  normalizeServerInput,
+  normalizeWsURL,
+  parseServerConfigPayload,
+  ServerConfigError,
+} from "@project/client-core";
+
 import { appConfig } from "@/lib/config";
 
 const SERVER_CONFIG_STORAGE_KEY = "secure-messenger-server-config-v1";
-const DEFAULT_API_PREFIX = "/api/v1";
-const DEFAULT_WS_PATH = "/ws";
 const REQUEST_TIMEOUT_MS = 7000;
 
 type PersistedServerConfig = {
@@ -21,14 +30,7 @@ export type ActiveServerConfig = {
   inputHost?: string;
 };
 
-export class ServerConnectionError extends Error {
-  readonly code: "invalid_input" | "connection_failed" | "config_invalid";
-
-  constructor(code: "invalid_input" | "connection_failed" | "config_invalid", message: string) {
-    super(message);
-    this.code = code;
-  }
-}
+export { ServerConfigError as ServerConnectionError };
 
 export async function connectToServer(input: string): Promise<ActiveServerConfig> {
   const normalized = normalizeServerInput(input);
@@ -110,10 +112,9 @@ function getStoredServerConfig(): PersistedServerConfig | null {
 
   try {
     const parsed = JSON.parse(raw) as Partial<PersistedServerConfig>;
-    if (!parsed || typeof parsed !== "object") {
-      return null;
-    }
     if (
+      !parsed ||
+      typeof parsed !== "object" ||
       typeof parsed.apiBaseUrl !== "string" ||
       typeof parsed.wsUrl !== "string" ||
       typeof parsed.apiPrefix !== "string" ||
@@ -122,14 +123,10 @@ function getStoredServerConfig(): PersistedServerConfig | null {
       return null;
     }
 
-    const apiBaseUrl = normalizeApiBase(parsed.apiBaseUrl);
-    const wsUrl = normalizeWsURL(parsed.wsUrl);
-    const apiPrefix = normalizeApiPrefix(parsed.apiPrefix);
-
     return {
-      apiBaseUrl,
-      wsUrl,
-      apiPrefix,
+      apiBaseUrl: normalizeApiBase(parsed.apiBaseUrl),
+      wsUrl: normalizeWsURL(parsed.wsUrl),
+      apiPrefix: normalizeApiPrefix(parsed.apiPrefix),
       inputHost: parsed.inputHost.trim(),
       savedAt: typeof parsed.savedAt === "string" ? parsed.savedAt : new Date().toISOString(),
     };
@@ -139,7 +136,7 @@ function getStoredServerConfig(): PersistedServerConfig | null {
 }
 
 async function discoverServerConfig(normalizedInput: { origin: string; inputHost: string }): Promise<PersistedServerConfig> {
-  const configURL = new URL(`${DEFAULT_API_PREFIX}/config`, normalizedInput.origin).toString();
+  const configURL = buildServerConfigEndpoint(normalizedInput.origin);
 
   let response: Response;
   try {
@@ -148,7 +145,7 @@ async function discoverServerConfig(normalizedInput: { origin: string; inputHost
       headers: { Accept: "application/json" },
     });
   } catch (error) {
-    throw new ServerConnectionError("connection_failed", error instanceof Error ? error.message : "connection failed");
+    throw new ServerConfigError("connection_failed", error instanceof Error ? error.message : "connection failed");
   }
 
   if (response.status === 404) {
@@ -161,14 +158,14 @@ async function discoverServerConfig(normalizedInput: { origin: string; inputHost
   }
 
   if (!response.ok) {
-    throw new ServerConnectionError("connection_failed", "server config endpoint is unavailable");
+    throw new ServerConfigError("connection_failed", "server config endpoint is unavailable");
   }
 
   let payload: unknown;
   try {
     payload = await response.json();
   } catch {
-    throw new ServerConnectionError("config_invalid", "server config response is not valid json");
+    throw new ServerConfigError("config_invalid", "server config response is not valid json");
   }
 
   const parsed = parseServerConfigPayload(payload);
@@ -177,115 +174,6 @@ async function discoverServerConfig(normalizedInput: { origin: string; inputHost
     inputHost: normalizedInput.inputHost,
     savedAt: new Date().toISOString(),
   };
-}
-
-function parseServerConfigPayload(payload: unknown): Pick<PersistedServerConfig, "apiBaseUrl" | "wsUrl" | "apiPrefix"> {
-  if (!payload || typeof payload !== "object") {
-    throw new ServerConnectionError("config_invalid", "server config response has invalid shape");
-  }
-
-  const source = payload as Record<string, unknown>;
-  if (
-    typeof source.api_base !== "string" ||
-    typeof source.ws_url !== "string" ||
-    typeof source.api_prefix !== "string"
-  ) {
-    throw new ServerConnectionError("config_invalid", "server config response has missing required fields");
-  }
-
-  return {
-    apiBaseUrl: normalizeApiBase(source.api_base),
-    wsUrl: normalizeWsURL(source.ws_url),
-    apiPrefix: normalizeApiPrefix(source.api_prefix),
-  };
-}
-
-function normalizeServerInput(input: string): { origin: string; inputHost: string } {
-  const trimmed = input.trim();
-  if (!trimmed) {
-    throw new ServerConnectionError("invalid_input", "server input is empty");
-  }
-
-  const withProtocol = /^https?:\/\//i.test(trimmed)
-    ? trimmed
-    : `${shouldDefaultToHTTP(trimmed) ? "http" : "https"}://${trimmed}`;
-
-  let parsed: URL;
-  try {
-    parsed = new URL(withProtocol);
-  } catch {
-    throw new ServerConnectionError("invalid_input", "server input is not a valid url");
-  }
-
-  if (!parsed.hostname) {
-    throw new ServerConnectionError("invalid_input", "server hostname is required");
-  }
-
-  return {
-    origin: parsed.origin,
-    inputHost: parsed.host,
-  };
-}
-
-function shouldDefaultToHTTP(value: string): boolean {
-  const candidate = value.trim().replace(/\/.*$/, "");
-  if (candidate === "localhost") {
-    return true;
-  }
-  return /^([0-9]{1,3}\.){3}[0-9]{1,3}(:[0-9]{1,5})?$/.test(candidate);
-}
-
-function buildFallbackConfig(apiBaseOrigin: string): Pick<PersistedServerConfig, "apiBaseUrl" | "wsUrl" | "apiPrefix"> {
-  const apiBase = normalizeApiBase(apiBaseOrigin);
-  const parsed = new URL(apiBase);
-  const wsScheme = parsed.protocol === "https:" ? "wss:" : "ws:";
-  const wsUrl = `${wsScheme}//${parsed.host}${DEFAULT_WS_PATH}`;
-
-  return {
-    apiBaseUrl: apiBase,
-    wsUrl: normalizeWsURL(wsUrl),
-    apiPrefix: DEFAULT_API_PREFIX,
-  };
-}
-
-function normalizeApiBase(value: string): string {
-  let parsed: URL;
-  try {
-    parsed = new URL(value.trim());
-  } catch {
-    throw new ServerConnectionError("config_invalid", "api_base is not a valid url");
-  }
-  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
-    throw new ServerConnectionError("config_invalid", "api_base must use http/https");
-  }
-
-  const withoutTrailingSlash = parsed.toString().replace(/\/+$/, "");
-  return withoutTrailingSlash;
-}
-
-function normalizeWsURL(value: string): string {
-  let parsed: URL;
-  try {
-    parsed = new URL(value.trim());
-  } catch {
-    throw new ServerConnectionError("config_invalid", "ws_url is not a valid url");
-  }
-  if (parsed.protocol !== "wss:" && parsed.protocol !== "ws:") {
-    throw new ServerConnectionError("config_invalid", "ws_url must use ws/wss");
-  }
-
-  return parsed.toString().replace(/\/+$/, "");
-}
-
-function normalizeApiPrefix(value: string): string {
-  const normalized = value.trim();
-  if (!normalized.startsWith("/")) {
-    throw new ServerConnectionError("config_invalid", "api_prefix must start with /");
-  }
-  if (normalized.length < 2) {
-    throw new ServerConnectionError("config_invalid", "api_prefix is too short");
-  }
-  return normalized.replace(/\/+$/, "");
 }
 
 async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
@@ -300,3 +188,4 @@ async function fetchWithTimeout(url: string, init: RequestInit): Promise<Respons
     window.clearTimeout(timeout);
   }
 }
+

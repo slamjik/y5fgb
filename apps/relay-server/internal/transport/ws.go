@@ -4,12 +4,12 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/example/secure-messenger/apps/relay-server/internal/service/auth"
+	"github.com/example/secure-messenger/apps/relay-server/internal/transport/middleware"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
@@ -109,22 +109,30 @@ type webSocketHandler struct {
 	authService             *auth.Service
 	notifier                *WSNotifier
 	allowQueryTokenFallback bool
+	originPolicy            middleware.OriginPolicy
 	upgrader                websocket.Upgrader
 }
 
-func NewWebSocketHandler(logger *slog.Logger, authService *auth.Service, notifier *WSNotifier, allowQueryTokenFallback bool) http.Handler {
-	return &webSocketHandler{
+func NewWebSocketHandler(
+	logger *slog.Logger,
+	authService *auth.Service,
+	notifier *WSNotifier,
+	allowQueryTokenFallback bool,
+	originPolicy middleware.OriginPolicy,
+) http.Handler {
+	handler := &webSocketHandler{
 		logger:                  logger,
 		authService:             authService,
 		notifier:                notifier,
 		allowQueryTokenFallback: allowQueryTokenFallback,
-		upgrader: websocket.Upgrader{
-			CheckOrigin: func(r *http.Request) bool {
-				origin := strings.TrimSpace(r.Header.Get("Origin"))
-				return isAllowedWebSocketOrigin(origin)
-			},
-		},
+		originPolicy:            originPolicy,
+		upgrader:                websocket.Upgrader{},
 	}
+	handler.upgrader.CheckOrigin = func(r *http.Request) bool {
+		origin := strings.TrimSpace(r.Header.Get("Origin"))
+		return handler.originPolicy.Allows(origin)
+	}
+	return handler
 }
 
 func (h *webSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -275,25 +283,4 @@ func writeWSError(w http.ResponseWriter, status int, message string) {
 			"message": message,
 		},
 	})
-}
-
-func isAllowedWebSocketOrigin(origin string) bool {
-	if origin == "" || origin == "null" || origin == "tauri://localhost" {
-		return true
-	}
-
-	parsed, err := url.Parse(origin)
-	if err != nil {
-		return false
-	}
-	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return false
-	}
-
-	host := strings.ToLower(parsed.Hostname())
-	if host == "localhost" || host == "127.0.0.1" {
-		return true
-	}
-
-	return strings.HasSuffix(host, ".localhost")
 }

@@ -48,12 +48,29 @@ type LoginInput struct {
 	IPAddress string
 }
 
+type WebLoginInput struct {
+	Email              string
+	Password           string
+	SessionPersistence string
+	UserAgent          string
+	IPAddress          string
+}
+
 type VerifyTwoFALoginInput struct {
 	ChallengeID string
 	LoginToken  string
 	Code        string
 	UserAgent   string
 	IPAddress   string
+}
+
+type VerifyWebTwoFALoginInput struct {
+	ChallengeID         string
+	LoginToken          string
+	Code                string
+	SessionPersistence  string
+	UserAgent           string
+	IPAddress           string
 }
 
 type TokenPair struct {
@@ -85,6 +102,12 @@ type AuthPrincipal struct {
 	AccountID string
 	DeviceID  string
 	SessionID string
+}
+
+type SessionIssueOptions struct {
+	ClientPlatform domain.ClientPlatform
+	SessionClass   domain.SessionClass
+	Persistent     bool
 }
 
 type TwoFASetupStartResult struct {
@@ -391,6 +414,91 @@ func (s *Service) Login(ctx context.Context, input LoginInput) (*LoginResult, er
 	}, nil
 }
 
+func (s *Service) LoginWeb(ctx context.Context, input WebLoginInput) (*LoginResult, error) {
+	if err := validation.Email(input.Email); err != nil {
+		return nil, service.NewError(service.ErrorCodeValidation, "invalid login payload")
+	}
+	if strings.TrimSpace(input.Password) == "" {
+		return nil, service.NewError(service.ErrorCodeValidation, "password is required")
+	}
+
+	email := strings.ToLower(strings.TrimSpace(input.Email))
+	account, err := s.repo.GetAccountByEmail(ctx, email)
+	if err != nil {
+		return nil, service.NewError(service.ErrorCodeInvalidCredentials, "invalid credentials")
+	}
+
+	validPassword, err := security.VerifyPassword(input.Password, account.PasswordHash)
+	if err != nil || !validPassword {
+		s.events.Record(ctx, account.ID, nil, domain.SecurityEventLoginFailed, domain.SecurityEventSeverityWarning, "warning", map[string]any{
+			"reason":   "invalid_password",
+			"platform": string(domain.ClientPlatformWebBrowser),
+		})
+		return nil, service.NewError(service.ErrorCodeInvalidCredentials, "invalid credentials")
+	}
+
+	device, err := s.repo.GetLatestTrustedDeviceForAccount(ctx, account.ID)
+	if err != nil {
+		if errors.Is(err, postgres.ErrNotFound) {
+			return nil, service.NewError(service.ErrorCodeDeviceNotApproved, "account has no trusted device")
+		}
+		return nil, service.NewError(service.ErrorCodeInternal, "failed to resolve trusted device")
+	}
+
+	sessionOptions := s.resolveWebSessionIssueOptions(input.SessionPersistence)
+
+	if account.TwoFAEnabled {
+		loginToken, tokenErr := security.GenerateOpaqueToken("login_")
+		if tokenErr != nil {
+			return nil, service.NewError(service.ErrorCodeInternal, "failed to create login challenge")
+		}
+
+		challenge := domain.TwoFactorChallenge{
+			ID:               security.NewID(),
+			AccountID:        account.ID,
+			DeviceID:         device.ID,
+			ChallengeType:    "login",
+			PendingTokenHash: security.HashToken(loginToken, s.cfg.Auth.TokenPepper),
+			Status:           "pending",
+			ExpiresAt:        time.Now().UTC().Add(s.cfg.Auth.TwoFAChallengeTTL),
+		}
+
+		createdChallenge, createErr := s.repo.CreateTwoFactorChallenge(ctx, challenge)
+		if createErr != nil {
+			return nil, service.NewError(service.ErrorCodeInternal, "failed to create login challenge")
+		}
+
+		return &LoginResult{
+			TwoFAChallengeID:      createdChallenge.ID,
+			TwoFALoginToken:       loginToken,
+			TwoFAChallengeExpires: &createdChallenge.ExpiresAt,
+		}, nil
+	}
+
+	session, tokens, err := s.issueSessionWithOptions(ctx, account.ID, device.ID, input.UserAgent, input.IPAddress, sessionOptions)
+	if err != nil {
+		return nil, err
+	}
+	_ = s.repo.TouchDeviceLastSeen(ctx, device.ID)
+
+	deviceIDRef := device.ID
+	s.events.Record(ctx, account.ID, &deviceIDRef, domain.SecurityEventLoginSuccess, domain.SecurityEventSeverityInfo, "trusted", map[string]any{
+		"platform": string(domain.ClientPlatformWebBrowser),
+		"class":    string(domain.SessionClassBrowser),
+	})
+
+	identity, _ := s.repo.GetAccountIdentity(ctx, account.ID)
+	return &LoginResult{
+		Session: &SessionEnvelope{
+			Account:  account,
+			Identity: identity,
+			Device:   device,
+			Session:  session,
+			Tokens:   tokens,
+		},
+	}, nil
+}
+
 func (s *Service) VerifyTwoFALogin(ctx context.Context, input VerifyTwoFALoginInput) (*SessionEnvelope, error) {
 	challenge, err := s.repo.GetTwoFactorChallenge(ctx, input.ChallengeID)
 	if err != nil {
@@ -447,6 +555,74 @@ func (s *Service) VerifyTwoFALogin(ctx context.Context, input VerifyTwoFALoginIn
 
 	deviceIDRef := challenge.DeviceID
 	s.events.Record(ctx, challenge.AccountID, &deviceIDRef, domain.SecurityEventLoginSuccess, domain.SecurityEventSeverityInfo, "trusted", map[string]any{"with2fa": true})
+
+	return &SessionEnvelope{
+		Account:  account,
+		Identity: identity,
+		Device:   device,
+		Session:  session,
+		Tokens:   tokens,
+	}, nil
+}
+
+func (s *Service) VerifyWebTwoFALogin(ctx context.Context, input VerifyWebTwoFALoginInput) (*SessionEnvelope, error) {
+	challenge, err := s.repo.GetTwoFactorChallenge(ctx, input.ChallengeID)
+	if err != nil {
+		return nil, service.NewError(service.ErrorCodeUnauthorized, "invalid two-factor challenge")
+	}
+	if challenge.Status != "pending" {
+		return nil, service.NewError(service.ErrorCodeUnauthorized, "invalid two-factor challenge status")
+	}
+	if time.Now().UTC().After(challenge.ExpiresAt) {
+		return nil, service.NewError(service.ErrorCodeUnauthorized, "two-factor challenge expired")
+	}
+
+	inputHash := security.HashToken(input.LoginToken, s.cfg.Auth.TokenPepper)
+	if !security.ConstantTimeEqual(inputHash, challenge.PendingTokenHash) {
+		return nil, service.NewError(service.ErrorCodeUnauthorized, "invalid two-factor challenge token")
+	}
+
+	secret, err := s.repo.GetTwoFactorSecret(ctx, challenge.AccountID)
+	if err != nil || !secret.IsEnabled {
+		return nil, service.NewError(service.ErrorCodeUnauthorized, "two-factor setup not enabled")
+	}
+
+	decryptedSecret, err := security.DecryptSecret(secret.EncryptedSecret, secret.Nonce, s.cfg.Security.EncryptionKey)
+	if err != nil {
+		return nil, service.NewError(service.ErrorCodeInternal, "failed to decrypt two-factor secret")
+	}
+	if !security.VerifyTOTP(decryptedSecret, input.Code) {
+		return nil, service.NewError(service.ErrorCodeUnauthorized, "invalid two-factor code")
+	}
+
+	if err := s.repo.MarkTwoFactorChallengeVerified(ctx, challenge.ID); err != nil {
+		return nil, service.NewError(service.ErrorCodeInternal, "failed to verify challenge")
+	}
+
+	sessionOptions := s.resolveWebSessionIssueOptions(input.SessionPersistence)
+	session, tokens, err := s.issueSessionWithOptions(ctx, challenge.AccountID, challenge.DeviceID, input.UserAgent, input.IPAddress, sessionOptions)
+	if err != nil {
+		return nil, err
+	}
+	_ = s.repo.TouchDeviceLastSeen(ctx, challenge.DeviceID)
+
+	account, err := s.repo.GetAccountByID(ctx, challenge.AccountID)
+	if err != nil {
+		return nil, service.NewError(service.ErrorCodeInternal, "failed to fetch account")
+	}
+	identity, _ := s.repo.GetAccountIdentity(ctx, challenge.AccountID)
+	device, err := s.repo.GetDeviceByID(ctx, challenge.DeviceID)
+	if err != nil {
+		return nil, service.NewError(service.ErrorCodeUnauthorized, "invalid device for challenge")
+	}
+
+	deviceIDRef := challenge.DeviceID
+	s.events.Record(ctx, challenge.AccountID, &deviceIDRef, domain.SecurityEventLoginSuccess, domain.SecurityEventSeverityInfo, "trusted", map[string]any{
+		"with2fa":   true,
+		"platform":  string(domain.ClientPlatformWebBrowser),
+		"class":     string(domain.SessionClassBrowser),
+		"persistent": sessionOptions.Persistent,
+	})
 
 	return &SessionEnvelope{
 		Account:  account,
@@ -744,6 +920,21 @@ func (s *Service) RequireStepUpIfEnabled(ctx context.Context, accountID string, 
 }
 
 func (s *Service) issueSession(ctx context.Context, accountID string, deviceID string, userAgent string, ipAddress string) (domain.Session, TokenPair, error) {
+	return s.issueSessionWithOptions(ctx, accountID, deviceID, userAgent, ipAddress, SessionIssueOptions{
+		ClientPlatform: domain.ClientPlatformDesktopTauri,
+		SessionClass:   domain.SessionClassDevice,
+		Persistent:     true,
+	})
+}
+
+func (s *Service) issueSessionWithOptions(
+	ctx context.Context,
+	accountID string,
+	deviceID string,
+	userAgent string,
+	ipAddress string,
+	options SessionIssueOptions,
+) (domain.Session, TokenPair, error) {
 	accessToken, err := security.GenerateOpaqueToken("acc_")
 	if err != nil {
 		return domain.Session{}, TokenPair{}, service.NewError(service.ErrorCodeInternal, "failed to issue access token")
@@ -760,6 +951,9 @@ func (s *Service) issueSession(ctx context.Context, accountID string, deviceID s
 		ID:                    security.NewID(),
 		AccountID:             accountID,
 		DeviceID:              deviceID,
+		ClientPlatform:        options.ClientPlatform,
+		SessionClass:          options.SessionClass,
+		Persistent:            options.Persistent,
 		AccessTokenHash:       security.HashToken(accessToken, s.cfg.Auth.TokenPepper),
 		RefreshTokenHash:      security.HashToken(refreshToken, s.cfg.Auth.TokenPepper),
 		Status:                domain.SessionStatusActive,
@@ -799,4 +993,17 @@ func (s *Service) generateRecoveryCodes(accountID string, count int) ([]string, 
 	}
 
 	return plain, models, nil
+}
+
+func (s *Service) resolveWebSessionIssueOptions(rawPersistence string) SessionIssueOptions {
+	persistence := strings.ToLower(strings.TrimSpace(rawPersistence))
+	if persistence == "" {
+		persistence = s.cfg.WebSession.DefaultPersistence
+	}
+	persistent := persistence == "remembered" && s.cfg.WebSession.AllowRemembered
+	return SessionIssueOptions{
+		ClientPlatform: domain.ClientPlatformWebBrowser,
+		SessionClass:   domain.SessionClassBrowser,
+		Persistent:     persistent,
+	}
 }

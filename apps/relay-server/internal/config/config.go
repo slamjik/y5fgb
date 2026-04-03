@@ -26,6 +26,7 @@ const (
 	defaultLongPollTimeoutSec    = 25
 	defaultReconnectBackoffMinMS = 500
 	defaultReconnectBackoffMaxMS = 10000
+	defaultAllowTauriOrigin      = true
 )
 
 type Environment string
@@ -45,6 +46,8 @@ type Config struct {
 	Security             SecurityConfig
 	Messaging            MessagingConfig
 	Transport            TransportConfig
+	WebSecurity          WebSecurityConfig
+	WebSession           WebSessionConfig
 }
 
 type HTTPConfig struct {
@@ -90,6 +93,20 @@ type TransportConfig struct {
 	LongPollTimeout          time.Duration
 	ReconnectBackoffMin      time.Duration
 	ReconnectBackoffMax      time.Duration
+}
+
+type WebSecurityConfig struct {
+	AllowedOrigins     []string
+	AllowTauriOrigin   bool
+	AllowNullOrigin    bool
+	AllowLocalhost     bool
+	AllowLocalhostSubd bool
+	TrustProxyHeaders  bool
+}
+
+type WebSessionConfig struct {
+	DefaultPersistence string
+	AllowRemembered    bool
 }
 
 func Load() (Config, error) {
@@ -195,6 +212,8 @@ func Load() (Config, error) {
 	}
 
 	wsQueryFallbackDefault := env == EnvDevelopment
+	allowNullOriginDefault := env == EnvDevelopment
+	allowLocalhostDefault := env == EnvDevelopment
 
 	cfg := Config{
 		Environment:          env,
@@ -239,6 +258,25 @@ func Load() (Config, error) {
 			ReconnectBackoffMin:      time.Duration(reconnectBackoffMinMS) * time.Millisecond,
 			ReconnectBackoffMax:      time.Duration(reconnectBackoffMaxMS) * time.Millisecond,
 		},
+		WebSecurity: WebSecurityConfig{
+			AllowedOrigins:     splitCSV(getEnv("WEB_ALLOWED_ORIGINS", "")),
+			AllowTauriOrigin:   getEnvAsBool("WEB_ALLOW_TAURI_ORIGIN", defaultAllowTauriOrigin),
+			AllowNullOrigin:    getEnvAsBool("WEB_ALLOW_NULL_ORIGIN", allowNullOriginDefault),
+			AllowLocalhost:     getEnvAsBool("WEB_ALLOW_LOCALHOST_ORIGIN", allowLocalhostDefault),
+			AllowLocalhostSubd: getEnvAsBool("WEB_ALLOW_LOCALHOST_SUBDOMAINS", allowLocalhostDefault),
+			TrustProxyHeaders:  getEnvAsBool("WEB_TRUST_PROXY_HEADERS", env == EnvProduction),
+		},
+		WebSession: WebSessionConfig{
+			DefaultPersistence: strings.ToLower(strings.TrimSpace(getEnv("WEB_SESSION_DEFAULT_PERSISTENCE", "ephemeral"))),
+			AllowRemembered:    getEnvAsBool("WEB_SESSION_ALLOW_REMEMBERED", true),
+		},
+	}
+
+	if cfg.WebSession.DefaultPersistence != "ephemeral" && cfg.WebSession.DefaultPersistence != "remembered" {
+		return Config{}, fmt.Errorf("WEB_SESSION_DEFAULT_PERSISTENCE must be ephemeral or remembered")
+	}
+	if cfg.WebSession.DefaultPersistence == "remembered" && !cfg.WebSession.AllowRemembered {
+		cfg.WebSession.DefaultPersistence = "ephemeral"
 	}
 
 	return cfg, nil
