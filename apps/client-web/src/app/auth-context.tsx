@@ -13,6 +13,7 @@ import type { SessionPersistenceMode } from "@project/shared-types";
 import { createIndexedDbStateStore, createMemorySecretVault, createMultiTabCoordinator } from "@project/platform-adapters";
 
 import { HttpRequestError, requestJSON } from "../lib/http";
+import { buildApiURL } from "../lib/api-url";
 import { useBootstrap } from "./bootstrap-context";
 
 export type AuthPhase = "idle" | "restoring" | "unauthenticated" | "two_fa_required" | "authenticated" | "error";
@@ -87,15 +88,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [bootstrap.status, bootstrap.serverConfig?.apiBaseUrl, bootstrap.serverConfig?.apiPrefix]);
 
   const setPersistenceMode = useCallback((mode: SessionPersistenceMode) => {
+    const allowRemembered = bootstrap.serverConfig?.policyHints?.browserSessionAllowRemembered ?? true;
+    if (!allowRemembered && mode === "remembered") {
+      setPersistenceModeState("ephemeral");
+      return;
+    }
     setPersistenceModeState(mode);
-  }, []);
+  }, [bootstrap.serverConfig?.policyHints?.browserSessionAllowRemembered]);
 
   const clearError = useCallback(() => setErrorMessage(null), []);
 
   const login = useCallback(
     async (email: string, password: string): Promise<boolean> => {
       if (bootstrap.status !== "ready" || !bootstrap.serverConfig) {
-        setErrorMessage("Server is not configured.");
+        setErrorMessage("Сервер не настроен.");
         return false;
       }
 
@@ -111,7 +117,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         const response = await requestJSON<LoginSuccessResponse>({
           method: "POST",
-          url: buildURL(bootstrap.serverConfig.apiBaseUrl, bootstrap.serverConfig.apiPrefix, "/auth/web/login"),
+          url: buildApiURL(bootstrap.serverConfig.apiBaseUrl, bootstrap.serverConfig.apiPrefix, "/auth/web/login"),
           body: payload,
         });
 
@@ -148,7 +154,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const verifyTwoFactor = useCallback(
     async (code: string): Promise<boolean> => {
       if (!challenge || bootstrap.status !== "ready" || !bootstrap.serverConfig) {
-        setErrorMessage("Two-factor challenge is missing.");
+        setErrorMessage("Сессия подтверждения 2FA недоступна. Войдите снова.");
         return false;
       }
 
@@ -163,7 +169,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         const response = await requestJSON<LoginSuccessResponse>({
           method: "POST",
-          url: buildURL(bootstrap.serverConfig.apiBaseUrl, bootstrap.serverConfig.apiPrefix, "/auth/web/2fa/verify"),
+          url: buildApiURL(bootstrap.serverConfig.apiBaseUrl, bootstrap.serverConfig.apiPrefix, "/auth/web/2fa/verify"),
           body: payload,
         });
 
@@ -198,7 +204,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const response = await requestJSON<LoginSuccessResponse>({
         method: "POST",
-        url: buildURL(bootstrap.serverConfig.apiBaseUrl, bootstrap.serverConfig.apiPrefix, "/auth/web/refresh"),
+        url: buildApiURL(bootstrap.serverConfig.apiBaseUrl, bootstrap.serverConfig.apiPrefix, "/auth/web/refresh"),
         body: { refreshToken } satisfies WebRefreshRequest,
       });
 
@@ -228,7 +234,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         await requestJSON<{ ok: true }>({
           method: "POST",
-          url: buildURL(bootstrap.serverConfig.apiBaseUrl, bootstrap.serverConfig.apiPrefix, "/auth/web/logout"),
+          url: buildApiURL(bootstrap.serverConfig.apiBaseUrl, bootstrap.serverConfig.apiPrefix, "/auth/web/logout"),
           accessToken,
           body: refreshToken ? { refreshToken } : undefined,
         });
@@ -252,7 +258,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         await requestJSON<{ revokedSessions: number }>({
           method: "POST",
-          url: buildURL(bootstrap.serverConfig.apiBaseUrl, bootstrap.serverConfig.apiPrefix, "/auth/web/logout-all"),
+          url: buildApiURL(bootstrap.serverConfig.apiBaseUrl, bootstrap.serverConfig.apiPrefix, "/auth/web/logout-all"),
           accessToken,
         });
       } catch {
@@ -304,6 +310,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   async function resolvePersistenceMode(): Promise<SessionPersistenceMode> {
     const stored = await stateStoreRef.current.get(persistenceModeStorageKey);
     if (stored === "remembered") {
+      const allowRemembered = bootstrap.serverConfig?.policyHints?.browserSessionAllowRemembered ?? true;
+      return allowRemembered ? "remembered" : "ephemeral";
+    }
+
+    const defaultPersistence = bootstrap.serverConfig?.policyHints?.browserSessionDefaultPersistence;
+    const allowRemembered = bootstrap.serverConfig?.policyHints?.browserSessionAllowRemembered ?? true;
+    if (defaultPersistence === "remembered" && allowRemembered) {
       return "remembered";
     }
     return "ephemeral";
@@ -354,7 +367,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const response = await requestJSON<AuthSessionResponse>({
         method: "GET",
-        url: buildURL(apiBaseUrl, apiPrefix, "/auth/web/session"),
+        url: buildApiURL(apiBaseUrl, apiPrefix, "/auth/web/session"),
         accessToken,
       });
       return {
@@ -405,7 +418,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const response = await requestJSON<LoginSuccessResponse>({
         method: "POST",
-        url: buildURL(apiBaseUrl, apiPrefix, "/auth/web/refresh"),
+        url: buildApiURL(apiBaseUrl, apiPrefix, "/auth/web/refresh"),
         body: { refreshToken } satisfies WebRefreshRequest,
       });
       await applySessionEnvelope(response, mode, apiBaseUrl, apiPrefix);
@@ -424,27 +437,21 @@ export function useAuth(): AuthContextValue {
   return context;
 }
 
-function buildURL(apiBaseUrl: string, apiPrefix: string, path: string): string {
-  const cleanedPath = path.startsWith("/") ? path.slice(1) : path;
-  const cleanedPrefix = apiPrefix.endsWith("/") ? apiPrefix.slice(0, -1) : apiPrefix;
-  return new URL(`${cleanedPrefix}/${cleanedPath}`, `${apiBaseUrl}/`).toString();
-}
-
 function mapAuthError(error: unknown): string {
   if (error instanceof HttpRequestError) {
     if (error.code === "invalid_credentials") {
-      return "Invalid email or password.";
+      return "Неверный email или пароль.";
     }
     if (error.code === "two_fa_required") {
-      return "Two-factor verification is required.";
+      return "Требуется подтверждение 2FA.";
     }
     if (error.code === "endpoint_unreachable") {
-      return "Network is unreachable. Check your connection.";
+      return "Нет соединения с сервером. Проверьте сеть и попробуйте снова.";
     }
-    return error.message;
+    return "Не удалось выполнить запрос авторизации.";
   }
   if (error instanceof Error) {
-    return error.message;
+    return "Не удалось выполнить запрос авторизации.";
   }
-  return "Authentication request failed.";
+  return "Ошибка авторизации.";
 }

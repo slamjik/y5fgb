@@ -1,41 +1,43 @@
-﻿# Transport Lifecycle
+# Transport Lifecycle
 
-Shared lifecycle model (`packages/client-core/src/transport-lifecycle.ts`):
-- states:
-  - `bootstrapping`
-  - `unauthenticated`
-  - `restoring_session`
-  - `connecting`
-  - `connected`
-  - `degraded`
-  - `offline`
-  - `forbidden`
+## Canonical lifecycle model
+Defined in `packages/client-core/src/transport-lifecycle.ts`.
 
-- events:
-  - `config_loaded`
-  - `auth_restored`
-  - `token_refreshed`
-  - `ws_connected`
-  - `ws_disconnected`
-  - `poll_fallback_entered`
-  - `resync_completed`
-  - `visibility_changed`
-  - `online_changed`
-  - `transport_leader_changed`
+States:
+- `bootstrapping`
+- `unauthenticated`
+- `restoring_session`
+- `connecting`
+- `connected`
+- `degraded`
+- `offline`
+- `forbidden`
 
-## Web foundation runtime behavior
-Implemented in `apps/client-web/src/app/transport-controller.ts`:
-- WebSocket primary using `sm.v1` + `sm.auth.<token>` subprotocol
-- long-poll fallback via `/api/v1/sync/poll`
-- attempts WS re-entry from fallback
-- handles browser online/offline and visibility changes
-- refresh/rebind access token when needed
+Events:
+- `config_loaded`
+- `auth_restored`
+- `token_refreshed`
+- `ws_connected`
+- `ws_disconnected`
+- `poll_fallback_entered`
+- `resync_completed`
+- `visibility_changed`
+- `online_changed`
+- `transport_leader_changed`
 
-## Failure policy
-- 401/403 on realtime path -> session forbidden -> trigger local logout flow
-- network failures -> degraded/offline, keep fallback loop
+## Web runtime behavior
+Implemented in `apps/client-web/src/app/transport-controller.ts`.
+
+- Primary: WebSocket (`sm.v1` + auth subprotocol)
+- Fallback: long-poll `/api/v1/sync/poll`
+- Browser signals: `online/offline`, `visibilitychange`
+- Access-token refresh/rebind supported before reconnect attempts
+
+## Product-level UX integration
+- Transport snapshot is surfaced in topbar and settings.
+- Degraded/offline state shows a warning banner in app shell.
+- Reconnect action is available from topbar/settings.
 
 ## Deferred
-- full message queue orchestration and UX
-- cross-tab transport leader election semantics
-- advanced backoff profile tuning
+- Advanced transport leader election across tabs
+- richer queue/resync UX semantics in web messaging UI

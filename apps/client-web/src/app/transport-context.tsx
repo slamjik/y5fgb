@@ -27,6 +27,10 @@ const TransportContext = createContext<TransportContextValue | null>(null);
 export function TransportProvider({ children }: { children: React.ReactNode }) {
   const bootstrap = useBootstrap();
   const auth = useAuth();
+  const authPhase = auth.phase;
+  const getAccessToken = auth.getAccessToken;
+  const refreshAccessToken = auth.refreshAccessToken;
+  const logout = auth.logout;
   const controllerRef = useRef<ReturnType<typeof createTransportController> | null>(null);
 
   const [lifecycle, setLifecycle] = useState<TransportLifecycleSnapshot>(createInitialTransportLifecycle());
@@ -34,7 +38,7 @@ export function TransportProvider({ children }: { children: React.ReactNode }) {
   const [lastError, setLastError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (bootstrap.status !== "ready" || !bootstrap.serverConfig || auth.phase !== "authenticated") {
+    if (bootstrap.status !== "ready" || !bootstrap.serverConfig || authPhase !== "authenticated") {
       controllerRef.current?.stop();
       controllerRef.current = null;
       setRuntime({ ...initialRuntimeSnapshot, updatedAt: new Date().toISOString() });
@@ -45,12 +49,12 @@ export function TransportProvider({ children }: { children: React.ReactNode }) {
 
     const controller = createTransportController({
       config: bootstrap.serverConfig,
-      getAccessToken: auth.getAccessToken,
-      refreshAccessToken: auth.refreshAccessToken,
+      getAccessToken,
+      refreshAccessToken,
       onLifecycle: setLifecycle,
       onRuntimeSnapshot: setRuntime,
       onForbidden: () => {
-        void auth.logout();
+        void logout();
       },
       onError: (message) => setLastError(message),
     });
@@ -61,7 +65,7 @@ export function TransportProvider({ children }: { children: React.ReactNode }) {
       controller.stop();
       controllerRef.current = null;
     };
-  }, [auth, auth.phase, bootstrap.serverConfig, bootstrap.status]);
+  }, [authPhase, bootstrap.serverConfig, bootstrap.status, getAccessToken, logout, refreshAccessToken]);
 
   const value = useMemo<TransportContextValue>(
     () => ({

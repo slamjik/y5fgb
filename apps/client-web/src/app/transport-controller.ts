@@ -66,6 +66,7 @@ export function createTransportController(options: TransportControllerOptions): 
     start() {
       stopped = false;
       emitLifecycle("config_loaded");
+      emitLifecycle("auth_restored");
       window.addEventListener("online", handleOnline);
       window.addEventListener("offline", handleOffline);
       document.addEventListener("visibilitychange", handleVisibility);
@@ -197,7 +198,11 @@ export function createTransportController(options: TransportControllerOptions): 
         void openWebSocket(true);
       }
 
-      pollTimer = window.setTimeout(run, Math.max(timeoutSec, 2) * 1000);
+      const minBackoffMs = options.config.transportHints?.reconnectBackoffMinMs ?? 500;
+      const maxBackoffMs = options.config.transportHints?.reconnectBackoffMaxMs ?? 10000;
+      const reconnectBackoffMs = Math.min(maxBackoffMs, minBackoffMs * 2 ** Math.max(0, reconnectAttempts - 1));
+      const jitterMs = Math.floor(reconnectBackoffMs * (Math.random() * 0.3));
+      pollTimer = window.setTimeout(run, Math.max(timeoutSec, 2) * 1000 + jitterMs);
     };
 
     pollTimer = window.setTimeout(run, 0);

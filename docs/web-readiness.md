@@ -1,26 +1,30 @@
-﻿# Web Readiness (Foundation Closed)
+# Web Readiness (Product Foundation)
 
-## Stage outcome
-The repository is now prepared for first-class browser client development without changing desktop architecture.
+## Implemented now
+- `apps/client-web` is no longer a placeholder. It is a working web product foundation shell with:
+  - server connect/bootstrap flow
+  - auth + 2FA + session restore boundaries
+  - authenticated app shell with product navigation
+  - messaging foundation page (real conversations/history integration)
+  - social foundation pages (people/groups/profile)
+  - security and settings pages wired to live API where available
+- shared web-safe layers stay in:
+  - `packages/client-core`
+  - `packages/platform-adapters`
+- browser lifecycle remains aligned with relay contracts:
+  - `/api/v1/config`
+  - `/api/v1/auth/web/*`
+  - `/api/v1/conversations*`
+  - `/api/v1/devices`
+  - `/api/v1/security-events`
 
-What is now implemented in code:
-- shared platform capability contract (`packages/client-core/src/capabilities.ts`)
-- shared bootstrap/session/storage/transport contracts in `client-core`
-- platform adapters for desktop and web (`packages/platform-adapters/src/platform.ts`)
-- browser foundation app (not placeholder anymore) in `apps/client-web`
-- additive relay web-session auth API (`/api/v1/auth/web/*`)
-- session classification persisted in DB (`client_platform`, `session_class`, `persistent`)
-- strict CORS + WS origin parity policy
-- public bootstrap config hints in `/api/v1/config`
+## Architecture boundaries kept
+- Browser session is a `session_class=browser`, not a trusted desktop device.
+- Access token remains memory-first in web runtime.
+- Shared packages do not import Tauri runtime.
+- Web app does not import desktop app modules.
 
-## What remains intentionally deferred
-- full browser messaging UX
-- browser crypto parity for E2EE message operations
-- advanced multi-tab leader election and full sync ownership model
-- cookie/hybrid auth migration (if required later)
-
-## Non-negotiable boundaries
-- Browser session is not a trusted desktop device.
-- Access token remains memory-only in web app.
-- Shared packages must not import Tauri runtime.
-- Web app must not import desktop app modules.
+## Intentionally deferred
+- Full browser crypto parity for message encryption/decryption compose flow.
+- Final product UX polish and complete social graph features.
+- Advanced multi-tab transport leader election.

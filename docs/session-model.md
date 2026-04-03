@@ -1,27 +1,30 @@
-﻿# Session Model
+# Session Model
 
 ## Session classes
-- `device`: trusted desktop/device-bound session
-- `browser`: web session class for browser clients
+- `device`: trusted desktop/device session
+- `browser`: browser web session
 
-Stored in `sessions` table:
-- `client_platform` (`desktop-tauri` | `web-browser`)
-- `session_class` (`device` | `browser`)
-- `persistent` (bool)
+Persisted session fields:
+- `client_platform`
+- `session_class`
+- `persistent`
 
-## Browser persistence policy
-- default persistence from server config: `WEB_SESSION_DEFAULT_PERSISTENCE` (`ephemeral` or `remembered`)
-- `WEB_SESSION_ALLOW_REMEMBERED` controls whether remembered mode is permitted
+## Browser model
+- Browser uses `session_class=browser`.
+- It does not inherit trusted-device semantics.
+- Default session mode is `ephemeral`.
+- Optional remembered mode persists refresh token in browser state store.
 
-## Browser flow
-1. Bootstrap config (`/api/v1/config`)
-2. Login (`/auth/web/login`) or 2FA verify (`/auth/web/2fa/verify`)
-3. Restore via `/auth/web/refresh` if remembered refresh token exists
-4. Session introspection via `/auth/web/session`
-5. Logout single/all via `/auth/web/logout`, `/auth/web/logout-all`
+## Web auth lifecycle
+1. `GET /api/v1/config`
+2. `POST /api/v1/auth/web/login`
+3. optional `POST /api/v1/auth/web/2fa/verify`
+4. `POST /api/v1/auth/web/refresh` (restore path)
+5. `GET /api/v1/auth/web/session`
+6. `POST /api/v1/auth/web/logout` / `POST /api/v1/auth/web/logout-all`
 
 ## Security invariants
-- Browser sessions are not trusted devices.
-- Access token must be short-lived and in-memory on web client.
-- Refresh reuse detection revokes account sessions globally.
-- Logout/logout-all must clear browser local session material.
+- Access token is kept in memory vault.
+- Refresh token persistence is policy-driven (`ephemeral` or `remembered`).
+- Reuse detection and logout-all stay server-authoritative.
+- Browser logout/session invalidation is propagated to other tabs through broadcast channel.

@@ -1,29 +1,32 @@
-﻿# client-web (foundation shell)
+# client-web
 
-`apps/client-web` is now a real technical foundation app for browser platform work.
+Web-first product foundation for Secure Messenger.
 
-Implemented in this stage:
-- server connect/bootstrap flow (`/api/v1/config` + fallback)
-- browser auth session model (`/auth/web/*`)
-- session restore flow with remembered/ephemeral modes
-- 2FA challenge hook point for web login
-- transport foundation: WebSocket primary + long-poll fallback
-- multi-tab coordination (`BroadcastChannel` + storage-event fallback)
-- strict shared-layer usage (`@project/client-core`, `@project/platform-adapters`)
+## What is implemented
+- server connect/bootstrap flow
+- browser auth (`/auth/web/*`) + 2FA hook
+- session restore/logout/logout-all
+- app shell with product sections:
+  - Overview
+  - Conversations
+  - People
+  - Groups
+  - Profile
+  - Security
+  - Settings
+- transport status integration (WS + long-poll fallback snapshot)
+- conversation and security data integration from relay API
 
-Intentional limits in this stage:
-- no final product UI/visual polish
-- no full browser E2EE parity yet
-- no full messaging screens/composer in web app
+## Current intentional limitation
+- browser message composer send path is disabled until browser crypto adapter reaches parity.
 
 ## Run
-
 ```bash
 npm run dev:web
 ```
 
-## Build
-
+## Build and boundary checks
 ```bash
-npm run build:web-foundation
+npm run build:web
+npm run check:boundaries
 ```

@@ -1,48 +1,32 @@
-﻿# Frontend Layering
+# Frontend Layering
 
 ## Layer map
 1. Apps
-- `apps/client-desktop`: product desktop UI/runtime
-- `apps/client-web`: technical browser foundation shell
+- `apps/client-web`: web-first product foundation UI/runtime
+- `apps/client-desktop`: desktop runtime/product client
 
 2. Shared frontend core
-- `packages/client-core`
-- platform-agnostic contracts/utilities only
+- `packages/client-core`: platform-agnostic contracts, policies, lifecycle and config parsing
 
 3. Platform adapters
-- `packages/platform-adapters`
-- runtime-specific adapters wired to shared contracts
+- `packages/platform-adapters`: browser/desktop storage + runtime adapters
 
-4. Shared wire/domain contracts
+4. Shared contracts
 - `packages/protocol`
 - `packages/shared-types`
 
-## Implemented package responsibilities
-
-### client-core
-- runtime descriptor (`runtime.ts`)
-- platform capability model (`capabilities.ts`)
-- bootstrap context types (`bootstrap-context.ts`)
-- session policy contract (`session-policy.ts`)
-- storage classes/cleanup policy (`storage-model.ts`)
-- crypto facade boundary (`crypto-facade.ts`)
-- transport lifecycle state machine contract (`transport-lifecycle.ts`)
-- server bootstrap config parsing (`server-config.ts`)
-
-### platform-adapters
-- desktop/web adapter factories (`platform.ts`)
-- memory secret vault (`memory-secret-vault.ts`)
-- indexeddb state store (`indexeddb-state-store.ts`)
-- multi-tab coordination (`multitab-coordination.ts`)
+## Web app structure (current)
+- `src/app/bootstrap-context.tsx`: server bootstrap lifecycle
+- `src/app/auth-context.tsx`: browser auth/session lifecycle
+- `src/app/messaging-context.tsx`: conversation/history foundation state
+- `src/app/transport-context.tsx`: realtime/fallback runtime snapshot
+- `src/app/AppShell.tsx`: product shell + section routing/state
+- `src/lib/authed-request.ts`: auth-aware API helper
 
 ## Import discipline
-- enforced by `scripts/check-boundaries.mjs`
-- checks deny:
-  - `@tauri-apps/*` in shared/web code
-  - desktop app imports in `apps/client-web`
-  - node builtins in web client source
+Enforced by `npm run check:boundaries`.
 
-Run:
-```bash
-npm run check:boundaries
-```
+Rules:
+- no `@tauri-apps/*` imports in shared/web paths
+- no imports from `apps/client-desktop` inside web app
+- no Node builtins in web source

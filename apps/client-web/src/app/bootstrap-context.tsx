@@ -134,23 +134,23 @@ export function useBootstrap(): BootstrapContextValue {
 function mapBootstrapError(error: unknown): string {
   if (error instanceof ServerConfigError) {
     if (error.code === "invalid_input") {
-      return "Invalid server address.";
+      return "Введите корректный адрес сервера.";
     }
     if (error.code === "connection_failed") {
-      return "Cannot reach server. Check address and network.";
+      return "Не удалось подключиться к серверу. Проверьте адрес и сеть.";
     }
-    return "Server returned invalid bootstrap config.";
+    return "Сервер вернул некорректную конфигурацию.";
   }
   if (error instanceof HttpRequestError) {
     if (error.code === "endpoint_unreachable") {
-      return "Cannot reach server. Check address and network.";
+      return "Не удалось подключиться к серверу. Проверьте адрес и сеть.";
     }
-    return error.message;
+    return "Не удалось получить конфигурацию сервера.";
   }
   if (error instanceof Error) {
-    return error.message;
+    return "Не удалось получить конфигурацию сервера.";
   }
-  return "Failed to connect to server.";
+  return "Не удалось подключиться к серверу.";
 }
 
 function loadEnvServerConfig(): ResolvedServerConfig | null {
