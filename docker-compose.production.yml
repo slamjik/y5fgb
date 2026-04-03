@@ -53,6 +53,14 @@ services:
       TRANSPORT_LONG_POLL_TIMEOUT_SEC: ${TRANSPORT_LONG_POLL_TIMEOUT_SEC:-25}
       TRANSPORT_RECONNECT_BACKOFF_MIN_MS: ${TRANSPORT_RECONNECT_BACKOFF_MIN_MS:-500}
       TRANSPORT_RECONNECT_BACKOFF_MAX_MS: ${TRANSPORT_RECONNECT_BACKOFF_MAX_MS:-10000}
+      WEB_ALLOWED_ORIGINS: ${WEB_ALLOWED_ORIGINS:-}
+      WEB_ALLOW_TAURI_ORIGIN: ${WEB_ALLOW_TAURI_ORIGIN:-true}
+      WEB_ALLOW_NULL_ORIGIN: ${WEB_ALLOW_NULL_ORIGIN:-false}
+      WEB_ALLOW_LOCALHOST_ORIGIN: ${WEB_ALLOW_LOCALHOST_ORIGIN:-false}
+      WEB_ALLOW_LOCALHOST_SUBDOMAINS: ${WEB_ALLOW_LOCALHOST_SUBDOMAINS:-false}
+      WEB_TRUST_PROXY_HEADERS: ${WEB_TRUST_PROXY_HEADERS:-true}
+      WEB_SESSION_DEFAULT_PERSISTENCE: ${WEB_SESSION_DEFAULT_PERSISTENCE:-ephemeral}
+      WEB_SESSION_ALLOW_REMEMBERED: ${WEB_SESSION_ALLOW_REMEMBERED:-true}
     volumes:
       - attachments:/app/data/attachments
     expose:
@@ -66,6 +74,27 @@ services:
       timeout: 5s
       retries: 10
       start_period: 20s
+    restart: unless-stopped
+    networks:
+      - backend
+
+  web-client:
+    image: secure-messenger-web:${WEB_IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: apps/client-web/Dockerfile
+      args:
+        VITE_API_BASE_URL: ${API_BASE}
+        VITE_WS_URL: ${WS_URL}
+        VITE_API_PREFIX: ${API_PREFIX:-/api/v1}
+    expose:
+      - "80"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
     restart: unless-stopped
     networks:
       - backend
@@ -86,6 +115,8 @@ services:
       - caddy_config:/config
     depends_on:
       relay-server:
+        condition: service_healthy
+      web-client:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "caddy", "validate", "--config", "/etc/caddy/Caddyfile"]

@@ -121,15 +121,35 @@ for key in "${required_vars[@]}"; do
   require_non_empty "$key"
 done
 
+if [[ "$mode" == "domain" ]]; then
+  export WEB_ALLOWED_ORIGINS="${WEB_ALLOWED_ORIGINS:-$(read_env_value WEB_ALLOWED_ORIGINS)}"
+  if [[ -z "$WEB_ALLOWED_ORIGINS" ]]; then
+    export WEB_ALLOWED_ORIGINS="https://${public_host}"
+  fi
+  export WEB_PUBLISH_ADDRESS="${WEB_PUBLISH_ADDRESS:-$(read_env_value WEB_PUBLISH_ADDRESS)}"
+  export WEB_PUBLISH_PORT="${WEB_PUBLISH_PORT:-$(read_env_value WEB_PUBLISH_PORT)}"
+  [[ -z "$WEB_PUBLISH_ADDRESS" ]] && export WEB_PUBLISH_ADDRESS="127.0.0.1"
+  [[ -z "$WEB_PUBLISH_PORT" ]] && export WEB_PUBLISH_PORT="8081"
+else
+  export WEB_ALLOWED_ORIGINS="${WEB_ALLOWED_ORIGINS:-$(read_env_value WEB_ALLOWED_ORIGINS)}"
+  if [[ -z "$WEB_ALLOWED_ORIGINS" ]]; then
+    export WEB_ALLOWED_ORIGINS="http://${public_host}"
+  fi
+  export WEB_PUBLISH_ADDRESS="${WEB_PUBLISH_ADDRESS:-$(read_env_value WEB_PUBLISH_ADDRESS)}"
+  export WEB_PUBLISH_PORT="${WEB_PUBLISH_PORT:-$(read_env_value WEB_PUBLISH_PORT)}"
+  [[ -z "$WEB_PUBLISH_ADDRESS" ]] && export WEB_PUBLISH_ADDRESS="0.0.0.0"
+  [[ -z "$WEB_PUBLISH_PORT" ]] && export WEB_PUBLISH_PORT="80"
+fi
+
 compose_cmd=("${COMPOSE_BIN[@]}" -f "$COMPOSE_BASE_FILE" -f "$COMPOSE_OVERRIDE_FILE" --env-file "$ENV_FILE")
 
 echo "[deploy-prod] starting stack with $ENV_FILE (mode: $mode)"
 if [[ "$mode" == "ip" ]]; then
-  echo "[deploy-prod] IP mode detected: starting postgres + relay-server (without caddy)"
+  echo "[deploy-prod] IP mode detected: starting postgres + relay-server + web-client (without caddy)"
   "${compose_cmd[@]}" rm -sf caddy >/dev/null 2>&1 || true
-  "${compose_cmd[@]}" up -d --build --remove-orphans postgres relay-server
+  "${compose_cmd[@]}" up -d --build --remove-orphans postgres relay-server web-client
 else
-  echo "[deploy-prod] domain mode detected: starting full stack with caddy"
+  echo "[deploy-prod] domain mode detected: starting full stack with caddy + web-client"
   "${compose_cmd[@]}" up -d --build --remove-orphans
 fi
 
@@ -166,5 +186,30 @@ else
   echo "${compose_cmd[*]} logs --tail=100" >&2
   exit 1
 fi
+
+web_check_url="http://127.0.0.1/"
+if [[ "$mode" == "domain" ]]; then
+  if curl -fsS -H "Host: $public_host" "$web_check_url" >/dev/null 2>&1; then
+    echo "[deploy-prod] web ui check passed (host: $public_host)"
+  else
+    echo "[deploy-prod] warning: web ui check failed at $web_check_url (host: $public_host)" >&2
+  fi
+else
+  if curl -fsS "http://127.0.0.1/healthz" >/dev/null 2>&1; then
+    echo "[deploy-prod] web ui check passed"
+  else
+    echo "[deploy-prod] warning: web ui check failed at http://127.0.0.1/healthz" >&2
+  fi
+fi
+
+if [[ "$mode" == "domain" ]]; then
+  site_public_url="https://${public_host}"
+  api_public_url="https://${public_host}"
+else
+  site_public_url="http://${public_host}"
+  api_public_url="http://${public_host}:8080"
+fi
+echo "[deploy-prod] site: ${site_public_url}"
+echo "[deploy-prod] api:  ${api_public_url}"
 
 echo "[deploy-prod] deployment finished successfully"

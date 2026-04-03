@@ -61,7 +61,23 @@ export function BootstrapProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    setStatus("needs_server");
+    let cancelled = false;
+    void (async () => {
+      const autoConfig = await tryAutoDiscoverFromCurrentOrigin();
+      if (cancelled) {
+        return;
+      }
+      if (autoConfig) {
+        setServerConfig(autoConfig);
+        setStatus("ready");
+        return;
+      }
+      setStatus("needs_server");
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const connectToServer = useCallback(async (input: string): Promise<boolean> => {
@@ -255,4 +271,29 @@ function hostFromApiBase(apiBaseUrl: string): string {
 function readEnv(name: string): string {
   const value = (import.meta as { env?: Record<string, string | undefined> }).env?.[name];
   return typeof value === "string" ? value : "";
+}
+
+async function tryAutoDiscoverFromCurrentOrigin(): Promise<ResolvedServerConfig | null> {
+  if (typeof window === "undefined" || !window.location?.origin) {
+    return null;
+  }
+
+  const origin = window.location.origin;
+  const endpoint = buildServerConfigEndpoint(origin);
+
+  try {
+    const payload = await requestJSON<unknown>({
+      method: "GET",
+      url: endpoint,
+      timeoutMs: 4000,
+    });
+    const discovered = parseServerConfigPayload(payload);
+    return {
+      ...discovered,
+      source: "manual",
+      inputHost: window.location.host,
+    };
+  } catch {
+    return null;
+  }
 }

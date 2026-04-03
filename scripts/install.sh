@@ -147,12 +147,22 @@ if [[ "$mode" == "domain" ]]; then
   api_base="https://${server_host}"
   ws_url="wss://${server_host}/ws"
   relay_publish_address="127.0.0.1"
+  web_publish_address="127.0.0.1"
+  web_publish_port="8081"
+  web_allowed_origins="https://${server_host}"
+  web_trust_proxy_headers="true"
+  site_url="https://${server_host}"
 else
   acme_email="install@localhost"
   tls_enabled="false"
   api_base="http://${server_host}:8080"
   ws_url="ws://${server_host}:8080/ws"
   relay_publish_address="0.0.0.0"
+  web_publish_address="0.0.0.0"
+  web_publish_port="80"
+  web_allowed_origins="http://${server_host}"
+  web_trust_proxy_headers="false"
+  site_url="http://${server_host}"
 fi
 
 postgres_db="secure_messenger"
@@ -219,6 +229,17 @@ HTTP_SHUTDOWN_TIMEOUT_SEC=10
 
 RELAY_PUBLISH_ADDRESS=${relay_publish_address}
 RELAY_PUBLISH_PORT=8080
+WEB_PUBLISH_ADDRESS=${web_publish_address}
+WEB_PUBLISH_PORT=${web_publish_port}
+
+WEB_ALLOWED_ORIGINS=${web_allowed_origins}
+WEB_ALLOW_TAURI_ORIGIN=true
+WEB_ALLOW_NULL_ORIGIN=false
+WEB_ALLOW_LOCALHOST_ORIGIN=false
+WEB_ALLOW_LOCALHOST_SUBDOMAINS=false
+WEB_TRUST_PROXY_HEADERS=${web_trust_proxy_headers}
+WEB_SESSION_DEFAULT_PERSISTENCE=ephemeral
+WEB_SESSION_ALLOW_REMEMBERED=true
 EOF
 
 echo "[install] .env generated: $ENV_FILE"
@@ -234,13 +255,15 @@ if [[ "$mode" == "domain" ]]; then
   health_url="https://${server_host}/health"
   ready_url="https://${server_host}/ready"
   config_url="https://${server_host}/api/v1/config"
+  site_health_url="https://${server_host}/"
   fallback_health_url="http://127.0.0.1/health"
 else
-  echo "[install] starting stack in IP mode (direct HTTP on :8080, no Caddy)"
-  "${compose_cmd[@]}" up -d --build --remove-orphans postgres relay-server
+  echo "[install] starting stack in IP mode (HTTP + Web UI + API, no Caddy)"
+  "${compose_cmd[@]}" up -d --build --remove-orphans postgres relay-server web-client
   health_url="http://${server_host}:8080/health"
   ready_url="http://${server_host}:8080/ready"
   config_url="http://${server_host}:8080/api/v1/config"
+  site_health_url="http://${server_host}/healthz"
   fallback_health_url=""
 fi
 
@@ -264,10 +287,15 @@ if ! wait_for_http "$config_url"; then
   echo "[install] warning: /api/v1/config is not reachable yet at $config_url" >&2
 fi
 
+if ! wait_for_http "$site_health_url"; then
+  echo "[install] warning: web UI endpoint is not reachable yet at $site_health_url" >&2
+fi
+
 "${compose_cmd[@]}" ps
 
 printf '\n==============================\n'
 printf 'СЕРВЕР ГОТОВ\n\n'
-printf 'Адрес:\n%s\n\n' "$api_base"
-printf 'Введите этот адрес в клиенте\n'
+printf 'Сайт:\n%s\n\n' "$site_url"
+printf 'API:\n%s\n\n' "$api_base"
+printf 'Веб-клиент подключится автоматически.\n'
 printf '==============================\n'

@@ -1,0 +1,15 @@
+.git
+.gitignore
+.vscode
+.idea
+
+node_modules
+**/node_modules
+dist
+**/dist
+
+apps/client-desktop/src-tauri/target
+apps/relay-server/bin
+artifacts
+tmp
+coverage

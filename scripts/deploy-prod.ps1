@@ -96,21 +96,38 @@ foreach ($key in $required) {
   Require-Env -Path $envFile -Key $key
 }
 
+$webAllowedOrigins = Get-EnvValue -Path $envFile -Key "WEB_ALLOWED_ORIGINS"
+$webPublishAddress = Get-EnvValue -Path $envFile -Key "WEB_PUBLISH_ADDRESS"
+$webPublishPort = Get-EnvValue -Path $envFile -Key "WEB_PUBLISH_PORT"
+if ($mode -eq "domain") {
+  if ([string]::IsNullOrWhiteSpace($webAllowedOrigins)) { $webAllowedOrigins = "https://$publicHost" }
+  if ([string]::IsNullOrWhiteSpace($webPublishAddress)) { $webPublishAddress = "127.0.0.1" }
+  if ([string]::IsNullOrWhiteSpace($webPublishPort)) { $webPublishPort = "8081" }
+}
+else {
+  if ([string]::IsNullOrWhiteSpace($webAllowedOrigins)) { $webAllowedOrigins = "http://$publicHost" }
+  if ([string]::IsNullOrWhiteSpace($webPublishAddress)) { $webPublishAddress = "0.0.0.0" }
+  if ([string]::IsNullOrWhiteSpace($webPublishPort)) { $webPublishPort = "80" }
+}
+$env:WEB_ALLOWED_ORIGINS = $webAllowedOrigins
+$env:WEB_PUBLISH_ADDRESS = $webPublishAddress
+$env:WEB_PUBLISH_PORT = $webPublishPort
+
 $composeArgs = @("-f", $composeBaseFile, "-f", $composeOverrideFile, "--env-file", $envFile)
 
 Write-Host "[deploy-prod] starting stack with $envFile (mode: $mode)"
 if ($mode -eq "ip") {
-  Write-Host "[deploy-prod] IP mode detected: starting postgres + relay-server (without caddy)"
+  Write-Host "[deploy-prod] IP mode detected: starting postgres + relay-server + web-client (without caddy)"
   try {
     Invoke-Compose @composeArgs rm -sf caddy | Out-Null
   }
   catch {
     # Best-effort cleanup of old caddy container.
   }
-  Invoke-Compose @composeArgs up -d --build --remove-orphans postgres relay-server
+  Invoke-Compose @composeArgs up -d --build --remove-orphans postgres relay-server web-client
 }
 else {
-  Write-Host "[deploy-prod] domain mode detected: starting full stack with caddy"
+  Write-Host "[deploy-prod] domain mode detected: starting full stack with caddy + web-client"
   Invoke-Compose @composeArgs up -d --build --remove-orphans
 }
 
@@ -152,4 +169,35 @@ if (-not $ready) {
 }
 
 Write-Host "[deploy-prod] readiness check passed"
+
+if ($mode -eq "domain") {
+  try {
+    Invoke-WebRequest -Uri "http://127.0.0.1/" -Headers @{ Host = $publicHost } -UseBasicParsing -TimeoutSec 5 | Out-Null
+    Write-Host "[deploy-prod] web ui check passed (host: $publicHost)"
+  }
+  catch {
+    Write-Warning "[deploy-prod] warning: web ui check failed at http://127.0.0.1/ (host: $publicHost)"
+  }
+}
+else {
+  try {
+    Invoke-WebRequest -Uri "http://127.0.0.1/healthz" -UseBasicParsing -TimeoutSec 5 | Out-Null
+    Write-Host "[deploy-prod] web ui check passed"
+  }
+  catch {
+    Write-Warning "[deploy-prod] warning: web ui check failed at http://127.0.0.1/healthz"
+  }
+}
+
+if ($mode -eq "domain") {
+  $sitePublicUrl = "https://$publicHost"
+  $apiPublicUrl = "https://$publicHost"
+}
+else {
+  $sitePublicUrl = "http://$publicHost"
+  $apiPublicUrl = "http://$publicHost:8080"
+}
+Write-Host "[deploy-prod] site: $sitePublicUrl"
+Write-Host "[deploy-prod] api:  $apiPublicUrl"
+
 Write-Host "[deploy-prod] deployment finished successfully"

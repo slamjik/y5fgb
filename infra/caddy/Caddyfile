@@ -39,5 +39,7 @@
     @ready path /ready
     reverse_proxy @ready relay-server:8080
 
-    respond "not found" 404
+    handle {
+        reverse_proxy web-client:80
+    }
 }

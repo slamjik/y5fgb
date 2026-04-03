@@ -108,6 +108,11 @@ if ($mode -eq "domain") {
   $apiBase = "https://$serverHost"
   $wsUrl = "wss://$serverHost/ws"
   $relayPublishAddress = "127.0.0.1"
+  $webPublishAddress = "127.0.0.1"
+  $webPublishPort = "8081"
+  $webAllowedOrigins = "https://$serverHost"
+  $webTrustProxyHeaders = "true"
+  $siteUrl = "https://$serverHost"
 }
 else {
   $acmeEmail = "install@localhost"
@@ -115,6 +120,11 @@ else {
   $apiBase = "http://$serverHost:8080"
   $wsUrl = "ws://$serverHost:8080/ws"
   $relayPublishAddress = "0.0.0.0"
+  $webPublishAddress = "0.0.0.0"
+  $webPublishPort = "80"
+  $webAllowedOrigins = "http://$serverHost"
+  $webTrustProxyHeaders = "false"
+  $siteUrl = "http://$serverHost"
 }
 
 $postgresDb = "secure_messenger"
@@ -181,6 +191,17 @@ HTTP_SHUTDOWN_TIMEOUT_SEC=10
 
 RELAY_PUBLISH_ADDRESS=$relayPublishAddress
 RELAY_PUBLISH_PORT=8080
+WEB_PUBLISH_ADDRESS=$webPublishAddress
+WEB_PUBLISH_PORT=$webPublishPort
+
+WEB_ALLOWED_ORIGINS=$webAllowedOrigins
+WEB_ALLOW_TAURI_ORIGIN=true
+WEB_ALLOW_NULL_ORIGIN=false
+WEB_ALLOW_LOCALHOST_ORIGIN=false
+WEB_ALLOW_LOCALHOST_SUBDOMAINS=false
+WEB_TRUST_PROXY_HEADERS=$webTrustProxyHeaders
+WEB_SESSION_DEFAULT_PERSISTENCE=ephemeral
+WEB_SESSION_ALLOW_REMEMBERED=true
 "@
 
 [System.IO.File]::WriteAllText($envFile, $envContent, [System.Text.UTF8Encoding]::new($false))
@@ -202,14 +223,16 @@ if ($mode -eq "domain") {
   $healthUrl = "https://$serverHost/health"
   $readyUrl = "https://$serverHost/ready"
   $configUrl = "https://$serverHost/api/v1/config"
+  $siteHealthUrl = "https://$serverHost/"
   $fallbackHealthUrl = "http://127.0.0.1/health"
 }
 else {
-  Write-Host "[install] starting stack in IP mode (direct HTTP on :8080, no Caddy)"
-  Invoke-Compose @composeArgs up -d --build --remove-orphans postgres relay-server
+  Write-Host "[install] starting stack in IP mode (HTTP + Web UI + API, no Caddy)"
+  Invoke-Compose @composeArgs up -d --build --remove-orphans postgres relay-server web-client
   $healthUrl = "http://$serverHost:8080/health"
   $readyUrl = "http://$serverHost:8080/ready"
   $configUrl = "http://$serverHost:8080/api/v1/config"
+  $siteHealthUrl = "http://$serverHost/healthz"
   $fallbackHealthUrl = $null
 }
 
@@ -234,6 +257,9 @@ if (-not (Wait-HttpReady -Url $readyUrl)) {
 if (-not (Wait-HttpReady -Url $configUrl)) {
   Write-Warning "[install] warning: /api/v1/config is not reachable yet at $configUrl"
 }
+if (-not (Wait-HttpReady -Url $siteHealthUrl)) {
+  Write-Warning "[install] warning: web UI endpoint is not reachable yet at $siteHealthUrl"
+}
 
 Invoke-Compose @composeArgs ps
 
@@ -241,8 +267,11 @@ Write-Host ""
 Write-Host "=============================="
 Write-Host "SERVER READY"
 Write-Host ""
-Write-Host "Address:"
+Write-Host "Site:"
+Write-Host $siteUrl
+Write-Host ""
+Write-Host "API:"
 Write-Host $apiBase
 Write-Host ""
-Write-Host "Use this address in the client"
+Write-Host "Web client connects to server automatically"
 Write-Host "=============================="

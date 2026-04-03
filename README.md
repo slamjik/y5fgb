@@ -46,13 +46,13 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 1. Проверяет Docker и Docker Compose.
 2. Просит ввести домен или IP.
 3. Сам генерирует `.env` и секреты.
-4. Поднимает сервер через Docker Compose.
-5. Проверяет `health` и `config` endpoint.
-6. Показывает готовый адрес для подключения клиента.
+4. Поднимает API + Web UI через Docker Compose.
+5. Проверяет `health`, `ready`, `config` и web endpoint.
+6. Показывает готовые адреса сайта и API.
 
 Режимы:
 - Ввод **домена** -> `https://<domain>` и `wss://<domain>/ws` (через Caddy + TLS).
-- Ввод **IP** -> `http://<ip>:8080` и `ws://<ip>:8080/ws` (без TLS, без Caddy).
+- Ввод **IP** -> сайт `http://<ip>`, API `http://<ip>:8080`, WS `ws://<ip>:8080/ws` (без TLS, без Caddy).
 
 ## Local Development
 
@@ -130,14 +130,16 @@ curl -H "Host: <PUBLIC_HOST>" http://127.0.0.1/ready
 
 ## Как клиент подключается к серверу / Client Connection Flow
 
-1. На первом запуске клиент открывает экран подключения сервера.
-2. Пользователь вводит домен/IP.
-3. Клиент запрашивает `GET /api/v1/config`.
-4. Если endpoint недоступен (404), клиент использует fallback:
-   - `api_base = https://<host>` (или `http://<ip>:8080` для IP-режима)
-   - `ws_url = wss://<host>/ws` (или `ws://<ip>:8080/ws`)
-   - `api_prefix = /api/v1`
-5. Конфиг сохраняется локально и дальше используется в runtime.
+### Web
+После запуска `install.sh`/`deploy-prod.sh` web-клиент разворачивается автоматически и открывается по:
+- `https://<domain>` в domain mode
+- `http://<ip>` в IP mode
+
+Web-клиент получает API/WS конфиг на этапе сборки и запрашивает `GET /api/v1/config` для bootstrap-подсказок.  
+Ручной ввод `http://<ip>:8080` в web UI не нужен.
+
+### Desktop
+Desktop-клиент сохраняет модель подключения через экран выбора сервера (домен/IP), затем использует `/api/v1/config` и runtime fallback.
 
 ## Desktop Auto-Updates (Tauri)
 
