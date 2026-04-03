@@ -1,0 +1,9 @@
+﻿{
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/example/secure-messenger/releases/latest/download/latest-beta.json"
+      ]
+    }
+  }
+}

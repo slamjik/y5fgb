@@ -2,6 +2,7 @@
 import { pluginRuntime } from "@/services/plugins/runtime";
 import { hasStoredServerConfig } from "@/services/serverConnection";
 import { bootstrapSession } from "@/services/sessionBootstrap";
+import { updaterService } from "@/services/updater";
 import { useAppStore } from "@/state/appStore";
 import { useAuthStore } from "@/state/authStore";
 
@@ -29,6 +30,12 @@ export async function initApp() {
     await pluginRuntime.start();
   } catch (error) {
     logger.warn("Plugin runtime bootstrap failed", { error });
+  }
+
+  try {
+    await updaterService.initializeBackgroundChecks();
+  } catch (error) {
+    logger.warn("Updater bootstrap failed", { error });
   }
 
   useAppStore.getState().setInitialized(true);

@@ -581,6 +581,8 @@ fn messaging_store_write_sync_cursor(
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             secure_store_set,
             secure_store_get,

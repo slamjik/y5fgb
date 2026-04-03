@@ -1,1 +1,1 @@
-{"default":{"identifier":"default","description":"Default capability for secure messenger desktop shell","local":true,"windows":["main"],"permissions":["core:default"]}}
+{"default":{"identifier":"default","description":"Default capability for secure messenger desktop shell","local":true,"windows":["main"],"permissions":["core:default","updater:default","process:default"]}}

@@ -45,6 +45,7 @@ interface MessagingStore {
   conversations: ConversationDTO[];
   messagesByConversation: Record<string, LocalMessage[]>;
   activeConversationId: string | null;
+  readPositions: Record<string, number>;
   outbox: OutboxItem[];
   transport: {
     mode: TransportModeState;
@@ -68,6 +69,7 @@ interface MessagingStore {
   ) => void;
   removeMessageByClientReference: (conversationId: string, senderDeviceId: string, clientMessageId: string) => void;
   setActiveConversation: (conversationId: string | null) => void;
+  markConversationRead: (conversationId: string, serverSequence?: number) => void;
   setOutbox: (items: OutboxItem[]) => void;
   setTransportState: (payload: Partial<MessagingStore["transport"]>) => void;
   reset: () => void;
@@ -81,6 +83,7 @@ export const useMessagingStore = create<MessagingStore>()(
       conversations: [],
       messagesByConversation: {},
       activeConversationId: null,
+      readPositions: {},
       outbox: [],
       transport: {
         mode: "none",
@@ -164,6 +167,20 @@ export const useMessagingStore = create<MessagingStore>()(
           },
         })),
       setActiveConversation: (conversationId) => set({ activeConversationId: conversationId }),
+      markConversationRead: (conversationId, serverSequence) =>
+        set((state) => {
+          const existing = state.readPositions[conversationId] ?? 0;
+          const next =
+            typeof serverSequence === "number" && Number.isFinite(serverSequence)
+              ? Math.max(existing, Math.max(0, Math.floor(serverSequence)))
+              : existing;
+          return {
+            readPositions: {
+              ...state.readPositions,
+              [conversationId]: next,
+            },
+          };
+        }),
       setOutbox: (items) => set({ outbox: items }),
       setTransportState: (payload) =>
         set((state) => ({
@@ -180,6 +197,7 @@ export const useMessagingStore = create<MessagingStore>()(
           conversations: [],
           messagesByConversation: {},
           activeConversationId: null,
+          readPositions: {},
           outbox: [],
           transport: {
             mode: "none",
@@ -195,6 +213,7 @@ export const useMessagingStore = create<MessagingStore>()(
       name: "secure-messenger-messaging-ui",
       partialize: (state) => ({
         activeConversationId: state.activeConversationId,
+        readPositions: state.readPositions,
       }),
       merge: (persistedState, currentState) => ({
         ...currentState,

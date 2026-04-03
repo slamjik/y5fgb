@@ -1,0 +1,113 @@
+﻿name: desktop-release
+
+on:
+  push:
+    tags:
+      - "v*"
+      - "beta-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate signing secrets
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace("${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}")) {
+            throw "Missing TAURI_SIGNING_PRIVATE_KEY secret"
+          }
+
+      - name: Resolve release metadata
+        id: meta
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $channel = "stable"
+          $manifestName = "latest.json"
+          $configPath = ""
+          $preRelease = "false"
+          $version = $tag
+
+          if ($tag -like "beta-v*") {
+            $channel = "beta"
+            $manifestName = "latest-beta.json"
+            $configPath = "src-tauri/tauri.beta.conf.json"
+            $preRelease = "true"
+            $version = $tag -replace '^beta-v', ''
+          } else {
+            $version = $tag -replace '^v', ''
+          }
+
+          "channel=$channel" >> $env:GITHUB_OUTPUT
+          "manifest_name=$manifestName" >> $env:GITHUB_OUTPUT
+          "config_path=$configPath" >> $env:GITHUB_OUTPUT
+          "pre_release=$preRelease" >> $env:GITHUB_OUTPUT
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Build desktop updater artifacts
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          $configPath = "${{ steps.meta.outputs.config_path }}"
+          if ([string]::IsNullOrWhiteSpace($configPath)) {
+            npm run tauri:build --workspace apps/client-desktop -- --bundles nsis --ci
+          } else {
+            npm run tauri:build --workspace apps/client-desktop -- --bundles nsis --ci --config $configPath
+          }
+
+      - name: Generate update manifest
+        id: manifest
+        shell: pwsh
+        run: |
+          $bundleDir = "apps/client-desktop/src-tauri/target/release/bundle/nsis"
+          $setup = Get-ChildItem -Path $bundleDir -File | Where-Object { $_.Name -match "(?i)setup.*\.exe$" } | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if (-not $setup) {
+            throw "NSIS setup executable not found in $bundleDir"
+          }
+
+          $signature = "$($setup.FullName).sig"
+          if (-not (Test-Path $signature)) {
+            throw "Signature file not found: $signature"
+          }
+
+          $manifestPath = "artifacts/updates/${{ steps.meta.outputs.manifest_name }}"
+          $downloadUrl = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$($setup.Name)"
+          $notes = "Release ${{ steps.meta.outputs.version }} (${{ steps.meta.outputs.channel }}). See GitHub release notes for full changelog."
+
+          node scripts/generate-updater-manifest.mjs --version "${{ steps.meta.outputs.version }}" --url "$downloadUrl" --signature-file "$signature" --output "$manifestPath" --target "windows-x86_64" --notes "$notes"
+
+          "setup_path=$($setup.FullName)" >> $env:GITHUB_OUTPUT
+          "signature_path=$signature" >> $env:GITHUB_OUTPUT
+          "manifest_path=$manifestPath" >> $env:GITHUB_OUTPUT
+
+      - name: Publish GitHub release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          prerelease: ${{ steps.meta.outputs.pre_release }}
+          generate_release_notes: true
+          files: |
+            ${{ steps.manifest.outputs.setup_path }}
+            ${{ steps.manifest.outputs.signature_path }}
+            ${{ steps.manifest.outputs.manifest_path }}

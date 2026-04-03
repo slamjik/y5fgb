@@ -1,212 +1,35 @@
-import { FormEvent, useMemo, useState } from "react";
-import { useTranslation } from "react-i18next";
+﻿import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 
-import { extractApiErrorMessage } from "@/services/apiClient";
-import { messagingRuntime } from "@/services/messaging/runtime";
-import { useMessagingStore } from "@/state/messagingStore";
+import { MessengerShell } from "@/features/messaging/MessengerShell";
 import { useAuthStore } from "@/state/authStore";
 
 export function ConversationListPage() {
   const { t } = useTranslation();
-  const loading = useMessagingStore((state) => state.loading);
-  const initialized = useMessagingStore((state) => state.initialized);
-  const conversations = useMessagingStore((state) => state.conversations);
-  const transport = useMessagingStore((state) => state.transport);
-  const outbox = useMessagingStore((state) => state.outbox);
   const session = useAuthStore((state) => state.session);
 
-  const [directAccountId, setDirectAccountId] = useState("");
-  const [groupTitle, setGroupTitle] = useState("");
-  const [groupMembers, setGroupMembers] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [working, setWorking] = useState(false);
-  const [copied, setCopied] = useState(false);
-
-  const sortedConversations = useMemo(
-    () =>
-      [...conversations].sort((left, right) => {
-        if (left.updatedAt > right.updatedAt) {
-          return -1;
-        }
-        if (left.updatedAt < right.updatedAt) {
-          return 1;
-        }
-        return 0;
-      }),
-    [conversations],
-  );
-
-  const canCreateConversation = initialized && !loading && !working;
-
-  async function handleCreateDirect(event: FormEvent) {
-    event.preventDefault();
-    if (!directAccountId.trim()) {
-      return;
-    }
-    setWorking(true);
-    setError(null);
-    try {
-      await messagingRuntime.createDirect(directAccountId.trim());
-      setDirectAccountId("");
-    } catch (createError) {
-      setError(extractApiErrorMessage(createError));
-    } finally {
-      setWorking(false);
-    }
-  }
-
-  async function handleCreateGroup(event: FormEvent) {
-    event.preventDefault();
-    const memberIds = groupMembers
-      .split(",")
-      .map((value) => value.trim())
-      .filter(Boolean);
-    if (!groupTitle.trim()) {
-      return;
-    }
-    setWorking(true);
-    setError(null);
-    try {
-      await messagingRuntime.createGroup(groupTitle.trim(), memberIds);
-      setGroupTitle("");
-      setGroupMembers("");
-    } catch (createError) {
-      setError(extractApiErrorMessage(createError));
-    } finally {
-      setWorking(false);
-    }
-  }
-
-  async function copyMyAccountID() {
-    if (!session?.accountId) {
-      return;
-    }
-    try {
-      await navigator.clipboard.writeText(session.accountId);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1200);
-    } catch (copyError) {
-      setError(extractApiErrorMessage(copyError));
-    }
-  }
-
   return (
-    <section className="page-stack">
-      <h1>{t("messaging.conversationsTitle")}</h1>
-      <p className="text-muted">{t("messaging.conversationsSubtitle")}</p>
+    <MessengerShell>
+      <article className="card messenger-empty-state">
+        <h2>{t("messaging.startConversationTitle")}</h2>
+        <p className="text-muted">{t("messaging.startConversationSubtitle")}</p>
 
-      <div className="card-grid">
-        <article className="card">
-          <h2>{t("messaging.createDirect")}</h2>
-          <form className="form-grid" onSubmit={handleCreateDirect}>
-            <label>
-              {t("messaging.peerAccountId")}
-              <input value={directAccountId} onChange={(event) => setDirectAccountId(event.target.value)} placeholder="account uuid" />
-            </label>
-            <button type="submit" disabled={!canCreateConversation || !directAccountId.trim()}>
-              {t("messaging.createDirectAction")}
-            </button>
-          </form>
-        </article>
+        <div className="messenger-empty-actions">
+          <Link className="button-link" to="/friends">
+            {t("nav.friends")}
+          </Link>
+          <Link className="button-link" to="/devices">
+            {t("nav.devices")}
+          </Link>
+          <Link className="button-link" to="/settings">
+            {t("nav.settings")}
+          </Link>
+        </div>
 
-        <article className="card">
-          <h2>{t("messaging.createGroup")}</h2>
-          <form className="form-grid" onSubmit={handleCreateGroup}>
-            <label>
-              {t("messaging.groupTitle")}
-              <input value={groupTitle} onChange={(event) => setGroupTitle(event.target.value)} placeholder="Team Security" />
-            </label>
-            <label>
-              {t("messaging.groupMembers")}
-              <textarea
-                value={groupMembers}
-                onChange={(event) => setGroupMembers(event.target.value)}
-                rows={3}
-                placeholder="uuid-1, uuid-2"
-              />
-            </label>
-            <button type="submit" disabled={!canCreateConversation || !groupTitle.trim()}>
-              {t("messaging.createGroupAction")}
-            </button>
-          </form>
-        </article>
-
-        <article className="card">
-          <h2>{t("nav.transport")}</h2>
-          <p>
-            <strong>{t("common.mode")}:</strong> {transport.mode}
-          </p>
-          <p>
-            <strong>{t("common.status")}:</strong> {transport.status}
-          </p>
-          <p className="text-muted">
-            {t("common.endpoint")}: {transport.endpoint ?? "-"}
-          </p>
-          {transport.lastError ? <p className="error-text">{transport.lastError}</p> : null}
-          <div className="inline-actions section-offset-sm">
-            <Link className="button-link" to="/messaging/transport">
-              {t("settings.transportHealth")}
-            </Link>
-            <Link className="button-link" to="/messaging/outbox">
-              {t("nav.outbox")} ({outbox.length})
-            </Link>
-          </div>
-        </article>
-
-        <article className="card">
-          <h2>{t("devices.accountIdentity")}</h2>
-          <p className="text-muted">{t("messaging.peerAccountId")}</p>
-          <p>
-            <code>{session?.accountId ?? "-"}</code>
-          </p>
-          <div className="inline-actions section-offset-sm">
-            <button type="button" onClick={() => void copyMyAccountID()} disabled={!session?.accountId}>
-              {copied ? t("common.copied") : t("devices.copyAccountId")}
-            </button>
-            <Link className="button-link" to="/devices">
-              {t("settings.accountDevices")}
-            </Link>
-          </div>
-        </article>
-      </div>
-
-      {error ? <p className="error-text">{error}</p> : null}
-      {!initialized ? <p className="text-muted">{t("common.loadingSession")}</p> : null}
-
-      <section className="page-stack section-offset-sm">
-        <h2>{t("messaging.listTitle")}</h2>
-        {loading ? <p className="text-muted">{t("messaging.loadingConversations")}</p> : null}
-
-        {!loading && sortedConversations.length === 0 ? (
-          <p className="text-muted">{t("messaging.noConversations")}</p>
-        ) : (
-          <div>
-            {sortedConversations.map((conversation) => (
-              <article className="list-item" key={conversation.id}>
-                <p>
-                  <strong>{conversation.title || `${t("messaging.chatTitleFallback")} ${conversation.id.slice(0, 8)}`}</strong>
-                </p>
-                <p className="text-muted">
-                  {conversation.type === "group" ? t("messaging.messageTypeGroup") : t("messaging.messageTypeDirect")} |{" "}
-                  {t("groups.membersTitle").toLowerCase()} {conversation.members.length} | {t("messaging.defaultTtl")}{" "}
-                  {conversation.disappearingPolicy.defaultTtlSeconds || 0}s
-                </p>
-                <div className="inline-actions">
-                  <Link className="button-link" to={`/conversations/${conversation.id}`}>
-                    {t("messaging.openChat")}
-                  </Link>
-                  {conversation.type === "group" ? (
-                    <Link className="button-link" to={`/conversations/${conversation.id}/members`}>
-                      {t("messaging.members")}
-                    </Link>
-                  ) : null}
-                </div>
-              </article>
-            ))}
-          </div>
-        )}
-      </section>
-    </section>
+        <div className="inline-code-wrap">
+          <span className="inline-code">{t("devices.accountIdLabel")}: {session?.accountId ?? "-"}</span>
+        </div>
+      </article>
+    </MessengerShell>
   );
 }

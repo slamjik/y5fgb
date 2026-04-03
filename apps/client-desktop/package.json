@@ -13,6 +13,8 @@
   "dependencies": {
     "@project/protocol": "0.1.0",
     "@project/shared-types": "0.1.0",
+    "@tauri-apps/plugin-process": "^2.3.1",
+    "@tauri-apps/plugin-updater": "^2.10.0",
     "i18next": "^23.16.8",
     "libsodium-wrappers": "^0.8.2",
     "libsodium-wrappers-sumo": "^0.7.15",

@@ -137,6 +137,20 @@ curl -H "Host: <PUBLIC_HOST>" http://127.0.0.1/ready
    - `api_prefix = /api/v1`
 5. Конфиг сохраняется локально и дальше используется в runtime.
 
+## Desktop Auto-Updates (Tauri)
+
+Клиент поддерживает официальный updater через GitHub Releases:
+- ручная проверка/установка в `Settings -> Updates`;
+- фоновая проверка при старте (с ненавязчивым баннером);
+- подпись update-пакетов обязательна (по `pubkey` в `tauri.conf.json`).
+
+CI workflow: [`.github/workflows/desktop-release.yml`](.github/workflows/desktop-release.yml)
+- собирает Windows NSIS build;
+- публикует `.exe`, `.sig`, `latest.json` в GitHub Release.
+
+Подробно:
+- [`docs/desktop-auto-update.md`](docs/desktop-auto-update.md)
+
 ## Useful Commands
 - `npm run dev:infra` — start dev infra
 - `npm run dev:infra:down` — stop dev infra
@@ -146,8 +160,10 @@ curl -H "Host: <PUBLIC_HOST>" http://127.0.0.1/ready
 - `npm run test:plugins:unit` — plugin unit checks
 - `npm run test:smoke:v4` — smoke checks
 - `npm run build:desktop:windows:installer` — build Windows NSIS installer + canonical artifact copy
+- `npm run build:desktop:windows:beta` — build beta Windows installer using `tauri.beta.conf.json`
 - `npm run build:desktop:windows:artifacts` — show Windows installer artifact paths
 - `npm run build:desktop:windows:clean` — clean Windows installer outputs
+- `npm run release:manifest:generate` — generate updater `latest.json` from asset URL/signature
 - `npm run deploy:prod:sh` / `npm run deploy:prod:ps1` — production deploy helpers
 
 ## Documentation
@@ -158,3 +174,4 @@ curl -H "Host: <PUBLIC_HOST>" http://127.0.0.1/ready
 - [`docs/production-runbook.md`](docs/production-runbook.md)
 - [`docs/admin-guide.md`](docs/admin-guide.md)
 - [`docs/windows-installer-runbook.md`](docs/windows-installer-runbook.md)
+- [`docs/desktop-auto-update.md`](docs/desktop-auto-update.md)
