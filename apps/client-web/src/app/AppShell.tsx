@@ -1,34 +1,57 @@
 import React, { FormEvent, useMemo, useState } from "react";
 
-import type { MessageDTO } from "@project/protocol";
+import type { ConversationDTO, MessageDTO } from "@project/protocol";
 
 import { useAuth } from "./auth-context";
 import { useBootstrap } from "./bootstrap-context";
 import { useMessaging } from "./messaging-context";
 import { useTransport } from "./transport-context";
 
-type ProductSection = "overview" | "messaging" | "contacts" | "groups" | "security" | "settings";
+type AuthState = ReturnType<typeof useAuth>;
+type BootstrapState = ReturnType<typeof useBootstrap>;
+type MessagingState = ReturnType<typeof useMessaging>;
+type TransportState = ReturnType<typeof useTransport>;
 
-interface SectionItem {
-  id: ProductSection;
-  title: string;
-  subtitle: string;
-}
+type MainSection = "home" | "messages" | "contacts" | "groups" | "profile" | "settings";
+type SettingsSection =
+  | "general"
+  | "account"
+  | "appearance"
+  | "notifications"
+  | "privacy"
+  | "security"
+  | "devices"
+  | "server"
+  | "data"
+  | "about";
 
-const sectionItems: SectionItem[] = [
-  { id: "overview", title: "Обзор", subtitle: "Краткая сводка аккаунта" },
-  { id: "messaging", title: "Сообщения", subtitle: "Диалоги и история" },
-  { id: "contacts", title: "Контакты", subtitle: "Люди и быстрые действия" },
-  { id: "groups", title: "Группы", subtitle: "Чаты и участники" },
-  { id: "security", title: "Безопасность", subtitle: "Сессии и устройства" },
-  { id: "settings", title: "Настройки", subtitle: "Сервер и параметры" },
+const MAIN_NAV: Array<{ id: MainSection; title: string; subtitle: string }> = [
+  { id: "home", title: "Главная", subtitle: "Обзор и активность" },
+  { id: "messages", title: "Сообщения", subtitle: "Чаты и переписка" },
+  { id: "contacts", title: "Контакты", subtitle: "Люди и заявки" },
+  { id: "groups", title: "Группы", subtitle: "Сообщества" },
+  { id: "profile", title: "Профиль", subtitle: "Ваш аккаунт" },
+  { id: "settings", title: "Настройки", subtitle: "Параметры приложения" },
+];
+
+const SETTINGS_NAV: Array<{ id: SettingsSection; title: string; description: string }> = [
+  { id: "general", title: "Общие", description: "Базовые параметры приложения" },
+  { id: "account", title: "Аккаунт", description: "Почта, вход и выход" },
+  { id: "appearance", title: "Внешний вид", description: "Тема и плотность интерфейса" },
+  { id: "notifications", title: "Уведомления", description: "Как вы получаете уведомления" },
+  { id: "privacy", title: "Конфиденциальность", description: "Видимость и приватность" },
+  { id: "security", title: "Безопасность", description: "2FA и защита входа" },
+  { id: "devices", title: "Устройства и сессии", description: "Текущая сессия и активные входы" },
+  { id: "server", title: "Сервер и подключение", description: "Адрес сервера и качество связи" },
+  { id: "data", title: "Данные и хранилище", description: "Локальные данные в браузере" },
+  { id: "about", title: "О приложении", description: "Версия и справка" },
 ];
 
 export function AppShell() {
   const bootstrap = useBootstrap();
   const auth = useAuth();
-  const transport = useTransport();
   const messaging = useMessaging();
+  const transport = useTransport();
 
   const [serverInput, setServerInput] = useState(bootstrap.serverConfig?.inputHost ?? "");
   const [authMode, setAuthMode] = useState<"register" | "login">("register");
@@ -39,621 +62,324 @@ export function AppShell() {
   const [registerPassword, setRegisterPassword] = useState("");
   const [registerPasswordRepeat, setRegisterPasswordRepeat] = useState("");
   const [twoFactorCode, setTwoFactorCode] = useState("");
-  const [activeSection, setActiveSection] = useState<ProductSection>("messaging");
+
+  const [activeSection, setActiveSection] = useState<MainSection>("home");
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
+  const [chatSearch, setChatSearch] = useState("");
+  const [contactSearch, setContactSearch] = useState("");
+  const [directAccountInput, setDirectAccountInput] = useState("");
+  const [groupTitle, setGroupTitle] = useState("");
+  const [groupMembersInput, setGroupMembersInput] = useState("");
+  const [createError, setCreateError] = useState<string | null>(null);
+
+  const sortedConversations = useMemo(
+    () => [...messaging.conversations].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()),
+    [messaging.conversations],
+  );
+
+  const recentConversations = useMemo(() => sortedConversations.slice(0, 6), [sortedConversations]);
+
+  const filteredConversations = useMemo(() => {
+    const normalized = chatSearch.trim().toLowerCase();
+    if (!normalized) {
+      return sortedConversations;
+    }
+    return sortedConversations.filter((conversation) => {
+      const title = buildConversationTitle(conversation, auth.session?.accountId).toLowerCase();
+      const members = conversation.members.map((member) => member.accountId.toLowerCase()).join(" ");
+      return title.includes(normalized) || members.includes(normalized);
+    });
+  }, [auth.session?.accountId, chatSearch, sortedConversations]);
+
+  const groups = useMemo(
+    () => sortedConversations.filter((conversation) => conversation.type === "group"),
+    [sortedConversations],
+  );
+
+  const contacts = useMemo(() => {
+    const currentAccountId = auth.session?.accountId ?? "";
+    const byId = new Map<string, { accountId: string; conversationsCount: number; updatedAt: string }>();
+
+    for (const conversation of sortedConversations) {
+      for (const member of conversation.members) {
+        if (!member.accountId || member.accountId === currentAccountId) {
+          continue;
+        }
+        const existing = byId.get(member.accountId);
+        if (existing) {
+          existing.conversationsCount += 1;
+          if (new Date(conversation.updatedAt).getTime() > new Date(existing.updatedAt).getTime()) {
+            existing.updatedAt = conversation.updatedAt;
+          }
+          continue;
+        }
+        byId.set(member.accountId, {
+          accountId: member.accountId,
+          conversationsCount: 1,
+          updatedAt: conversation.updatedAt,
+        });
+      }
+    }
+
+    return [...byId.values()].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+  }, [auth.session?.accountId, sortedConversations]);
+
+  const filteredContacts = useMemo(() => {
+    const normalized = contactSearch.trim().toLowerCase();
+    if (!normalized) {
+      return contacts;
+    }
+    return contacts.filter((contact) => contact.accountId.toLowerCase().includes(normalized));
+  }, [contactSearch, contacts]);
+
+  const pageMeta = useMemo(() => MAIN_NAV.find((item) => item.id === activeSection) ?? MAIN_NAV[0], [activeSection]);
+  const transportNotice = resolveTransportNotice(transport.runtime.status);
 
   if (bootstrap.status === "booting") {
-    return <StatusPanel title="Запуск приложения" message="Проверяем конфигурацию сервера..." />;
+    return <StatusScreen title="Запуск приложения" message="Проверяем подключение к серверу..." />;
   }
 
   if (bootstrap.status === "needs_server" || bootstrap.status === "error") {
     return (
-      <main className="auth-shell">
-        <section className="auth-card">
-          <h1>Подключение к серверу</h1>
-          <p className="muted">Введите домен или IP-адрес вашего сервера. Приложение само получит конфигурацию.</p>
-          <form
-            className="form-grid"
-            onSubmit={async (event) => {
-              event.preventDefault();
-              await bootstrap.connectToServer(serverInput);
-            }}
-          >
-            <label>
-              Адрес сервера
-              <input
-                value={serverInput}
-                onChange={(event) => setServerInput(event.target.value)}
-                placeholder="chat.example.com или 203.0.113.10:8080"
-                autoFocus
-              />
-            </label>
-            <button type="submit">Подключиться</button>
-          </form>
-          {bootstrap.errorMessage ? <div className="error-box">{bootstrap.errorMessage}</div> : null}
-          <p className="muted">Поддерживаются: домен, IP, адрес с портом, URL с http/https.</p>
-        </section>
-      </main>
+      <ServerConnectScreen
+        serverInput={serverInput}
+        setServerInput={setServerInput}
+        onConnect={async () => {
+          await bootstrap.connectToServer(serverInput.trim());
+        }}
+        error={bootstrap.errorMessage}
+      />
     );
   }
 
   if (auth.phase === "restoring") {
-    return <StatusPanel title="Восстанавливаем сессию" message="Пожалуйста, подождите..." />;
+    return <StatusScreen title="Восстанавливаем сессию" message="Подгружаем данные аккаунта..." />;
   }
 
   if (auth.phase === "two_fa_required") {
     return (
-      <main className="auth-shell">
-        <section className="auth-card">
-          <h1>Подтверждение 2FA</h1>
-          <p className="muted">Введите код из приложения-аутентификатора.</p>
-          <form
-            className="form-grid"
-            onSubmit={async (event: FormEvent) => {
-              event.preventDefault();
-              await auth.verifyTwoFactor(twoFactorCode);
-            }}
-          >
-            <label>
-              Код подтверждения
-              <input
-                value={twoFactorCode}
-                onChange={(event) => setTwoFactorCode(event.target.value)}
-                placeholder="123456"
-                autoFocus
-              />
-            </label>
-            <button type="submit">Подтвердить и войти</button>
-          </form>
-          {auth.errorMessage ? <div className="error-box">{auth.errorMessage}</div> : null}
-        </section>
-      </main>
+      <TwoFactorScreen
+        code={twoFactorCode}
+        setCode={setTwoFactorCode}
+        onSubmit={async () => {
+          await auth.verifyTwoFactor(twoFactorCode.trim());
+        }}
+        error={auth.errorMessage}
+      />
     );
   }
 
   if (auth.phase !== "authenticated" || !auth.session) {
     return (
-      <main className="auth-shell">
-        <section className="auth-card">
-          <h1>{authMode === "register" ? "\u0420\u0435\u0433\u0438\u0441\u0442\u0440\u0430\u0446\u0438\u044f \u0432 \u0432\u0435\u0431-\u0432\u0435\u0440\u0441\u0438\u0438" : "\u0412\u0445\u043e\u0434 \u0432 \u0432\u0435\u0431-\u0432\u0435\u0440\u0441\u0438\u044e"}</h1>
-          <p className="muted">{"\u0412\u0435\u0431-\u0441\u0435\u0441\u0441\u0438\u0438 \u0438\u0437\u043e\u043b\u0438\u0440\u043e\u0432\u0430\u043d\u044b \u043e\u0442 \u0434\u043e\u0432\u0435\u0440\u0435\u043d\u043d\u044b\u0445 \u043d\u0430\u0441\u0442\u043e\u043b\u044c\u043d\u044b\u0445 \u0443\u0441\u0442\u0440\u043e\u0439\u0441\u0442\u0432."}</p>
-
-          <div className="auth-mode-switch" role="tablist" aria-label={"\u0420\u0435\u0436\u0438\u043c \u0430\u0432\u0442\u043e\u0440\u0438\u0437\u0430\u0446\u0438\u0438"}>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={authMode === "register"}
-              className={`auth-mode-button ${authMode === "register" ? "active" : ""}`}
-              onClick={() => {
-                setAuthMode("register");
-                setAuthErrorLocal(null);
-                auth.clearError();
-              }}
-            >
-              {"\u0420\u0435\u0433\u0438\u0441\u0442\u0440\u0430\u0446\u0438\u044f"}
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={authMode === "login"}
-              className={`auth-mode-button ${authMode === "login" ? "active" : ""}`}
-              onClick={() => {
-                setAuthMode("login");
-                setAuthErrorLocal(null);
-                auth.clearError();
-              }}
-            >
-              {"\u0412\u0445\u043e\u0434"}
-            </button>
-          </div>
-
-          {authMode === "register" ? (
-            <form
-              className="form-grid"
-              onSubmit={async (event: FormEvent) => {
-                event.preventDefault();
-                setAuthErrorLocal(null);
-                auth.clearError();
-
-                if (!registerEmail.trim()) {
-                  setAuthErrorLocal("\u0412\u0432\u0435\u0434\u0438\u0442\u0435 email.");
-                  return;
-                }
-                if (registerPassword.length < 10) {
-                  setAuthErrorLocal("\u041f\u0430\u0440\u043e\u043b\u044c \u0434\u043e\u043b\u0436\u0435\u043d \u0431\u044b\u0442\u044c \u043d\u0435 \u043a\u043e\u0440\u043e\u0447\u0435 10 \u0441\u0438\u043c\u0432\u043e\u043b\u043e\u0432.");
-                  return;
-                }
-                if (registerPassword !== registerPasswordRepeat) {
-                  setAuthErrorLocal("\u041f\u0430\u0440\u043e\u043b\u0438 \u043d\u0435 \u0441\u043e\u0432\u043f\u0430\u0434\u0430\u044e\u0442.");
-                  return;
-                }
-
-                await auth.register(registerEmail.trim(), registerPassword);
-              }}
-            >
-              <label>
-                {"\u042d\u043b\u0435\u043a\u0442\u0440\u043e\u043d\u043d\u0430\u044f \u043f\u043e\u0447\u0442\u0430"}
-                <input
-                  value={registerEmail}
-                  onChange={(event) => setRegisterEmail(event.target.value)}
-                  autoComplete="email"
-                  autoFocus
-                />
-              </label>
-              <label>
-                {"\u041f\u0430\u0440\u043e\u043b\u044c"}
-                <input
-                  type="password"
-                  value={registerPassword}
-                  onChange={(event) => setRegisterPassword(event.target.value)}
-                  autoComplete="new-password"
-                />
-              </label>
-              <label>
-                {"\u041f\u043e\u0432\u0442\u043e\u0440\u0438\u0442\u0435 \u043f\u0430\u0440\u043e\u043b\u044c"}
-                <input
-                  type="password"
-                  value={registerPasswordRepeat}
-                  onChange={(event) => setRegisterPasswordRepeat(event.target.value)}
-                  autoComplete="new-password"
-                />
-              </label>
-              <label>
-                {"\u0420\u0435\u0436\u0438\u043c \u0441\u0435\u0441\u0441\u0438\u0438"}
-                <select
-                  value={auth.persistenceMode}
-                  onChange={(event) => auth.setPersistenceMode(event.target.value === "remembered" ? "remembered" : "ephemeral")}
-                >
-                  <option value="ephemeral">{"\u0422\u043e\u043b\u044c\u043a\u043e \u0442\u0435\u043a\u0443\u0449\u0430\u044f \u0432\u043a\u043b\u0430\u0434\u043a\u0430"}</option>
-                  <option value="remembered">{"\u0417\u0430\u043f\u043e\u043c\u043d\u0438\u0442\u044c \u0432 \u044d\u0442\u043e\u043c \u0431\u0440\u0430\u0443\u0437\u0435\u0440\u0435"}</option>
-                </select>
-              </label>
-              <button type="submit">{"\u0421\u043e\u0437\u0434\u0430\u0442\u044c \u0430\u043a\u043a\u0430\u0443\u043d\u0442"}</button>
-            </form>
-          ) : (
-            <form
-              className="form-grid"
-              onSubmit={async (event: FormEvent) => {
-                event.preventDefault();
-                setAuthErrorLocal(null);
-                auth.clearError();
-                await auth.login(email.trim(), password);
-              }}
-            >
-              <label>
-                {"\u042d\u043b\u0435\u043a\u0442\u0440\u043e\u043d\u043d\u0430\u044f \u043f\u043e\u0447\u0442\u0430"}
-                <input value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="username" autoFocus />
-              </label>
-              <label>
-                {"\u041f\u0430\u0440\u043e\u043b\u044c"}
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  autoComplete="current-password"
-                />
-              </label>
-              <label>
-                {"\u0420\u0435\u0436\u0438\u043c \u0441\u0435\u0441\u0441\u0438\u0438"}
-                <select
-                  value={auth.persistenceMode}
-                  onChange={(event) => auth.setPersistenceMode(event.target.value === "remembered" ? "remembered" : "ephemeral")}
-                >
-                  <option value="ephemeral">{"\u0422\u043e\u043b\u044c\u043a\u043e \u0442\u0435\u043a\u0443\u0449\u0430\u044f \u0432\u043a\u043b\u0430\u0434\u043a\u0430"}</option>
-                  <option value="remembered">{"\u0417\u0430\u043f\u043e\u043c\u043d\u0438\u0442\u044c \u0432 \u044d\u0442\u043e\u043c \u0431\u0440\u0430\u0443\u0437\u0435\u0440\u0435"}</option>
-                </select>
-              </label>
-              <button type="submit">{"\u0412\u043e\u0439\u0442\u0438"}</button>
-            </form>
-          )}
-
-          {authErrorLocal ? <div className="error-box">{authErrorLocal}</div> : null}
-          {!authErrorLocal && auth.errorMessage ? <div className="error-box">{auth.errorMessage}</div> : null}
-        </section>
-      </main>
+      <AuthScreen
+        auth={auth}
+        authMode={authMode}
+        setAuthMode={(mode) => {
+          setAuthMode(mode);
+          setAuthErrorLocal(null);
+          auth.clearError();
+        }}
+        authErrorLocal={authErrorLocal}
+        setAuthErrorLocal={setAuthErrorLocal}
+        email={email}
+        setEmail={setEmail}
+        password={password}
+        setPassword={setPassword}
+        registerEmail={registerEmail}
+        setRegisterEmail={setRegisterEmail}
+        registerPassword={registerPassword}
+        setRegisterPassword={setRegisterPassword}
+        registerPasswordRepeat={registerPasswordRepeat}
+        setRegisterPasswordRepeat={setRegisterPasswordRepeat}
+      />
     );
   }
-  const selectedSectionMeta = sectionItems.find((item) => item.id === activeSection) ?? sectionItems[0];
-  const transportHint = resolveTransportHint(transport.runtime.status, transport.lastError);
 
   return (
-    <main className="web-product-shell">
-      <aside className="web-sidebar">
-        <div className="brand-title">Защищённый мессенджер</div>
+    <main className="app-layout">
+      <aside className="app-left-column">
+        <div className="brand-block">
+          <div className="brand-logo" />
+          <div>
+            <strong className="brand-name">PWSSocial</strong>
+            <p className="muted">Безопасный веб-мессенджер</p>
+          </div>
+        </div>
 
-        <section className="user-card">
-          <strong>{auth.session.email || "Аккаунт без почты"}</strong>
-          <span className="muted">Платформа: {platformLabel(auth.session.session.clientPlatform)}</span>
-          <span className="muted">Сессия: {auth.session.session.persistent ? "запомнена" : "временная"}</span>
+        <section className="user-brief-card">
+          <div className="avatar-circle">{initialsFromEmail(auth.session.email)}</div>
+          <div>
+            <strong>{auth.session.email || "Пользователь"}</strong>
+            <p className="muted">ID: {shortId(auth.session.accountId)}</p>
+          </div>
         </section>
 
-        <nav className="nav-stack">
-          {sectionItems.map((item) => (
+        <nav className="section-nav">
+          {MAIN_NAV.map((item) => (
             <button
-              type="button"
               key={item.id}
-              className={`nav-button ${item.id === activeSection ? "active" : ""}`}
+              type="button"
+              className={`section-nav-item ${activeSection === item.id ? "active" : ""}`}
               onClick={() => setActiveSection(item.id)}
             >
-              <strong>{item.title}</strong>
-              <span className="muted">{item.subtitle}</span>
+              <span className="section-nav-title">{item.title}</span>
+              <span className="section-nav-subtitle">{item.subtitle}</span>
             </button>
           ))}
         </nav>
 
-        <div className="sidebar-footer">
-          <button type="button" className="button-secondary" onClick={() => transport.reconnect()}>
-            Переподключить транспорт
-          </button>
-          <button type="button" className="button-secondary" onClick={() => void auth.logoutAll()}>
-            Выйти на всех устройствах
+        <div className="left-actions">
+          <button type="button" className="button-secondary" onClick={() => setActiveSection("messages")}>
+            Открыть диалоги
           </button>
           <button type="button" className="button-secondary" onClick={() => void auth.logout()}>
             Выйти
           </button>
-          <button
-            type="button"
-            className="button-secondary"
-            onClick={async () => {
-              await auth.logout();
-              bootstrap.resetServerConfig();
-            }}
-          >
-            Сменить сервер
-          </button>
         </div>
       </aside>
 
-      <section className="web-workspace">
-        <header className="web-topbar">
+      <section className="app-center-column">
+        <header className="page-header-card">
           <div>
-            <h1>{selectedSectionMeta.title}</h1>
-            <p className="muted">{selectedSectionMeta.subtitle}</p>
+            <h1>{pageMeta.title}</h1>
+            <p className="muted">{pageMeta.subtitle}</p>
           </div>
-          <div className="topbar-actions">
-            <span className={`badge ${transportBadgeClass(transport.runtime.status)}`}>{transportBadgeLabel(transport.runtime.status)}</span>
-            <span className="badge badge-neutral">Режим: {runtimeModeLabel(transport.runtime.mode)}</span>
+          <div className="header-pills">
+            <span className={`status-pill ${transport.runtime.status}`}>{transportStatusLabel(transport.runtime.status)}</span>
           </div>
         </header>
 
-        {transportHint ? (
-          <section className={`banner ${transportHint.tone === "warning" ? "warning" : ""}`}>
-            <strong>{transportHint.title}</strong>
-            <p className="muted">{transportHint.message}</p>
+        {transportNotice ? (
+          <section className={`state-banner ${transportNotice.tone}`}>
+            <strong>{transportNotice.title}</strong>
+            <p>{transportNotice.text}</p>
           </section>
         ) : null}
 
-        <section className="content-area">
-          {activeSection === "messaging" ? (
-            <MessagingWorkspace />
-          ) : (
-            <ProductSectionStub
-              section={activeSection}
-              onOpenMessaging={() => setActiveSection("messaging")}
-              onOpenSecurity={() => setActiveSection("security")}
+        <div className="page-content-shell">
+          {activeSection === "home" ? (
+            <HomePage
+              recentConversations={recentConversations}
+              onOpenMessages={() => setActiveSection("messages")}
+              onOpenContacts={() => setActiveSection("contacts")}
+              onOpenGroups={() => setActiveSection("groups")}
+              accountEmail={auth.session.email}
+              transportStatus={transport.runtime.status}
+              currentAccountId={auth.session.accountId}
             />
-          )}
-        </section>
+          ) : null}
+
+          {activeSection === "messages" ? (
+            <MessagesPage
+              messaging={messaging}
+              currentAccountId={auth.session.accountId}
+              chatSearch={chatSearch}
+              setChatSearch={setChatSearch}
+              filteredConversations={filteredConversations}
+              directAccountInput={directAccountInput}
+              setDirectAccountInput={setDirectAccountInput}
+              createError={createError}
+              setCreateError={setCreateError}
+            />
+          ) : null}
+
+          {activeSection === "contacts" ? (
+            <ContactsPage
+              contactSearch={contactSearch}
+              setContactSearch={setContactSearch}
+              contacts={filteredContacts}
+              onStartChat={async (accountId) => {
+                setActiveSection("messages");
+                await messaging.createDirectConversation(accountId);
+              }}
+            />
+          ) : null}
+
+          {activeSection === "groups" ? (
+            <GroupsPage
+              groups={groups}
+              currentAccountId={auth.session.accountId}
+              groupTitle={groupTitle}
+              setGroupTitle={setGroupTitle}
+              groupMembersInput={groupMembersInput}
+              setGroupMembersInput={setGroupMembersInput}
+              createError={createError}
+              setCreateError={setCreateError}
+              onCreate={async () => {
+                const members = groupMembersInput
+                  .split(",")
+                  .map((item) => item.trim())
+                  .filter(Boolean);
+                if (!groupTitle.trim()) {
+                  setCreateError("Введите название группы.");
+                  return;
+                }
+                setCreateError(null);
+                const createdId = await messaging.createGroupConversation(groupTitle.trim(), members);
+                if (!createdId) {
+                  setCreateError(messaging.conversationsError ?? "Не удалось создать группу.");
+                  return;
+                }
+                setGroupTitle("");
+                setGroupMembersInput("");
+                setActiveSection("messages");
+                await messaging.selectConversation(createdId);
+              }}
+              onOpenGroup={async (conversationId) => {
+                setActiveSection("messages");
+                await messaging.selectConversation(conversationId);
+              }}
+            />
+          ) : null}
+
+          {activeSection === "profile" ? (
+            <ProfilePage
+              accountId={auth.session.accountId}
+              email={auth.session.email}
+              twoFactorEnabled={auth.session.twoFactorEnabled}
+              recentConversations={recentConversations}
+              currentAccountId={auth.session.accountId}
+              onOpenSettings={() => setActiveSection("settings")}
+            />
+          ) : null}
+
+          {activeSection === "settings" ? (
+            <SettingsPage
+              auth={auth}
+              bootstrap={bootstrap}
+              transport={transport}
+              settingsSection={settingsSection}
+              setSettingsSection={setSettingsSection}
+              onChangeServer={async () => {
+                await auth.logout();
+                bootstrap.resetServerConfig();
+              }}
+            />
+          ) : null}
+        </div>
       </section>
+
+      <aside className="app-right-column">
+        <RightSidebar
+          section={activeSection}
+          currentAccountId={auth.session.accountId}
+          recentConversations={recentConversations}
+          selectedConversation={messaging.selectedConversation}
+          transport={transport}
+          contacts={contacts}
+          groups={groups}
+        />
+      </aside>
     </main>
   );
 }
 
-function MessagingWorkspace() {
-  const messaging = useMessaging();
-  const auth = useAuth();
-  const [directAccountInput, setDirectAccountInput] = useState("");
-  const [groupTitle, setGroupTitle] = useState("");
-  const [groupMembersInput, setGroupMembersInput] = useState("");
-  const [createError, setCreateError] = useState<string | null>(null);
-  const [createStatus, setCreateStatus] = useState<"idle" | "creating">("idle");
-
-  const activeHeader = useMemo(() => {
-    const conversation = messaging.selectedConversation;
-    if (!conversation) {
-      return { title: "Диалог не выбран", subtitle: "Выберите диалог слева или создайте новый." };
-    }
-    const title = conversation.title || (conversation.type === "group" ? "Групповой чат" : "Личный чат");
-    const membersText = conversation.type === "group" ? `${conversation.members.length} участников` : "Личный диалог";
-    return { title, subtitle: `${membersText} · обновлён ${formatDateTime(conversation.updatedAt)}` };
-  }, [messaging.selectedConversation]);
-
-  const handleCreateDirect = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!directAccountInput.trim()) {
-      setCreateError("Введите идентификатор пользователя.");
-      return;
-    }
-    setCreateStatus("creating");
-    setCreateError(null);
-    const created = await messaging.createDirectConversation(directAccountInput.trim());
-    if (!created) {
-      setCreateError(messaging.conversationsError ?? "Не удалось создать личный чат.");
-    } else {
-      setDirectAccountInput("");
-    }
-    setCreateStatus("idle");
-  };
-
-  const handleCreateGroup = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!groupTitle.trim()) {
-      setCreateError("Введите название группы.");
-      return;
-    }
-    const members = groupMembersInput
-      .split(",")
-      .map((item) => item.trim())
-      .filter(Boolean);
-    setCreateStatus("creating");
-    setCreateError(null);
-    const created = await messaging.createGroupConversation(groupTitle.trim(), members);
-    if (!created) {
-      setCreateError(messaging.conversationsError ?? "Не удалось создать группу.");
-    } else {
-      setGroupTitle("");
-      setGroupMembersInput("");
-    }
-    setCreateStatus("idle");
-  };
-
-  return (
-    <div className="messaging-layout">
-      <section className="panel-card conversation-pane">
-        <div className="row-space">
-          <h2>Диалоги</h2>
-          <button type="button" className="button-secondary" onClick={() => void messaging.refreshConversations()}>
-            Обновить
-          </button>
-        </div>
-
-        <div className="conversation-create-stack">
-          <form className="form-grid conversation-create-card" onSubmit={handleCreateDirect}>
-            <strong>Новый личный чат</strong>
-            <input
-              value={directAccountInput}
-              onChange={(event) => setDirectAccountInput(event.target.value)}
-              placeholder="ID пользователя (UUID)"
-            />
-            <button type="submit" disabled={createStatus === "creating"}>
-              Создать личный чат
-            </button>
-          </form>
-
-          <form className="form-grid conversation-create-card" onSubmit={handleCreateGroup}>
-            <strong>Новая группа</strong>
-            <input value={groupTitle} onChange={(event) => setGroupTitle(event.target.value)} placeholder="Название группы" />
-            <input
-              value={groupMembersInput}
-              onChange={(event) => setGroupMembersInput(event.target.value)}
-              placeholder="ID участников (UUID через запятую)"
-            />
-            <button type="submit" disabled={createStatus === "creating"}>
-              Создать группу
-            </button>
-          </form>
-        </div>
-
-        {createError ? <div className="error-box">{createError}</div> : null}
-
-        <ConversationList />
-      </section>
-
-      <section className="panel-card message-pane">
-        <header className="conversation-header">
-          <h2>{activeHeader.title}</h2>
-          <p className="muted">{activeHeader.subtitle}</p>
-        </header>
-
-        <MessageHistory currentAccountId={auth.session?.accountId ?? ""} />
-
-        <ComposerScaffold />
-      </section>
-    </div>
-  );
+interface StatusScreenProps {
+  title: string;
+  message: string;
 }
 
-function ConversationList() {
-  const messaging = useMessaging();
-
-  if (messaging.conversationsStatus === "loading") {
-    return (
-      <div className="conversation-list">
-        {Array.from({ length: 5 }).map((_, index) => (
-          <div key={index} className="conversation-skeleton" />
-        ))}
-      </div>
-    );
-  }
-
-  if (messaging.conversationsStatus === "error") {
-    return (
-      <div className="empty-state-card">
-        <strong>Не удалось загрузить диалоги</strong>
-        <p className="muted">{messaging.conversationsError ?? "Проверьте соединение и повторите попытку."}</p>
-        <button type="button" onClick={() => void messaging.refreshConversations()}>
-          Повторить
-        </button>
-      </div>
-    );
-  }
-
-  if (messaging.conversations.length === 0) {
-    return (
-      <div className="empty-state-card">
-        <strong>Пока нет диалогов</strong>
-        <p className="muted">Создайте личный чат или группу, чтобы начать общение.</p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="conversation-list">
-      {messaging.conversations.map((conversation) => {
-        const active = conversation.id === messaging.selectedConversationId;
-        const title = conversation.title || (conversation.type === "group" ? "Групповой чат" : "Личный чат");
-        const subtitle = conversation.type === "group" ? `${conversation.members.length} участников` : "Личный диалог";
-        return (
-          <button
-            type="button"
-            key={conversation.id}
-            className={`conversation-item ${active ? "active" : ""}`}
-            onClick={() => void messaging.selectConversation(conversation.id)}
-          >
-            <div className="conversation-item-top">
-              <strong>{title}</strong>
-              <span className="muted">{formatTimeOnly(conversation.updatedAt)}</span>
-            </div>
-            <p className="muted conversation-subline">{subtitle}</p>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-function MessageHistory({ currentAccountId }: { currentAccountId: string }) {
-  const messaging = useMessaging();
-
-  if (!messaging.selectedConversation) {
-    return (
-      <div className="history-empty">
-        <strong>Выберите диалог</strong>
-        <p className="muted">Список диалогов находится слева. После выбора здесь появится история сообщений.</p>
-      </div>
-    );
-  }
-
-  if (messaging.activeMessagesStatus === "loading") {
-    return (
-      <div className="messages-scroll">
-        {Array.from({ length: 6 }).map((_, index) => (
-          <div key={index} className={`message-skeleton ${index % 2 === 0 ? "self" : ""}`} />
-        ))}
-      </div>
-    );
-  }
-
-  if (messaging.activeMessagesStatus === "error") {
-    return (
-      <div className="history-empty">
-        <strong>Не удалось загрузить историю</strong>
-        <p className="muted">{messaging.activeMessagesError ?? "Попробуйте обновить диалог."}</p>
-        <button type="button" onClick={() => void messaging.reloadActiveMessages()}>
-          Обновить историю
-        </button>
-      </div>
-    );
-  }
-
-  if (messaging.activeMessages.length === 0) {
-    return (
-      <div className="history-empty">
-        <strong>История пока пустая</strong>
-        <p className="muted">Сообщения появятся здесь, как только они будут доставлены в диалог.</p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="messages-scroll">
-      {messaging.activeMessages.map((message) => (
-        <MessageBubble key={message.envelope.id} message={message} isOwn={message.envelope.senderAccountId === currentAccountId} />
-      ))}
-    </div>
-  );
-}
-
-function MessageBubble({ message, isOwn }: { message: MessageDTO; isOwn: boolean }) {
-  return (
-    <article className={`message-item ${isOwn ? "self" : ""}`}>
-      <header className="message-item-top">
-        <strong>{isOwn ? "Вы" : shortId(message.envelope.senderAccountId)}</strong>
-        <div className="message-item-meta">
-          <span className={`badge ${deliveryBadgeClass(message.deliveryState)}`}>{deliveryStateLabel(message.deliveryState)}</span>
-          <span className="muted">{formatDateTime(message.envelope.createdAt)}</span>
-        </div>
-      </header>
-      <p className="message-preview">Содержимое защищено сквозным шифрованием и будет доступно после полной браузерной криптоподдержки.</p>
-      {message.envelope.attachments.length > 0 ? (
-        <p className="muted message-attachments">Вложений: {message.envelope.attachments.length}</p>
-      ) : null}
-      {message.failedReason ? <p className="message-failed">{message.failedReason}</p> : null}
-    </article>
-  );
-}
-
-function ComposerScaffold() {
-  const messaging = useMessaging();
-  return (
-    <section className="composer-shell">
-      <label>
-        Сообщение
-        <textarea rows={3} placeholder="Поле отправки появится здесь после включения браузерной криптографии." disabled />
-      </label>
-      {messaging.composerDisabledReason ? <p className="muted composer-note">{messaging.composerDisabledReason}</p> : null}
-      <div className="button-row">
-        <button type="button" disabled>
-          Отправить
-        </button>
-        <button type="button" className="button-secondary" onClick={() => void messaging.reloadActiveMessages()}>
-          Обновить историю
-        </button>
-      </div>
-    </section>
-  );
-}
-
-function ProductSectionStub({
-  section,
-  onOpenMessaging,
-  onOpenSecurity,
-}: {
-  section: Exclude<ProductSection, "messaging">;
-  onOpenMessaging: () => void;
-  onOpenSecurity: () => void;
-}) {
-  if (section === "overview") {
-    return (
-      <div className="page-grid two">
-        <article className="panel-card">
-          <h2>Главное</h2>
-          <p className="muted">Это веб-основа продукта. Для продолжения работы откройте раздел сообщений.</p>
-          <button type="button" onClick={onOpenMessaging}>
-            Перейти к диалогам
-          </button>
-        </article>
-        <article className="panel-card">
-          <h2>Статус защиты</h2>
-          <p className="muted">Управление устройствами и сессиями находится в разделе безопасности.</p>
-          <button type="button" className="button-secondary" onClick={onOpenSecurity}>
-            Открыть безопасность
-          </button>
-        </article>
-      </div>
-    );
-  }
-
-  const sectionLabels: Record<Exclude<ProductSection, "overview" | "messaging">, string> = {
-    contacts: "Контакты",
-    groups: "Группы",
-    security: "Безопасность",
-    settings: "Настройки",
-  };
-
-  return (
-    <article className="panel-card">
-      <h2>{sectionLabels[section]}</h2>
-      <p className="muted">
-        Этот раздел подготовлен как часть веб-ориентированного каркаса. Сейчас основной рабочий поток находится в сообщениях.
-      </p>
-      <button type="button" onClick={onOpenMessaging}>
-        Вернуться к диалогам
-      </button>
-    </article>
-  );
-}
-
-function StatusPanel({ title, message }: { title: string; message: string }) {
+function StatusScreen({ title, message }: StatusScreenProps) {
   return (
     <main className="auth-shell">
       <section className="auth-card">
@@ -664,147 +390,1157 @@ function StatusPanel({ title, message }: { title: string; message: string }) {
   );
 }
 
-function shortId(value: string | null | undefined): string {
-  if (!value) {
-    return "Пользователь";
+interface ServerConnectScreenProps {
+  serverInput: string;
+  setServerInput: (value: string) => void;
+  onConnect: () => Promise<void>;
+  error: string | null;
+}
+
+function ServerConnectScreen({ serverInput, setServerInput, onConnect, error }: ServerConnectScreenProps) {
+  return (
+    <main className="auth-shell">
+      <section className="auth-card">
+        <h1>Подключение к серверу</h1>
+        <p className="muted">Введите домен или IP-адрес сервера. Остальные параметры подгрузятся автоматически.</p>
+        <form
+          className="form-grid"
+          onSubmit={async (event) => {
+            event.preventDefault();
+            await onConnect();
+          }}
+        >
+          <label>
+            Адрес сервера
+            <input
+              value={serverInput}
+              onChange={(event) => setServerInput(event.target.value)}
+              placeholder="chat.example.com или 203.0.113.10:8080"
+              autoFocus
+            />
+          </label>
+          <button type="submit">Подключиться</button>
+        </form>
+        {error ? <div className="error-box">{error}</div> : null}
+      </section>
+    </main>
+  );
+}
+
+interface AuthScreenProps {
+  auth: AuthState;
+  authMode: "register" | "login";
+  setAuthMode: (mode: "register" | "login") => void;
+  authErrorLocal: string | null;
+  setAuthErrorLocal: (value: string | null) => void;
+  email: string;
+  setEmail: (value: string) => void;
+  password: string;
+  setPassword: (value: string) => void;
+  registerEmail: string;
+  setRegisterEmail: (value: string) => void;
+  registerPassword: string;
+  setRegisterPassword: (value: string) => void;
+  registerPasswordRepeat: string;
+  setRegisterPasswordRepeat: (value: string) => void;
+}
+
+function AuthScreen({
+  auth,
+  authMode,
+  setAuthMode,
+  authErrorLocal,
+  setAuthErrorLocal,
+  email,
+  setEmail,
+  password,
+  setPassword,
+  registerEmail,
+  setRegisterEmail,
+  registerPassword,
+  setRegisterPassword,
+  registerPasswordRepeat,
+  setRegisterPasswordRepeat,
+}: AuthScreenProps) {
+  return (
+    <main className="auth-shell">
+      <section className="auth-card">
+        <h1>{authMode === "register" ? "Регистрация" : "Вход"}</h1>
+        <p className="muted">Создайте аккаунт или войдите в уже существующий.</p>
+
+        <div className="auth-mode-switch">
+          <button type="button" className={`auth-mode-button ${authMode === "register" ? "active" : ""}`} onClick={() => setAuthMode("register")}>
+            Регистрация
+          </button>
+          <button type="button" className={`auth-mode-button ${authMode === "login" ? "active" : ""}`} onClick={() => setAuthMode("login")}>
+            Вход
+          </button>
+        </div>
+
+        {authMode === "register" ? (
+          <form
+            className="form-grid"
+            onSubmit={async (event) => {
+              event.preventDefault();
+              setAuthErrorLocal(null);
+              auth.clearError();
+              if (!registerEmail.trim()) {
+                setAuthErrorLocal("Введите электронную почту.");
+                return;
+              }
+              if (registerPassword.length < 10) {
+                setAuthErrorLocal("Пароль должен быть не короче 10 символов.");
+                return;
+              }
+              if (registerPassword !== registerPasswordRepeat) {
+                setAuthErrorLocal("Пароли не совпадают.");
+                return;
+              }
+              await auth.register(registerEmail.trim(), registerPassword);
+            }}
+          >
+            <label>
+              Электронная почта
+              <input value={registerEmail} onChange={(event) => setRegisterEmail(event.target.value)} autoComplete="email" autoFocus />
+            </label>
+            <label>
+              Пароль
+              <input type="password" value={registerPassword} onChange={(event) => setRegisterPassword(event.target.value)} autoComplete="new-password" />
+            </label>
+            <label>
+              Повторите пароль
+              <input
+                type="password"
+                value={registerPasswordRepeat}
+                onChange={(event) => setRegisterPasswordRepeat(event.target.value)}
+                autoComplete="new-password"
+              />
+            </label>
+            <label>
+              Режим сессии
+              <select
+                value={auth.persistenceMode}
+                onChange={(event) => auth.setPersistenceMode(event.target.value === "remembered" ? "remembered" : "ephemeral")}
+              >
+                <option value="ephemeral">Только текущая вкладка</option>
+                <option value="remembered">Запомнить на этом устройстве</option>
+              </select>
+            </label>
+            <button type="submit">Создать аккаунт</button>
+          </form>
+        ) : (
+          <form
+            className="form-grid"
+            onSubmit={async (event) => {
+              event.preventDefault();
+              setAuthErrorLocal(null);
+              auth.clearError();
+              await auth.login(email.trim(), password);
+            }}
+          >
+            <label>
+              Электронная почта
+              <input value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="username" autoFocus />
+            </label>
+            <label>
+              Пароль
+              <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" />
+            </label>
+            <label>
+              Режим сессии
+              <select
+                value={auth.persistenceMode}
+                onChange={(event) => auth.setPersistenceMode(event.target.value === "remembered" ? "remembered" : "ephemeral")}
+              >
+                <option value="ephemeral">Только текущая вкладка</option>
+                <option value="remembered">Запомнить на этом устройстве</option>
+              </select>
+            </label>
+            <button type="submit">Войти</button>
+          </form>
+        )}
+
+        {authErrorLocal ? <div className="error-box">{authErrorLocal}</div> : null}
+        {!authErrorLocal && auth.errorMessage ? <div className="error-box">{auth.errorMessage}</div> : null}
+      </section>
+    </main>
+  );
+}
+
+interface TwoFactorScreenProps {
+  code: string;
+  setCode: (value: string) => void;
+  onSubmit: () => Promise<void>;
+  error: string | null;
+}
+
+function TwoFactorScreen({ code, setCode, onSubmit, error }: TwoFactorScreenProps) {
+  return (
+    <main className="auth-shell">
+      <section className="auth-card">
+        <h1>Подтверждение входа</h1>
+        <p className="muted">Введите шестизначный код из приложения-аутентификатора.</p>
+        <form
+          className="form-grid"
+          onSubmit={async (event: FormEvent) => {
+            event.preventDefault();
+            await onSubmit();
+          }}
+        >
+          <label>
+            Код
+            <input value={code} onChange={(event) => setCode(event.target.value)} placeholder="123456" autoFocus />
+          </label>
+          <button type="submit">Подтвердить</button>
+        </form>
+        {error ? <div className="error-box">{error}</div> : null}
+      </section>
+    </main>
+  );
+}
+
+interface HomePageProps {
+  recentConversations: ConversationDTO[];
+  onOpenMessages: () => void;
+  onOpenContacts: () => void;
+  onOpenGroups: () => void;
+  accountEmail: string;
+  transportStatus: TransportState["runtime"]["status"];
+  currentAccountId: string;
+}
+
+function HomePage({
+  recentConversations,
+  onOpenMessages,
+  onOpenContacts,
+  onOpenGroups,
+  accountEmail,
+  transportStatus,
+  currentAccountId,
+}: HomePageProps) {
+  return (
+    <div className="content-stack">
+      <section className="surface-card hero-card">
+        <h2>Добро пожаловать</h2>
+        <p className="muted">Вы вошли как {accountEmail}. Здесь можно быстро перейти к ключевым разделам.</p>
+        <div className="inline-actions">
+          <button type="button" onClick={onOpenMessages}>
+            Открыть сообщения
+          </button>
+          <button type="button" className="button-secondary" onClick={onOpenContacts}>
+            Открыть контакты
+          </button>
+          <button type="button" className="button-secondary" onClick={onOpenGroups}>
+            Открыть группы
+          </button>
+        </div>
+      </section>
+
+      <div className="grid-two">
+        <section className="surface-card">
+          <div className="row-space">
+            <h2>Последние диалоги</h2>
+            <span className={`status-pill ${transportStatus}`}>{transportStatusLabel(transportStatus)}</span>
+          </div>
+          {recentConversations.length === 0 ? (
+            <EmptyCard title="Пока нет диалогов" text="Начните личный чат или создайте группу, чтобы здесь появились последние беседы." />
+          ) : (
+            <div className="compact-list">
+              {recentConversations.slice(0, 5).map((conversation) => (
+                <article key={conversation.id} className="compact-row">
+                  <div>
+                    <strong>{buildConversationTitle(conversation, currentAccountId)}</strong>
+                    <p className="muted">{conversation.type === "group" ? `${conversation.members.length} участников` : "Личный диалог"}</p>
+                  </div>
+                  <span className="muted">{formatShortDate(conversation.updatedAt)}</span>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section className="surface-card">
+          <h2>Активность</h2>
+          <div className="compact-list">
+            <article className="compact-row">
+              <div>
+                <strong>Подключение</strong>
+                <p className="muted">Статус соединения обновляется автоматически.</p>
+              </div>
+              <span className="muted">Сейчас</span>
+            </article>
+            <article className="compact-row">
+              <div>
+                <strong>Безопасность</strong>
+                <p className="muted">Проверьте 2FA и активные сессии в настройках.</p>
+              </div>
+              <span className="muted">Рекомендация</span>
+            </article>
+            <article className="compact-row">
+              <div>
+                <strong>Обновления чатов</strong>
+                <p className="muted">Новые беседы и сообщения видны в разделе «Сообщения».</p>
+              </div>
+              <span className="muted">Постоянно</span>
+            </article>
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+}
+
+interface MessagesPageProps {
+  messaging: MessagingState;
+  currentAccountId: string;
+  chatSearch: string;
+  setChatSearch: (value: string) => void;
+  filteredConversations: ConversationDTO[];
+  directAccountInput: string;
+  setDirectAccountInput: (value: string) => void;
+  createError: string | null;
+  setCreateError: (value: string | null) => void;
+}
+
+function MessagesPage({
+  messaging,
+  currentAccountId,
+  chatSearch,
+  setChatSearch,
+  filteredConversations,
+  directAccountInput,
+  setDirectAccountInput,
+  createError,
+  setCreateError,
+}: MessagesPageProps) {
+  const sortedMessages = useMemo(
+    () => [...messaging.activeMessages].sort((a, b) => a.envelope.serverSequence - b.envelope.serverSequence),
+    [messaging.activeMessages],
+  );
+
+  return (
+    <div className="messages-shell">
+      <section className="surface-card conversations-column">
+        <div className="row-space">
+          <h2>Диалоги</h2>
+          <button type="button" className="button-secondary" onClick={() => void messaging.refreshConversations()}>
+            Обновить
+          </button>
+        </div>
+
+        <label className="field-label">
+          Поиск
+          <input
+            value={chatSearch}
+            onChange={(event) => setChatSearch(event.target.value)}
+            placeholder="Имя, группа или ID"
+          />
+        </label>
+
+        <div className="conversation-list">
+          {messaging.conversationsStatus === "loading"
+            ? Array.from({ length: 5 }).map((_, index) => <div key={`conversation-skeleton-${index}`} className="list-skeleton" />)
+            : null}
+
+          {messaging.conversationsStatus === "error" ? (
+            <div className="error-box">
+              {messaging.conversationsError ?? "Не удалось загрузить список диалогов."}
+              <div className="inline-actions">
+                <button type="button" className="button-secondary" onClick={() => void messaging.refreshConversations()}>
+                  Повторить
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          {messaging.conversationsStatus !== "loading" && messaging.conversationsStatus !== "error" && filteredConversations.length === 0 ? (
+            <EmptyCard title="Диалогов пока нет" text="Создайте новый чат, чтобы начать переписку." />
+          ) : null}
+
+          {messaging.conversationsStatus !== "loading" &&
+            filteredConversations.map((conversation) => (
+              <button
+                key={conversation.id}
+                type="button"
+                className={`conversation-row ${conversation.id === messaging.selectedConversationId ? "active" : ""}`}
+                onClick={() => void messaging.selectConversation(conversation.id)}
+              >
+                <div className="row-space">
+                  <strong>{buildConversationTitle(conversation, currentAccountId)}</strong>
+                  <span className="muted">{formatShortDate(conversation.updatedAt)}</span>
+                </div>
+                <p className="muted">
+                  {conversation.type === "group"
+                    ? `${conversation.members.length} участников`
+                    : `Личный чат · seq ${conversation.lastServerSequence}`}
+                </p>
+              </button>
+            ))}
+        </div>
+
+        <div className="surface-subcard">
+          <h3>Новый диалог</h3>
+          <label className="field-label">
+            ID пользователя
+            <input
+              value={directAccountInput}
+              onChange={(event) => setDirectAccountInput(event.target.value)}
+              placeholder="Например 2db4c1f0"
+            />
+          </label>
+          <button
+            type="button"
+            onClick={async () => {
+              if (!directAccountInput.trim()) {
+                setCreateError("Введите ID пользователя.");
+                return;
+              }
+              setCreateError(null);
+              const created = await messaging.createDirectConversation(directAccountInput.trim());
+              if (!created) {
+                setCreateError(messaging.conversationsError ?? "Не удалось создать диалог.");
+                return;
+              }
+              setDirectAccountInput("");
+              await messaging.selectConversation(created);
+            }}
+          >
+            Создать личный чат
+          </button>
+          {createError ? <div className="error-box">{createError}</div> : null}
+        </div>
+      </section>
+
+      <section className="surface-card thread-column">
+        {!messaging.selectedConversation ? (
+          <EmptyCard title="Выберите диалог" text="Откройте чат из списка слева, чтобы увидеть историю сообщений." />
+        ) : (
+          <>
+            <header className="thread-header">
+              <div>
+                <h2>{buildConversationTitle(messaging.selectedConversation, currentAccountId)}</h2>
+                <p className="muted">
+                  {messaging.selectedConversation.type === "group"
+                    ? `${messaging.selectedConversation.members.length} участников`
+                    : "Личный диалог"}
+                </p>
+              </div>
+              <span className="muted">Обновлён {formatShortDate(messaging.selectedConversation.updatedAt)}</span>
+            </header>
+
+            <div className="messages-history">
+              {messaging.activeMessagesStatus === "loading"
+                ? Array.from({ length: 4 }).map((_, index) => <div key={`message-skeleton-${index}`} className="message-skeleton" />)
+                : null}
+
+              {messaging.activeMessagesStatus === "error" ? (
+                <div className="error-box">
+                  {messaging.activeMessagesError ?? "Не удалось загрузить историю сообщений."}
+                  <div className="inline-actions">
+                    <button type="button" className="button-secondary" onClick={() => void messaging.reloadActiveMessages()}>
+                      Повторить
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              {messaging.activeMessagesStatus === "ready" && sortedMessages.length === 0 ? (
+                <EmptyCard title="История пока пустая" text="Сообщения появятся здесь, когда собеседник начнёт переписку." />
+              ) : null}
+
+              {messaging.activeMessagesStatus === "ready" &&
+                sortedMessages.map((message) => (
+                  <MessageRow key={message.envelope.id} message={message} isOwn={message.envelope.senderAccountId === currentAccountId} />
+                ))}
+            </div>
+
+            <div className="composer-area">
+              <label className="field-label">
+                Сообщение
+                <textarea
+                  rows={3}
+                  disabled
+                  placeholder="Отправка сообщений появится после завершения криптографической интеграции для веб-версии."
+                />
+              </label>
+              <div className="inline-actions">
+                <button type="button" disabled>
+                  Отправить
+                </button>
+                <button type="button" className="button-secondary" onClick={() => void messaging.reloadActiveMessages()}>
+                  Обновить историю
+                </button>
+              </div>
+              {messaging.composerDisabledReason ? <p className="muted">{messaging.composerDisabledReason}</p> : null}
+            </div>
+          </>
+        )}
+      </section>
+    </div>
+  );
+}
+
+interface MessageRowProps {
+  message: MessageDTO;
+  isOwn: boolean;
+}
+
+function MessageRow({ message, isOwn }: MessageRowProps) {
+  return (
+    <article className={`message-row ${isOwn ? "own" : ""}`}>
+      <div className="message-row-top">
+        <strong>{isOwn ? "Вы" : shortId(message.envelope.senderAccountId)}</strong>
+        <span className="muted">{formatDateTime(message.envelope.createdAt)}</span>
+      </div>
+      <p className="message-text">Зашифрованное сообщение</p>
+      {message.envelope.attachments.length > 0 ? <p className="muted">Вложений: {message.envelope.attachments.length}</p> : null}
+      <div className="row-space">
+        <span className={`small-pill ${message.deliveryState}`}>{deliveryStateLabel(message.deliveryState)}</span>
+        <span className="muted">seq {message.envelope.serverSequence}</span>
+      </div>
+      {message.failedReason ? <p className="error-text">Ошибка: {message.failedReason}</p> : null}
+    </article>
+  );
+}
+
+interface ContactsPageProps {
+  contactSearch: string;
+  setContactSearch: (value: string) => void;
+  contacts: Array<{ accountId: string; conversationsCount: number; updatedAt: string }>;
+  onStartChat: (accountId: string) => Promise<void>;
+}
+
+function ContactsPage({ contactSearch, setContactSearch, contacts, onStartChat }: ContactsPageProps) {
+  return (
+    <div className="content-stack">
+      <section className="surface-card">
+        <div className="row-space">
+          <h2>Контакты</h2>
+          <span className="muted">Всего: {contacts.length}</span>
+        </div>
+        <label className="field-label">
+          Поиск контактов
+          <input value={contactSearch} onChange={(event) => setContactSearch(event.target.value)} placeholder="Введите ID или часть ID" />
+        </label>
+
+        {contacts.length === 0 ? (
+          <EmptyCard title="Контактов пока нет" text="Контакты появятся автоматически после общения в личных или групповых чатах." />
+        ) : (
+          <div className="compact-list">
+            {contacts.map((contact) => (
+              <article key={contact.accountId} className="compact-row">
+                <div>
+                  <strong>{shortId(contact.accountId)}</strong>
+                  <p className="muted">Диалогов: {contact.conversationsCount}</p>
+                </div>
+                <div className="inline-actions">
+                  <span className="muted">{formatShortDate(contact.updatedAt)}</span>
+                  <button type="button" className="button-secondary" onClick={() => void onStartChat(contact.accountId)}>
+                    Написать
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <div className="grid-two">
+        <section className="surface-card">
+          <h3>Заявки</h3>
+          <EmptyCard title="Пока пусто" text="Здесь будут входящие и исходящие заявки в контакты." />
+        </section>
+        <section className="surface-card">
+          <h3>Рекомендации</h3>
+          <p className="muted">По мере развития профиля здесь появятся рекомендации новых контактов.</p>
+        </section>
+      </div>
+    </div>
+  );
+}
+
+interface GroupsPageProps {
+  groups: ConversationDTO[];
+  currentAccountId: string;
+  groupTitle: string;
+  setGroupTitle: (value: string) => void;
+  groupMembersInput: string;
+  setGroupMembersInput: (value: string) => void;
+  createError: string | null;
+  setCreateError: (value: string | null) => void;
+  onCreate: () => Promise<void>;
+  onOpenGroup: (conversationId: string) => Promise<void>;
+}
+
+function GroupsPage({
+  groups,
+  currentAccountId,
+  groupTitle,
+  setGroupTitle,
+  groupMembersInput,
+  setGroupMembersInput,
+  createError,
+  setCreateError,
+  onCreate,
+  onOpenGroup,
+}: GroupsPageProps) {
+  return (
+    <div className="content-stack">
+      <div className="grid-two groups-grid">
+        <section className="surface-card">
+          <div className="row-space">
+            <h2>Мои группы</h2>
+            <span className="muted">{groups.length}</span>
+          </div>
+          {groups.length === 0 ? (
+            <EmptyCard title="Групп пока нет" text="Создайте первую группу и пригласите участников." />
+          ) : (
+            <div className="compact-list">
+              {groups.map((group) => (
+                <article key={group.id} className="compact-row">
+                  <div>
+                    <strong>{buildConversationTitle(group, currentAccountId)}</strong>
+                    <p className="muted">Участников: {group.members.length}</p>
+                  </div>
+                  <button type="button" className="button-secondary" onClick={() => void onOpenGroup(group.id)}>
+                    Открыть
+                  </button>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section className="surface-card">
+          <h2>Создать группу</h2>
+          <p className="muted">Укажите название и список ID участников через запятую.</p>
+          <div className="form-grid">
+            <label>
+              Название
+              <input
+                value={groupTitle}
+                onChange={(event) => {
+                  setCreateError(null);
+                  setGroupTitle(event.target.value);
+                }}
+                placeholder="Например: Команда проекта"
+              />
+            </label>
+            <label>
+              Участники
+              <textarea
+                rows={3}
+                value={groupMembersInput}
+                onChange={(event) => {
+                  setCreateError(null);
+                  setGroupMembersInput(event.target.value);
+                }}
+                placeholder="id1, id2, id3"
+              />
+            </label>
+            <button type="button" onClick={() => void onCreate()}>
+              Создать группу
+            </button>
+          </div>
+          {createError ? <div className="error-box">{createError}</div> : null}
+        </section>
+      </div>
+
+      <section className="surface-card">
+        <h3>Приглашения</h3>
+        <EmptyCard title="Приглашений пока нет" text="Когда вас добавят в группу, приглашение появится здесь." />
+      </section>
+    </div>
+  );
+}
+
+interface ProfilePageProps {
+  accountId: string;
+  email: string;
+  twoFactorEnabled: boolean;
+  recentConversations: ConversationDTO[];
+  currentAccountId: string;
+  onOpenSettings: () => void;
+}
+
+function ProfilePage({ accountId, email, twoFactorEnabled, recentConversations, currentAccountId, onOpenSettings }: ProfilePageProps) {
+  return (
+    <div className="content-stack">
+      <section className="surface-card profile-card">
+        <div className="profile-head">
+          <div className="avatar-circle large">{initialsFromEmail(email)}</div>
+          <div>
+            <h2>{email}</h2>
+            <p className="muted">ID аккаунта: {accountId}</p>
+          </div>
+        </div>
+        <div className="inline-actions">
+          <button type="button" className="button-secondary" onClick={onOpenSettings}>
+            Открыть настройки
+          </button>
+          <span className={`small-pill ${twoFactorEnabled ? "delivered" : "pending"}`}>
+            {twoFactorEnabled ? "2FA включена" : "2FA выключена"}
+          </span>
+        </div>
+      </section>
+
+      <section className="surface-card">
+        <h3>Последняя активность</h3>
+        {recentConversations.length === 0 ? (
+          <EmptyCard title="Пока нет активности" text="После общения здесь появятся последние действия в чатах." />
+        ) : (
+          <div className="compact-list">
+            {recentConversations.slice(0, 5).map((conversation) => (
+              <article key={conversation.id} className="compact-row">
+                <div>
+                  <strong>{buildConversationTitle(conversation, currentAccountId)}</strong>
+                  <p className="muted">{conversation.type === "group" ? "Группа" : "Личный чат"}</p>
+                </div>
+                <span className="muted">{formatShortDate(conversation.updatedAt)}</span>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+interface SettingsPageProps {
+  auth: AuthState;
+  bootstrap: BootstrapState;
+  transport: TransportState;
+  settingsSection: SettingsSection;
+  setSettingsSection: (section: SettingsSection) => void;
+  onChangeServer: () => Promise<void>;
+}
+
+function SettingsPage({ auth, bootstrap, transport, settingsSection, setSettingsSection, onChangeServer }: SettingsPageProps) {
+  const selectedTab = SETTINGS_NAV.find((item) => item.id === settingsSection) ?? SETTINGS_NAV[0];
+
+  return (
+    <div className="settings-layout">
+      <aside className="surface-card settings-nav-card">
+        <h2>Настройки</h2>
+        <p className="muted">Все системные и защитные параметры находятся в этом разделе.</p>
+        <div className="settings-nav-list">
+          {SETTINGS_NAV.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className={`settings-nav-item ${settingsSection === item.id ? "active" : ""}`}
+              onClick={() => setSettingsSection(item.id)}
+            >
+              <strong>{item.title}</strong>
+              <span className="muted">{item.description}</span>
+            </button>
+          ))}
+        </div>
+      </aside>
+
+      <section className="surface-card settings-content-card">
+        <header className="settings-content-head">
+          <h2>{selectedTab.title}</h2>
+          <p className="muted">{selectedTab.description}</p>
+        </header>
+
+        {settingsSection === "general" ? (
+          <SettingsBlock title="Общие параметры">
+            <p className="muted">Язык интерфейса: русский. Базовые параметры уже применены для комфортной работы в браузере.</p>
+          </SettingsBlock>
+        ) : null}
+
+        {settingsSection === "account" ? (
+          <SettingsBlock title="Аккаунт">
+            <p className="muted">Текущая почта: {auth.session?.email ?? "—"}</p>
+            <div className="inline-actions">
+              <button type="button" className="button-secondary" onClick={() => void auth.logout()}>
+                Выйти из этой сессии
+              </button>
+              <button type="button" className="button-secondary" onClick={() => void auth.logoutAll()}>
+                Выйти со всех устройств
+              </button>
+            </div>
+          </SettingsBlock>
+        ) : null}
+
+        {settingsSection === "appearance" ? (
+          <SettingsBlock title="Внешний вид">
+            <p className="muted">Используется тёмная тема. Вы можете расширить тему в следующих релизах через настройки профиля.</p>
+          </SettingsBlock>
+        ) : null}
+
+        {settingsSection === "notifications" ? (
+          <SettingsBlock title="Уведомления">
+            <p className="muted">Системные уведомления будут подключаться через браузерный канал. Сейчас доступен базовый режим внутри интерфейса.</p>
+          </SettingsBlock>
+        ) : null}
+
+        {settingsSection === "privacy" ? (
+          <SettingsBlock title="Конфиденциальность">
+            <p className="muted">Публичные данные ограничены. История и сообщения открываются только после авторизации.</p>
+          </SettingsBlock>
+        ) : null}
+
+        {settingsSection === "security" ? (
+          <SettingsBlock title="Безопасность">
+            <p className="muted">Двухфакторная защита: {auth.session?.twoFactorEnabled ? "включена" : "выключена"}.</p>
+            <p className="muted">Для критичных действий используйте 2FA и периодически проверяйте активные сессии.</p>
+          </SettingsBlock>
+        ) : null}
+
+        {settingsSection === "devices" ? (
+          <SettingsBlock title="Устройства и сессии">
+            <p className="muted">Текущий тип сессии: {auth.persistenceMode === "remembered" ? "запомненная" : "временная"}.</p>
+            <p className="muted">Платформа клиента: {auth.session?.session.clientPlatform ?? "browser"}.</p>
+            <p className="muted">Класс сессии: {auth.session?.session.sessionClass ?? "browser_session"}.</p>
+          </SettingsBlock>
+        ) : null}
+
+        {settingsSection === "server" ? (
+          <SettingsBlock title="Сервер и подключение">
+            <p className="muted">Текущий сервер: {bootstrap.serverConfig?.inputHost ?? bootstrap.serverConfig?.apiBaseUrl ?? "не задан"}.</p>
+            <p className="muted">Состояние связи: {transportStatusLabel(transport.runtime.status)}.</p>
+            <div className="inline-actions">
+              <button type="button" className="button-secondary" onClick={transport.reconnect}>
+                Обновить подключение
+              </button>
+              <button type="button" className="button-secondary" onClick={() => void onChangeServer()}>
+                Сменить сервер
+              </button>
+            </div>
+          </SettingsBlock>
+        ) : null}
+
+        {settingsSection === "data" ? (
+          <SettingsBlock title="Данные и хранилище">
+            <p className="muted">Секреты сессии хранятся в памяти вкладки. Постоянно сохраняются только безопасные служебные данные.</p>
+            <p className="muted">При выходе сессия очищается автоматически.</p>
+          </SettingsBlock>
+        ) : null}
+
+        {settingsSection === "about" ? (
+          <SettingsBlock title="О приложении">
+            <p className="muted">PWSSocial Web — веб-клиент безопасного мессенджера.</p>
+            <p className="muted">Версия: 1.0.1</p>
+          </SettingsBlock>
+        ) : null}
+      </section>
+    </div>
+  );
+}
+
+interface SettingsBlockProps {
+  title: string;
+  children: React.ReactNode;
+}
+
+function SettingsBlock({ title, children }: SettingsBlockProps) {
+  return (
+    <section className="settings-block">
+      <h3>{title}</h3>
+      <div className="content-stack">{children}</div>
+    </section>
+  );
+}
+
+interface RightSidebarProps {
+  section: MainSection;
+  currentAccountId: string;
+  recentConversations: ConversationDTO[];
+  selectedConversation: ConversationDTO | null;
+  transport: TransportState;
+  contacts: Array<{ accountId: string; conversationsCount: number; updatedAt: string }>;
+  groups: ConversationDTO[];
+}
+
+function RightSidebar({
+  section,
+  currentAccountId,
+  recentConversations,
+  selectedConversation,
+  transport,
+  contacts,
+  groups,
+}: RightSidebarProps) {
+  if (section === "messages") {
+    return (
+      <div className="content-stack">
+        <section className="surface-card">
+          <h2>Информация о чате</h2>
+          {!selectedConversation ? (
+            <EmptyCard title="Чат не выбран" text="Откройте диалог, чтобы увидеть участников и детали." />
+          ) : (
+            <>
+              <p>
+                <strong>{buildConversationTitle(selectedConversation, currentAccountId)}</strong>
+              </p>
+              <p className="muted">Тип: {selectedConversation.type === "group" ? "Группа" : "Личный"}</p>
+              <p className="muted">Обновлён: {formatDateTime(selectedConversation.updatedAt)}</p>
+              <div className="compact-list members-list">
+                {selectedConversation.members.map((member) => (
+                  <article key={`${selectedConversation.id}-${member.accountId}`} className="compact-row">
+                    <div>
+                      <strong>{shortId(member.accountId)}</strong>
+                      <p className="muted">Роль: {mapRole(member.role)}</p>
+                    </div>
+                    <span className="muted">{member.isActive ? "В чате" : "Неактивен"}</span>
+                  </article>
+                ))}
+              </div>
+            </>
+          )}
+        </section>
+
+        <section className="surface-card">
+          <h3>Состояние подключения</h3>
+          <p className="muted">{transportStatusLabel(transport.runtime.status)}</p>
+          <button type="button" className="button-secondary" onClick={transport.reconnect}>
+            Повторить подключение
+          </button>
+        </section>
+      </div>
+    );
   }
-  return value.length > 10 ? `${value.slice(0, 8)}…` : value;
+
+  if (section === "contacts") {
+    return (
+      <div className="content-stack">
+        <section className="surface-card">
+          <h2>Кого добавить</h2>
+          {contacts.length === 0 ? (
+            <EmptyCard title="Пока нет рекомендаций" text="Сначала пообщайтесь в нескольких чатах." />
+          ) : (
+            <div className="compact-list">
+              {contacts.slice(0, 5).map((contact) => (
+                <article key={contact.accountId} className="compact-row">
+                  <div>
+                    <strong>{shortId(contact.accountId)}</strong>
+                    <p className="muted">Чатов: {contact.conversationsCount}</p>
+                  </div>
+                  <span className="muted">{formatShortDate(contact.updatedAt)}</span>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
+    );
+  }
+
+  if (section === "groups") {
+    return (
+      <div className="content-stack">
+        <section className="surface-card">
+          <h2>Короткая сводка</h2>
+          <p className="muted">Групп: {groups.length}</p>
+          <p className="muted">Активная работа с группами доступна в центральной колонке.</p>
+        </section>
+      </div>
+    );
+  }
+
+  if (section === "profile") {
+    return (
+      <div className="content-stack">
+        <section className="surface-card">
+          <h2>Быстрые действия</h2>
+          <div className="compact-list">
+            <article className="compact-row">
+              <div>
+                <strong>Безопасность</strong>
+                <p className="muted">Проверьте 2FA и сессии.</p>
+              </div>
+            </article>
+            <article className="compact-row">
+              <div>
+                <strong>Контакты</strong>
+                <p className="muted">Добавьте новых людей в список контактов.</p>
+              </div>
+            </article>
+          </div>
+        </section>
+      </div>
+    );
+  }
+
+  if (section === "settings") {
+    return (
+      <div className="content-stack">
+        <section className="surface-card">
+          <h2>Подсказка</h2>
+          <p className="muted">Все параметры безопасности, устройств и сервера находятся внутри раздела «Настройки».</p>
+        </section>
+      </div>
+    );
+  }
+
+  return (
+    <div className="content-stack">
+      <section className="surface-card">
+        <h2>Последние диалоги</h2>
+        {recentConversations.length === 0 ? (
+          <EmptyCard title="Пока пусто" text="Здесь появятся последние активные беседы." />
+        ) : (
+          <div className="compact-list">
+            {recentConversations.slice(0, 5).map((conversation) => (
+              <article key={conversation.id} className="compact-row">
+                <div>
+                  <strong>{buildConversationTitle(conversation, currentAccountId)}</strong>
+                  <p className="muted">{conversation.type === "group" ? "Группа" : "Личный чат"}</p>
+                </div>
+                <span className="muted">{formatShortDate(conversation.updatedAt)}</span>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+interface EmptyCardProps {
+  title: string;
+  text: string;
+}
+
+function EmptyCard({ title, text }: EmptyCardProps) {
+  return (
+    <div className="empty-card">
+      <strong>{title}</strong>
+      <p className="muted">{text}</p>
+    </div>
+  );
+}
+
+function buildConversationTitle(conversation: ConversationDTO, currentAccountId?: string): string {
+  if (conversation.title && conversation.title.trim()) {
+    return conversation.title.trim();
+  }
+  if (conversation.type === "group") {
+    return `Группа ${shortId(conversation.id)}`;
+  }
+  const peer = conversation.members.find((member) => member.accountId !== currentAccountId);
+  return peer ? `Личный чат с ${shortId(peer.accountId)}` : `Личный чат ${shortId(conversation.id)}`;
+}
+
+function mapRole(role: string): string {
+  if (role === "owner") {
+    return "владелец";
+  }
+  if (role === "admin") {
+    return "администратор";
+  }
+  return "участник";
+}
+
+function initialsFromEmail(email: string): string {
+  const [name = "U"] = email.split("@");
+  const cleaned = name.replace(/[^a-zA-Zа-яА-Я0-9]/g, "").slice(0, 2);
+  return cleaned ? cleaned.toUpperCase() : "U";
+}
+
+function shortId(value: string): string {
+  if (!value) {
+    return "—";
+  }
+  if (value.length <= 12) {
+    return value;
+  }
+  return `${value.slice(0, 8)}…${value.slice(-4)}`;
 }
 
 function formatDateTime(value: string): string {
-  try {
-    return new Date(value).toLocaleString("ru-RU", {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  } catch {
-    return value;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "—";
   }
+  return new Intl.DateTimeFormat("ru-RU", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
 }
 
-function formatTimeOnly(value: string): string {
-  try {
-    return new Date(value).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
-  } catch {
-    return "--:--";
+function formatShortDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "—";
   }
+
+  const diffMs = Date.now() - date.getTime();
+  const diffHours = Math.floor(diffMs / (60 * 60 * 1000));
+  if (diffHours < 1) {
+    return "только что";
+  }
+  if (diffHours < 24) {
+    return `${diffHours} ч назад`;
+  }
+
+  return new Intl.DateTimeFormat("ru-RU", {
+    day: "2-digit",
+    month: "2-digit",
+  }).format(date);
 }
 
 function deliveryStateLabel(state: MessageDTO["deliveryState"]): string {
-  const labels: Record<MessageDTO["deliveryState"], string> = {
-    pending: "Ожидание",
-    queued: "В очереди",
-    sent: "Отправлено",
-    delivered: "Доставлено",
-    failed: "Ошибка",
-    expired: "Истекло",
-  };
-  return labels[state];
+  if (state === "delivered") {
+    return "Доставлено";
+  }
+  if (state === "sent") {
+    return "Отправлено";
+  }
+  if (state === "queued") {
+    return "В очереди";
+  }
+  if (state === "failed") {
+    return "Ошибка";
+  }
+  if (state === "expired") {
+    return "Истекло";
+  }
+  return "Ожидает";
 }
 
-function deliveryBadgeClass(state: MessageDTO["deliveryState"]): string {
-  if (state === "delivered" || state === "sent") {
-    return "badge-good";
-  }
-  if (state === "failed" || state === "expired") {
-    return "badge-error";
-  }
-  if (state === "pending" || state === "queued") {
-    return "badge-warn";
-  }
-  return "badge-neutral";
-}
-
-function transportBadgeClass(status: string): string {
+function transportStatusLabel(status: TransportState["runtime"]["status"]): string {
   if (status === "online") {
-    return "badge-good";
-  }
-  if (status === "degraded" || status === "connecting") {
-    return "badge-warn";
-  }
-  if (status === "forbidden") {
-    return "badge-error";
-  }
-  return "badge-neutral";
-}
-
-function runtimeModeLabel(mode: string): string {
-  if (mode === "websocket") {
-    return "WebSocket";
-  }
-  if (mode === "long-poll") {
-    return "Long-poll (резервный режим)";
-  }
-  return "Нет активного канала";
-}
-
-function platformLabel(platform: string | undefined): string {
-  if (!platform || platform === "web-browser") {
-    return "Веб-браузер";
-  }
-  if (platform === "desktop-tauri") {
-    return "Настольный клиент";
-  }
-  return platform;
-}
-
-function transportBadgeLabel(status: string): string {
-  if (status === "online") {
-    return "Соединение активно";
+    return "Подключено";
   }
   if (status === "connecting") {
     return "Подключаемся";
   }
   if (status === "degraded") {
-    return "Нестабильное соединение";
+    return "Связь нестабильна";
   }
   if (status === "forbidden") {
-    return "Сессия недействительна";
+    return "Нужен повторный вход";
   }
-  return "Оффлайн";
+  return "Офлайн";
 }
 
-function resolveTransportHint(status: string, rawError: string | null): { title: string; message: string; tone: "info" | "warning" } | null {
+function resolveTransportNotice(status: TransportState["runtime"]["status"]):
+  | { tone: "warning" | "danger"; title: string; text: string }
+  | null {
   if (status === "degraded") {
     return {
-      title: "Соединение нестабильно",
-      message: "Мы автоматически перешли в резервный режим. История продолжит обновляться, но возможны задержки.",
       tone: "warning",
+      title: "Подключение нестабильно",
+      text: "Мы продолжаем синхронизацию через резервный режим. Сообщения могут приходить с задержкой.",
     };
   }
-  if (status === "offline") {
-    return {
-      title: "Нет подключения к сети",
-      message: "Проверьте интернет. После восстановления сети приложение переподключится автоматически.",
-      tone: "warning",
-    };
-  }
-  if (status === "forbidden") {
-    return {
-      title: "Сессия устарела",
-      message: "Для продолжения работы войдите в аккаунт снова.",
-      tone: "warning",
-    };
-  }
-  if (rawError) {
-    return {
-      title: "Есть проблемы с транспортом",
-      message: humanizeTransportError(rawError),
-      tone: "info",
-    };
-  }
-  return null;
-}
 
-function humanizeTransportError(message: string): string {
-  if (message.includes("websocket")) {
-    return "Не удалось удержать WebSocket-соединение. Используем fallback и повторяем попытки.";
+  if (status === "offline" || status === "forbidden") {
+    return {
+      tone: "danger",
+      title: status === "forbidden" ? "Сессия требует обновления" : "Нет подключения к серверу",
+      text:
+        status === "forbidden"
+          ? "Пожалуйста, войдите снова, чтобы восстановить доступ к сообщениям."
+          : "Проверьте сеть или настройки сервера в разделе «Настройки» → «Сервер и подключение».",
+    };
   }
-  if (message.includes("endpoint") || message.includes("network")) {
-    return "Сервер временно недоступен. Проверьте сеть и попробуйте снова.";
-  }
-  return "Соединение временно нестабильно. Приложение пытается восстановиться автоматически.";
+
+  return null;
 }
