@@ -41,6 +41,12 @@ type webLoginRequest struct {
 	SessionPersistence string `json:"sessionPersistence,omitempty"`
 }
 
+type webRegisterRequest struct {
+	Email              string `json:"email"`
+	Password           string `json:"password"`
+	SessionPersistence string `json:"sessionPersistence,omitempty"`
+}
+
 type twoFALoginVerifyRequest struct {
 	ChallengeID string `json:"challengeId"`
 	LoginToken  string `json:"loginToken"`
@@ -357,9 +363,9 @@ type transportProfileDTO struct {
 }
 
 type publicConfigPolicyHintsDTO struct {
-	AuthModesSupported             []string `json:"auth_modes_supported"`
-	BrowserSessionDefaultPersist   string   `json:"browser_session_default_persistence"`
-	BrowserSessionAllowRemembered  bool     `json:"browser_session_allow_remembered"`
+	AuthModesSupported            []string `json:"auth_modes_supported"`
+	BrowserSessionDefaultPersist  string   `json:"browser_session_default_persistence"`
+	BrowserSessionAllowRemembered bool     `json:"browser_session_allow_remembered"`
 }
 
 type publicConfigTransportHintsDTO struct {

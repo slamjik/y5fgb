@@ -317,6 +317,12 @@ export interface WebLoginRequest {
   sessionPersistence?: SessionPersistenceMode;
 }
 
+export interface WebRegisterRequest {
+  email: string;
+  password: string;
+  sessionPersistence?: SessionPersistenceMode;
+}
+
 export interface WebTwoFactorLoginVerifyRequest {
   challengeId: string;
   loginToken: string;

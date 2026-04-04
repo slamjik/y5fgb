@@ -56,6 +56,14 @@ type WebLoginInput struct {
 	IPAddress          string
 }
 
+type WebRegisterInput struct {
+	Email              string
+	Password           string
+	SessionPersistence string
+	UserAgent          string
+	IPAddress          string
+}
+
 type VerifyTwoFALoginInput struct {
 	ChallengeID string
 	LoginToken  string
@@ -65,12 +73,12 @@ type VerifyTwoFALoginInput struct {
 }
 
 type VerifyWebTwoFALoginInput struct {
-	ChallengeID         string
-	LoginToken          string
-	Code                string
-	SessionPersistence  string
-	UserAgent           string
-	IPAddress           string
+	ChallengeID        string
+	LoginToken         string
+	Code               string
+	SessionPersistence string
+	UserAgent          string
+	IPAddress          string
 }
 
 type TokenPair struct {
@@ -237,6 +245,90 @@ registrationCreated:
 		Session:  session,
 		Tokens:   tokens,
 	}, recoveryCodes, nil
+}
+
+func (s *Service) RegisterWeb(ctx context.Context, input WebRegisterInput) (*SessionEnvelope, error) {
+	if err := validation.Email(input.Email); err != nil {
+		return nil, service.NewErrorWithDetails(service.ErrorCodeValidation, "invalid registration data", map[string]any{"email": err.Error()})
+	}
+	if err := validation.Password(input.Password); err != nil {
+		return nil, service.NewErrorWithDetails(service.ErrorCodeValidation, "invalid registration data", map[string]any{"password": err.Error()})
+	}
+
+	email := strings.ToLower(strings.TrimSpace(input.Email))
+	passwordHash, err := security.HashPassword(input.Password)
+	if err != nil {
+		return nil, service.NewError(service.ErrorCodeInternal, "failed to hash password")
+	}
+
+	accountID := security.NewID()
+	accountIdentityMaterial := fmt.Sprintf("web_identity_%s", security.NewID())
+	accountFingerprint, _ := security.FingerprintFromMaterial(accountIdentityMaterial)
+
+	deviceMaterial := fmt.Sprintf("web_device_%s", security.NewID())
+	deviceFingerprint, _ := security.FingerprintFromMaterial(deviceMaterial)
+	deviceID := security.NewID()
+
+	account := domain.Account{
+		ID:           accountID,
+		Email:        email,
+		PasswordHash: passwordHash,
+		TwoFAEnabled: false,
+	}
+	identity := domain.AccountIdentity{
+		AccountID:              accountID,
+		PublicIdentityMaterial: accountIdentityMaterial,
+		Fingerprint:            accountFingerprint,
+		VerificationState:      domain.VerificationStateVerified,
+		TrustState:             "trusted",
+	}
+	device := domain.Device{
+		ID:                   deviceID,
+		AccountID:            accountID,
+		Name:                 "Web Browser",
+		Platform:             string(domain.ClientPlatformWebBrowser),
+		PublicDeviceMaterial: deviceMaterial,
+		Fingerprint:          deviceFingerprint,
+		Status:               domain.DeviceStatusTrusted,
+		VerificationState:    domain.VerificationStateVerified,
+	}
+
+	createdAccount, createdIdentity, createdDevice, err := s.repo.CreateAccountWithIdentityAndFirstDevice(ctx, postgres.CreateAccountParams{
+		Account:  account,
+		Identity: identity,
+		Device:   device,
+	})
+	if err != nil {
+		if errors.Is(err, postgres.ErrDuplicateAccountEmail) {
+			return nil, service.NewError(service.ErrorCodeAccountAlreadyExists, "account already exists")
+		}
+		return nil, service.NewError(service.ErrorCodeInternal, "failed to create account")
+	}
+
+	sessionOptions := s.resolveWebSessionIssueOptions(input.SessionPersistence)
+	session, tokens, err := s.issueSessionWithOptions(ctx, createdAccount.ID, createdDevice.ID, input.UserAgent, input.IPAddress, sessionOptions)
+	if err != nil {
+		return nil, err
+	}
+	_ = s.repo.TouchDeviceLastSeen(ctx, createdDevice.ID)
+
+	deviceIDRef := createdDevice.ID
+	s.events.Record(ctx, createdAccount.ID, &deviceIDRef, domain.SecurityEventAccountRegistered, domain.SecurityEventSeverityInfo, "trusted", map[string]any{
+		"email":    createdAccount.Email,
+		"platform": string(domain.ClientPlatformWebBrowser),
+	})
+	s.events.Record(ctx, createdAccount.ID, &deviceIDRef, domain.SecurityEventDeviceAdded, domain.SecurityEventSeverityInfo, "trusted", map[string]any{
+		"deviceStatus": createdDevice.Status,
+		"platform":     string(domain.ClientPlatformWebBrowser),
+	})
+
+	return &SessionEnvelope{
+		Account:  createdAccount,
+		Identity: createdIdentity,
+		Device:   createdDevice,
+		Session:  session,
+		Tokens:   tokens,
+	}, nil
 }
 
 func (s *Service) Login(ctx context.Context, input LoginInput) (*LoginResult, error) {
@@ -618,9 +710,9 @@ func (s *Service) VerifyWebTwoFALogin(ctx context.Context, input VerifyWebTwoFAL
 
 	deviceIDRef := challenge.DeviceID
 	s.events.Record(ctx, challenge.AccountID, &deviceIDRef, domain.SecurityEventLoginSuccess, domain.SecurityEventSeverityInfo, "trusted", map[string]any{
-		"with2fa":   true,
-		"platform":  string(domain.ClientPlatformWebBrowser),
-		"class":     string(domain.SessionClassBrowser),
+		"with2fa":    true,
+		"platform":   string(domain.ClientPlatformWebBrowser),
+		"class":      string(domain.SessionClassBrowser),
 		"persistent": sessionOptions.Persistent,
 	})
 

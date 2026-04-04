@@ -68,6 +68,7 @@ func RegisterRoutes(mux *http.ServeMux, prefix string, handler *Handler, authSer
 	base := strings.TrimRight(prefix, "/")
 
 	mux.HandleFunc(base+"/auth/register", handler.handleRegister)
+	mux.HandleFunc(base+"/auth/web/register", handler.handleWebRegister)
 	mux.HandleFunc(base+"/auth/login", handler.handleLogin)
 	mux.HandleFunc(base+"/auth/web/login", handler.handleWebLogin)
 	mux.HandleFunc(base+"/auth/2fa/login/verify", handler.handleTwoFALoginVerify)
@@ -150,6 +151,39 @@ func (h *Handler) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	WriteJSON(w, http.StatusCreated, buildEnvelopeResponse(result, recoveryCodes))
+}
+
+func (h *Handler) handleWebRegister(w http.ResponseWriter, r *http.Request) {
+	if !h.enforceRateLimit(w, r, h.authRateLimiter) {
+		return
+	}
+	if r.Method != http.MethodPost {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "method not allowed"), http.StatusMethodNotAllowed)
+		return
+	}
+	if !h.enforceBodySize(w, r, maxAuthBodyBytes) {
+		return
+	}
+
+	var req webRegisterRequest
+	if err := middleware.DecodeJSON(r, &req); err != nil {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "invalid request body"), http.StatusBadRequest)
+		return
+	}
+
+	result, err := h.authService.RegisterWeb(r.Context(), auth.WebRegisterInput{
+		Email:              req.Email,
+		Password:           req.Password,
+		SessionPersistence: req.SessionPersistence,
+		UserAgent:          r.UserAgent(),
+		IPAddress:          r.RemoteAddr,
+	})
+	if err != nil {
+		WriteServiceError(w, r, err, http.StatusBadRequest)
+		return
+	}
+
+	WriteJSON(w, http.StatusCreated, buildEnvelopeResponse(result, nil))
 }
 
 func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {

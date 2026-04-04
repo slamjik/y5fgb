@@ -82,6 +82,24 @@ h2 {
   gap: 10px;
 }
 
+.auth-mode-switch {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.auth-mode-button {
+  background: rgba(79, 159, 255, 0.12);
+  border-color: rgba(116, 182, 255, 0.42);
+  color: var(--text);
+}
+
+.auth-mode-button.active {
+  background: linear-gradient(140deg, var(--brand), var(--brand-strong));
+  border-color: transparent;
+  color: #fff;
+}
+
 label {
   display: grid;
   gap: 5px;

@@ -6,6 +6,7 @@ import type {
   SessionDTO,
   TokensDTO,
   WebLoginRequest,
+  WebRegisterRequest,
   WebRefreshRequest,
   WebTwoFactorLoginVerifyRequest,
 } from "@project/protocol";
@@ -39,6 +40,7 @@ interface AuthContextValue {
   errorMessage: string | null;
   persistenceMode: SessionPersistenceMode;
   setPersistenceMode: (mode: SessionPersistenceMode) => void;
+  register: (email: string, password: string) => Promise<boolean>;
   login: (email: string, password: string) => Promise<boolean>;
   verifyTwoFactor: (code: string) => Promise<boolean>;
   logout: () => Promise<void>;
@@ -97,6 +99,41 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [bootstrap.serverConfig?.policyHints?.browserSessionAllowRemembered]);
 
   const clearError = useCallback(() => setErrorMessage(null), []);
+
+  const register = useCallback(
+    async (email: string, password: string): Promise<boolean> => {
+      if (bootstrap.status !== "ready" || !bootstrap.serverConfig) {
+        setErrorMessage("Сервер не настроен.");
+        return false;
+      }
+
+      setErrorMessage(null);
+      setChallenge(null);
+
+      try {
+        const payload: WebRegisterRequest = {
+          email,
+          password,
+          sessionPersistence: persistenceMode,
+        };
+
+        const response = await requestJSON<LoginSuccessResponse>({
+          method: "POST",
+          url: buildApiURL(bootstrap.serverConfig.apiBaseUrl, bootstrap.serverConfig.apiPrefix, "/auth/web/register"),
+          body: payload,
+        });
+
+        await applySessionEnvelope(response, persistenceMode, bootstrap.serverConfig.apiBaseUrl, bootstrap.serverConfig.apiPrefix);
+        coordinatorRef.current.publish({ type: "session_refreshed" });
+        return true;
+      } catch (error) {
+        setErrorMessage(mapAuthError(error));
+        setPhase("error");
+        return false;
+      }
+    },
+    [bootstrap.serverConfig, bootstrap.status, persistenceMode],
+  );
 
   const login = useCallback(
     async (email: string, password: string): Promise<boolean> => {
@@ -280,6 +317,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       errorMessage,
       persistenceMode,
       setPersistenceMode,
+      register,
       login,
       verifyTwoFactor,
       logout,
@@ -295,6 +333,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       errorMessage,
       persistenceMode,
       setPersistenceMode,
+      register,
       login,
       verifyTwoFactor,
       logout,
@@ -439,6 +478,9 @@ export function useAuth(): AuthContextValue {
 
 function mapAuthError(error: unknown): string {
   if (error instanceof HttpRequestError) {
+    if (error.code === "account_already_exists") {
+      return "Аккаунт с таким email уже существует. Войдите или используйте другой email.";
+    }
     if (error.code === "invalid_credentials") {
       return "Неверный email или пароль.";
     }
@@ -447,6 +489,9 @@ function mapAuthError(error: unknown): string {
     }
     if (error.code === "endpoint_unreachable") {
       return "Нет соединения с сервером. Проверьте сеть и попробуйте снова.";
+    }
+    if (error.code === "validation_error") {
+      return "Проверьте корректность данных и попробуйте снова.";
     }
     return "Не удалось выполнить запрос авторизации.";
   }

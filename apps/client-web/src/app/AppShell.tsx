@@ -31,8 +31,13 @@ export function AppShell() {
   const messaging = useMessaging();
 
   const [serverInput, setServerInput] = useState(bootstrap.serverConfig?.inputHost ?? "");
+  const [authMode, setAuthMode] = useState<"register" | "login">("register");
+  const [authErrorLocal, setAuthErrorLocal] = useState<string | null>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [registerEmail, setRegisterEmail] = useState("");
+  const [registerPassword, setRegisterPassword] = useState("");
+  const [registerPasswordRepeat, setRegisterPasswordRepeat] = useState("");
   const [twoFactorCode, setTwoFactorCode] = useState("");
   const [activeSection, setActiveSection] = useState<ProductSection>("messaging");
 
@@ -109,46 +114,144 @@ export function AppShell() {
     return (
       <main className="auth-shell">
         <section className="auth-card">
-          <h1>Вход в веб-версию</h1>
-          <p className="muted">Веб-сессии изолированы от доверенных настольных устройств.</p>
-          <form
-            className="form-grid"
-            onSubmit={async (event: FormEvent) => {
-              event.preventDefault();
-              await auth.login(email, password);
-            }}
-          >
-            <label>
-              Электронная почта
-              <input value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="username" />
-            </label>
-            <label>
-              Пароль
-              <input
-                type="password"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                autoComplete="current-password"
-              />
-            </label>
-            <label>
-              Режим сессии
-              <select
-                value={auth.persistenceMode}
-                onChange={(event) => auth.setPersistenceMode(event.target.value === "remembered" ? "remembered" : "ephemeral")}
-              >
-                <option value="ephemeral">Только текущая вкладка</option>
-                <option value="remembered">Запомнить на этом браузере</option>
-              </select>
-            </label>
-            <button type="submit">Войти</button>
-          </form>
-          {auth.errorMessage ? <div className="error-box">{auth.errorMessage}</div> : null}
+          <h1>{authMode === "register" ? "\u0420\u0435\u0433\u0438\u0441\u0442\u0440\u0430\u0446\u0438\u044f \u0432 \u0432\u0435\u0431-\u0432\u0435\u0440\u0441\u0438\u0438" : "\u0412\u0445\u043e\u0434 \u0432 \u0432\u0435\u0431-\u0432\u0435\u0440\u0441\u0438\u044e"}</h1>
+          <p className="muted">{"\u0412\u0435\u0431-\u0441\u0435\u0441\u0441\u0438\u0438 \u0438\u0437\u043e\u043b\u0438\u0440\u043e\u0432\u0430\u043d\u044b \u043e\u0442 \u0434\u043e\u0432\u0435\u0440\u0435\u043d\u043d\u044b\u0445 \u043d\u0430\u0441\u0442\u043e\u043b\u044c\u043d\u044b\u0445 \u0443\u0441\u0442\u0440\u043e\u0439\u0441\u0442\u0432."}</p>
+
+          <div className="auth-mode-switch" role="tablist" aria-label={"\u0420\u0435\u0436\u0438\u043c \u0430\u0432\u0442\u043e\u0440\u0438\u0437\u0430\u0446\u0438\u0438"}>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={authMode === "register"}
+              className={`auth-mode-button ${authMode === "register" ? "active" : ""}`}
+              onClick={() => {
+                setAuthMode("register");
+                setAuthErrorLocal(null);
+                auth.clearError();
+              }}
+            >
+              {"\u0420\u0435\u0433\u0438\u0441\u0442\u0440\u0430\u0446\u0438\u044f"}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={authMode === "login"}
+              className={`auth-mode-button ${authMode === "login" ? "active" : ""}`}
+              onClick={() => {
+                setAuthMode("login");
+                setAuthErrorLocal(null);
+                auth.clearError();
+              }}
+            >
+              {"\u0412\u0445\u043e\u0434"}
+            </button>
+          </div>
+
+          {authMode === "register" ? (
+            <form
+              className="form-grid"
+              onSubmit={async (event: FormEvent) => {
+                event.preventDefault();
+                setAuthErrorLocal(null);
+                auth.clearError();
+
+                if (!registerEmail.trim()) {
+                  setAuthErrorLocal("\u0412\u0432\u0435\u0434\u0438\u0442\u0435 email.");
+                  return;
+                }
+                if (registerPassword.length < 10) {
+                  setAuthErrorLocal("\u041f\u0430\u0440\u043e\u043b\u044c \u0434\u043e\u043b\u0436\u0435\u043d \u0431\u044b\u0442\u044c \u043d\u0435 \u043a\u043e\u0440\u043e\u0447\u0435 10 \u0441\u0438\u043c\u0432\u043e\u043b\u043e\u0432.");
+                  return;
+                }
+                if (registerPassword !== registerPasswordRepeat) {
+                  setAuthErrorLocal("\u041f\u0430\u0440\u043e\u043b\u0438 \u043d\u0435 \u0441\u043e\u0432\u043f\u0430\u0434\u0430\u044e\u0442.");
+                  return;
+                }
+
+                await auth.register(registerEmail.trim(), registerPassword);
+              }}
+            >
+              <label>
+                {"\u042d\u043b\u0435\u043a\u0442\u0440\u043e\u043d\u043d\u0430\u044f \u043f\u043e\u0447\u0442\u0430"}
+                <input
+                  value={registerEmail}
+                  onChange={(event) => setRegisterEmail(event.target.value)}
+                  autoComplete="email"
+                  autoFocus
+                />
+              </label>
+              <label>
+                {"\u041f\u0430\u0440\u043e\u043b\u044c"}
+                <input
+                  type="password"
+                  value={registerPassword}
+                  onChange={(event) => setRegisterPassword(event.target.value)}
+                  autoComplete="new-password"
+                />
+              </label>
+              <label>
+                {"\u041f\u043e\u0432\u0442\u043e\u0440\u0438\u0442\u0435 \u043f\u0430\u0440\u043e\u043b\u044c"}
+                <input
+                  type="password"
+                  value={registerPasswordRepeat}
+                  onChange={(event) => setRegisterPasswordRepeat(event.target.value)}
+                  autoComplete="new-password"
+                />
+              </label>
+              <label>
+                {"\u0420\u0435\u0436\u0438\u043c \u0441\u0435\u0441\u0441\u0438\u0438"}
+                <select
+                  value={auth.persistenceMode}
+                  onChange={(event) => auth.setPersistenceMode(event.target.value === "remembered" ? "remembered" : "ephemeral")}
+                >
+                  <option value="ephemeral">{"\u0422\u043e\u043b\u044c\u043a\u043e \u0442\u0435\u043a\u0443\u0449\u0430\u044f \u0432\u043a\u043b\u0430\u0434\u043a\u0430"}</option>
+                  <option value="remembered">{"\u0417\u0430\u043f\u043e\u043c\u043d\u0438\u0442\u044c \u0432 \u044d\u0442\u043e\u043c \u0431\u0440\u0430\u0443\u0437\u0435\u0440\u0435"}</option>
+                </select>
+              </label>
+              <button type="submit">{"\u0421\u043e\u0437\u0434\u0430\u0442\u044c \u0430\u043a\u043a\u0430\u0443\u043d\u0442"}</button>
+            </form>
+          ) : (
+            <form
+              className="form-grid"
+              onSubmit={async (event: FormEvent) => {
+                event.preventDefault();
+                setAuthErrorLocal(null);
+                auth.clearError();
+                await auth.login(email.trim(), password);
+              }}
+            >
+              <label>
+                {"\u042d\u043b\u0435\u043a\u0442\u0440\u043e\u043d\u043d\u0430\u044f \u043f\u043e\u0447\u0442\u0430"}
+                <input value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="username" autoFocus />
+              </label>
+              <label>
+                {"\u041f\u0430\u0440\u043e\u043b\u044c"}
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  autoComplete="current-password"
+                />
+              </label>
+              <label>
+                {"\u0420\u0435\u0436\u0438\u043c \u0441\u0435\u0441\u0441\u0438\u0438"}
+                <select
+                  value={auth.persistenceMode}
+                  onChange={(event) => auth.setPersistenceMode(event.target.value === "remembered" ? "remembered" : "ephemeral")}
+                >
+                  <option value="ephemeral">{"\u0422\u043e\u043b\u044c\u043a\u043e \u0442\u0435\u043a\u0443\u0449\u0430\u044f \u0432\u043a\u043b\u0430\u0434\u043a\u0430"}</option>
+                  <option value="remembered">{"\u0417\u0430\u043f\u043e\u043c\u043d\u0438\u0442\u044c \u0432 \u044d\u0442\u043e\u043c \u0431\u0440\u0430\u0443\u0437\u0435\u0440\u0435"}</option>
+                </select>
+              </label>
+              <button type="submit">{"\u0412\u043e\u0439\u0442\u0438"}</button>
+            </form>
+          )}
+
+          {authErrorLocal ? <div className="error-box">{authErrorLocal}</div> : null}
+          {!authErrorLocal && auth.errorMessage ? <div className="error-box">{auth.errorMessage}</div> : null}
         </section>
       </main>
     );
   }
-
   const selectedSectionMeta = sectionItems.find((item) => item.id === activeSection) ?? sectionItems[0];
   const transportHint = resolveTransportHint(transport.runtime.status, transport.lastError);
 
