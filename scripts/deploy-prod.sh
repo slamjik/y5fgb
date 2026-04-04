@@ -148,6 +148,33 @@ fi
 
 compose_cmd=("${COMPOSE_BIN[@]}" -f "$COMPOSE_BASE_FILE" -f "$COMPOSE_OVERRIDE_FILE" --env-file "$ENV_FILE")
 
+collect_published_containers() {
+  local port="$1"
+  docker ps --filter "publish=${port}" --format '{{.Names}}'
+}
+
+ensure_domain_ports_available() {
+  local port
+  local offenders
+
+  for port in 80 443; do
+    offenders="$(collect_published_containers "$port" | tr -d '\r')"
+    if [[ -n "$offenders" ]]; then
+      echo "[deploy-prod] port ${port} is already occupied by container(s):" >&2
+      echo "$offenders" | sed 's/^/  - /' >&2
+      echo "[deploy-prod] stop these containers or free the port, then run deploy again." >&2
+      exit 1
+    fi
+  done
+}
+
+echo "[deploy-prod] cleaning previous compose state (down --remove-orphans)"
+"${compose_cmd[@]}" down --remove-orphans >/dev/null 2>&1 || true
+
+if [[ "$mode" == "domain" ]]; then
+  ensure_domain_ports_available
+fi
+
 echo "[deploy-prod] starting stack with $ENV_FILE (mode: $mode)"
 if [[ "$mode" == "ip" ]]; then
   echo "[deploy-prod] IP mode detected: starting postgres + relay-server + web-client (without caddy)"

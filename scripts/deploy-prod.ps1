@@ -122,6 +122,37 @@ $env:WEB_PUBLISH_PORT = $webPublishPort
 
 $composeArgs = @("-f", $composeBaseFile, "-f", $composeOverrideFile, "--env-file", $envFile)
 
+function Get-PublishedContainersByPort([int]$Port) {
+  $rows = & docker ps --filter "publish=$Port" --format "{{.Names}}"
+  if (-not $rows) {
+    return @()
+  }
+  return @($rows | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+}
+
+function Ensure-DomainPortsAvailable {
+  $ports = @(80, 443)
+  foreach ($port in $ports) {
+    $offenders = Get-PublishedContainersByPort -Port $port
+    if ($offenders.Count -gt 0) {
+      $formatted = ($offenders | ForEach-Object { "  - $_" }) -join "`n"
+      throw "[deploy-prod] port $port is already occupied by container(s):`n$formatted`n[deploy-prod] stop these containers or free the port, then run deploy again."
+    }
+  }
+}
+
+Write-Host "[deploy-prod] cleaning previous compose state (down --remove-orphans)"
+try {
+  Invoke-Compose @composeArgs down --remove-orphans | Out-Null
+}
+catch {
+  # best-effort cleanup
+}
+
+if ($mode -eq "domain") {
+  Ensure-DomainPortsAvailable
+}
+
 Write-Host "[deploy-prod] starting stack with $envFile (mode: $mode)"
 if ($mode -eq "ip") {
   Write-Host "[deploy-prod] IP mode detected: starting postgres + relay-server + web-client (without caddy)"

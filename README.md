@@ -121,6 +121,10 @@ Windows PowerShell:
 powershell -ExecutionPolicy Bypass -File .\scripts\deploy-prod.ps1
 ```
 
+Примечание:
+- Не запускайте вручную `docker compose ... up` для production-режима, если используете auto mode.
+- `deploy-prod` сам делает `down --remove-orphans`, затем проверяет занятость портов `80/443` в domain mode и даёт понятную ошибку до старта.
+
 Пост-деплой sanity checks:
 ```bash
 docker compose -f docker-compose.production.yml -f docker-compose.prod.yml --env-file .env ps
