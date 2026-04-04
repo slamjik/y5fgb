@@ -109,6 +109,7 @@ Use one command and the script will auto-pick mode from `.env`:
 
 - IP mode: if `PUBLIC_HOST` is an IP or `TLS_ENABLED=false` -> starts `postgres + relay-server` (no Caddy/TLS).
 - Domain mode: if `PUBLIC_HOST` is a domain and TLS is enabled -> starts full stack with Caddy + ACME TLS.
+- In domain mode deploy script forces `RELAY_PUBLISH_ADDRESS=127.0.0.1` and `WEB_PUBLISH_ADDRESS=127.0.0.1` (web on `:8081`) to avoid port-80 conflicts with Caddy.
 
 Linux:
 ```bash

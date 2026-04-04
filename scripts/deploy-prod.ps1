@@ -97,17 +97,24 @@ foreach ($key in $required) {
 }
 
 $webAllowedOrigins = Get-EnvValue -Path $envFile -Key "WEB_ALLOWED_ORIGINS"
-$webPublishAddress = Get-EnvValue -Path $envFile -Key "WEB_PUBLISH_ADDRESS"
-$webPublishPort = Get-EnvValue -Path $envFile -Key "WEB_PUBLISH_PORT"
 if ($mode -eq "domain") {
   if ([string]::IsNullOrWhiteSpace($webAllowedOrigins)) { $webAllowedOrigins = "https://$publicHost" }
-  if ([string]::IsNullOrWhiteSpace($webPublishAddress)) { $webPublishAddress = "127.0.0.1" }
-  if ([string]::IsNullOrWhiteSpace($webPublishPort)) { $webPublishPort = "8081" }
+  $currentWebPublishAddress = Get-EnvValue -Path $envFile -Key "WEB_PUBLISH_ADDRESS"
+  $currentWebPublishPort = Get-EnvValue -Path $envFile -Key "WEB_PUBLISH_PORT"
+  if ($currentWebPublishAddress -eq "0.0.0.0" -or $currentWebPublishPort -eq "80") {
+    Write-Host "[deploy-prod] domain mode: overriding WEB_PUBLISH_* to loopback to avoid :80 conflict with caddy"
+  }
+  $webPublishAddress = "127.0.0.1"
+  $webPublishPort = "8081"
+  $env:RELAY_PUBLISH_ADDRESS = "127.0.0.1"
+  $env:RELAY_PUBLISH_PORT = "8080"
 }
 else {
   if ([string]::IsNullOrWhiteSpace($webAllowedOrigins)) { $webAllowedOrigins = "http://$publicHost" }
-  if ([string]::IsNullOrWhiteSpace($webPublishAddress)) { $webPublishAddress = "0.0.0.0" }
-  if ([string]::IsNullOrWhiteSpace($webPublishPort)) { $webPublishPort = "80" }
+  $webPublishAddress = "0.0.0.0"
+  $webPublishPort = "80"
+  $env:RELAY_PUBLISH_ADDRESS = "0.0.0.0"
+  $env:RELAY_PUBLISH_PORT = "8080"
 }
 $env:WEB_ALLOWED_ORIGINS = $webAllowedOrigins
 $env:WEB_PUBLISH_ADDRESS = $webPublishAddress

@@ -126,19 +126,24 @@ if [[ "$mode" == "domain" ]]; then
   if [[ -z "$WEB_ALLOWED_ORIGINS" ]]; then
     export WEB_ALLOWED_ORIGINS="https://${public_host}"
   fi
-  export WEB_PUBLISH_ADDRESS="${WEB_PUBLISH_ADDRESS:-$(read_env_value WEB_PUBLISH_ADDRESS)}"
-  export WEB_PUBLISH_PORT="${WEB_PUBLISH_PORT:-$(read_env_value WEB_PUBLISH_PORT)}"
-  [[ -z "$WEB_PUBLISH_ADDRESS" ]] && export WEB_PUBLISH_ADDRESS="127.0.0.1"
-  [[ -z "$WEB_PUBLISH_PORT" ]] && export WEB_PUBLISH_PORT="8081"
+  current_web_publish_address="$(read_env_value WEB_PUBLISH_ADDRESS)"
+  current_web_publish_port="$(read_env_value WEB_PUBLISH_PORT)"
+  if [[ "$current_web_publish_address" == "0.0.0.0" || "$current_web_publish_port" == "80" ]]; then
+    echo "[deploy-prod] domain mode: overriding WEB_PUBLISH_* to loopback to avoid :80 conflict with caddy"
+  fi
+  export WEB_PUBLISH_ADDRESS="127.0.0.1"
+  export WEB_PUBLISH_PORT="8081"
+  export RELAY_PUBLISH_ADDRESS="127.0.0.1"
+  export RELAY_PUBLISH_PORT="8080"
 else
   export WEB_ALLOWED_ORIGINS="${WEB_ALLOWED_ORIGINS:-$(read_env_value WEB_ALLOWED_ORIGINS)}"
   if [[ -z "$WEB_ALLOWED_ORIGINS" ]]; then
     export WEB_ALLOWED_ORIGINS="http://${public_host}"
   fi
-  export WEB_PUBLISH_ADDRESS="${WEB_PUBLISH_ADDRESS:-$(read_env_value WEB_PUBLISH_ADDRESS)}"
-  export WEB_PUBLISH_PORT="${WEB_PUBLISH_PORT:-$(read_env_value WEB_PUBLISH_PORT)}"
-  [[ -z "$WEB_PUBLISH_ADDRESS" ]] && export WEB_PUBLISH_ADDRESS="0.0.0.0"
-  [[ -z "$WEB_PUBLISH_PORT" ]] && export WEB_PUBLISH_PORT="80"
+  export WEB_PUBLISH_ADDRESS="0.0.0.0"
+  export WEB_PUBLISH_PORT="80"
+  export RELAY_PUBLISH_ADDRESS="0.0.0.0"
+  export RELAY_PUBLISH_PORT="8080"
 fi
 
 compose_cmd=("${COMPOSE_BIN[@]}" -f "$COMPOSE_BASE_FILE" -f "$COMPOSE_OVERRIDE_FILE" --env-file "$ENV_FILE")
