@@ -233,10 +233,52 @@ export function AppShell() {
             <section className="glass-card feed-card">
               <h2>С возвращением</h2>
               <p className="text-muted">{session.email}</p>
+              <div className="glass-card" style={{ padding: 12, borderRadius: 14 }}>
+                <textarea disabled placeholder="Что у вас нового?" />
+                <div className="quick-grid" style={{ marginTop: 8 }}>
+                  <button type="button" className="secondary-button">
+                    Фото
+                  </button>
+                  <button type="button" className="secondary-button">
+                    Видео
+                  </button>
+                  <button type="button" className="secondary-button">
+                    Настроение
+                  </button>
+                </div>
+              </div>
+
+              <article className="list-row">
+                <div>
+                  <strong>@pwssocial</strong>
+                  <p className="text-muted">2 часа назад</p>
+                </div>
+                <button type="button" className="tiny-button">
+                  ⋯
+                </button>
+              </article>
+
+              <div className="glass-card" style={{ padding: 10, borderRadius: 14 }}>
+                <img
+                  src="https://images.unsplash.com/photo-1635351261340-55f437000b21?auto=format&fit=crop&w=1280&q=80"
+                  alt="cover"
+                  style={{ width: "100%", borderRadius: 12, maxHeight: 300, objectFit: "cover" }}
+                />
+                <p className="text-muted" style={{ marginTop: 8 }}>
+                  Базовый обзор продукта. Перейдите в «Сообщения», чтобы открыть реальные диалоги.
+                </p>
+              </div>
+
               <div className="quick-grid">
-                <button type="button" className="secondary-button" onClick={() => setActiveSection("messages")}>Открыть сообщения</button>
-                <button type="button" className="secondary-button" onClick={() => setActiveSection("contacts")}>Контакты</button>
-                <button type="button" className="secondary-button" onClick={() => setActiveSection("groups")}>Группы</button>
+                <button type="button" className="secondary-button" onClick={() => setActiveSection("messages")}>
+                  Открыть сообщения
+                </button>
+                <button type="button" className="secondary-button" onClick={() => setActiveSection("contacts")}>
+                  Контакты
+                </button>
+                <button type="button" className="secondary-button" onClick={() => setActiveSection("groups")}>
+                  Группы
+                </button>
               </div>
 
               <h3>Последние диалоги</h3>
