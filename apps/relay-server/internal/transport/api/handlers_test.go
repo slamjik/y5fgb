@@ -49,6 +49,19 @@ func TestDefaultSyncQueryLimit(t *testing.T) {
 	}
 }
 
+func TestParseSocialPostRoute(t *testing.T) {
+	postID, action, err := parseSocialPostRoute("/api/v1/social/posts/33333333-3333-3333-3333-333333333333/like")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if postID != "33333333-3333-3333-3333-333333333333" {
+		t.Fatalf("unexpected post id: %s", postID)
+	}
+	if action != "like" {
+		t.Fatalf("unexpected action: %s", action)
+	}
+}
+
 func TestRequestSchemePrefersForwardedProto(t *testing.T) {
 	req := httptest.NewRequest("GET", "http://localhost/api/v1/config", nil)
 	req.Header.Set("X-Forwarded-Proto", "https")

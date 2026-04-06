@@ -14,6 +14,7 @@ import type {
   PluginID,
   PluginPanelID,
   PluginStatus,
+  PostID,
   ReceiptID,
   RecoveryFlowID,
   SecurityEventID,
@@ -78,6 +79,7 @@ export type ConversationRole = "owner" | "admin" | "member";
 export type ReceiptType = "delivered" | "read";
 export type AttachmentKind = "image" | "file";
 export type TransportMode = "websocket" | "long_poll";
+export type SocialMediaType = "image" | "video";
 
 export type SecurityEventType =
   | "account_registered"
@@ -512,6 +514,53 @@ export interface CreateConversationResponse {
 
 export interface ListConversationsResponse {
   conversations: ConversationDTO[];
+}
+
+export interface SocialPostDTO {
+  id: PostID;
+  authorAccountId: AccountID;
+  authorEmail: string;
+  content: string;
+  mediaType: SocialMediaType | null;
+  mediaUrl: string | null;
+  mood: string | null;
+  likeCount: number;
+  likedByMe: boolean;
+  canDelete: boolean;
+  createdAt: ISO8601Timestamp;
+  updatedAt: ISO8601Timestamp;
+}
+
+export interface SocialNotificationDTO {
+  postId: PostID;
+  actorAccountId: AccountID;
+  actorEmail: string;
+  postPreview: string;
+  createdAt: ISO8601Timestamp;
+}
+
+export interface CreateSocialPostRequest {
+  content: string;
+  mediaType?: SocialMediaType;
+  mediaUrl?: string;
+  mood?: string;
+}
+
+export interface ListSocialPostsResponse {
+  posts: SocialPostDTO[];
+}
+
+export interface CreateSocialPostResponse {
+  post: SocialPostDTO;
+}
+
+export interface SocialPostLikeResponse {
+  likeCount: number;
+  likedByMe: boolean;
+}
+
+export interface SocialNotificationsResponse {
+  notifications: SocialNotificationDTO[];
 }
 
 export interface ConversationDetailsResponse {

@@ -16,6 +16,7 @@ import (
 	"github.com/example/secure-messenger/apps/relay-server/internal/service/messaging"
 	"github.com/example/secure-messenger/apps/relay-server/internal/service/recovery"
 	"github.com/example/secure-messenger/apps/relay-server/internal/service/securityevents"
+	"github.com/example/secure-messenger/apps/relay-server/internal/service/social"
 	"github.com/example/secure-messenger/apps/relay-server/internal/transport/middleware"
 )
 
@@ -26,11 +27,13 @@ type Handler struct {
 	recoveryService       *recovery.Service
 	eventService          *securityevents.Service
 	messagingService      *messaging.Service
+	socialService         *social.Service
 	cfg                   config.Config
 	authRateLimiter       *middleware.IPRateLimiter
 	recoveryRateLimiter   *middleware.IPRateLimiter
 	messageRateLimiter    *middleware.IPRateLimiter
 	attachmentRateLimiter *middleware.IPRateLimiter
+	socialRateLimiter     *middleware.IPRateLimiter
 }
 
 const (
@@ -47,6 +50,7 @@ func NewHandler(
 	recoveryService *recovery.Service,
 	eventService *securityevents.Service,
 	messagingService *messaging.Service,
+	socialService *social.Service,
 	cfg config.Config,
 ) *Handler {
 	return &Handler{
@@ -56,11 +60,13 @@ func NewHandler(
 		recoveryService:       recoveryService,
 		eventService:          eventService,
 		messagingService:      messagingService,
+		socialService:         socialService,
 		cfg:                   cfg,
 		authRateLimiter:       middleware.NewIPRateLimiter(30, time.Minute, nil),
 		recoveryRateLimiter:   middleware.NewIPRateLimiter(10, time.Minute, nil),
 		messageRateLimiter:    middleware.NewIPRateLimiter(180, time.Minute, nil),
 		attachmentRateLimiter: middleware.NewIPRateLimiter(60, time.Minute, nil),
+		socialRateLimiter:     middleware.NewIPRateLimiter(120, time.Minute, nil),
 	}
 }
 
@@ -108,6 +114,9 @@ func RegisterRoutes(mux *http.ServeMux, prefix string, handler *Handler, authSer
 	mux.Handle(base+"/sync/bootstrap", middleware.AuthRequired(authService, http.HandlerFunc(handler.handleSyncBootstrap)))
 	mux.Handle(base+"/sync/poll", middleware.AuthRequired(authService, http.HandlerFunc(handler.handleSyncPoll)))
 	mux.Handle(base+"/transport/endpoints", middleware.AuthRequired(authService, http.HandlerFunc(handler.handleTransportEndpoints)))
+	mux.Handle(base+"/social/posts", middleware.AuthRequired(authService, http.HandlerFunc(handler.handleSocialPosts)))
+	mux.Handle(base+"/social/posts/", middleware.AuthRequired(authService, http.HandlerFunc(handler.handleSocialPostSubroutes)))
+	mux.Handle(base+"/social/notifications", middleware.AuthRequired(authService, http.HandlerFunc(handler.handleSocialNotifications)))
 	mux.HandleFunc(base+"/config", handler.handlePublicConfig)
 }
 
@@ -1285,6 +1294,202 @@ func (h *Handler) handleTransportEndpoints(w http.ResponseWriter, r *http.Reques
 	})
 }
 
+func (h *Handler) handleSocialPosts(w http.ResponseWriter, r *http.Request) {
+	principal, ok := middleware.PrincipalFromContext(r.Context())
+	if !ok {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeUnauthorized, "missing auth context"), http.StatusUnauthorized)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		if !h.enforceRateLimit(w, r, h.socialRateLimiter) {
+			return
+		}
+		limit := 20
+		if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+			if parsed, err := strconv.Atoi(raw); err == nil {
+				limit = parsed
+			}
+		}
+		offset := 0
+		if raw := strings.TrimSpace(r.URL.Query().Get("offset")); raw != "" {
+			if parsed, err := strconv.Atoi(raw); err == nil {
+				offset = parsed
+			}
+		}
+		query := strings.TrimSpace(r.URL.Query().Get("query"))
+		onlyMine := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("scope")), "mine")
+
+		var mediaType *domain.SocialMediaType
+		if rawMediaType := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("mediaType"))); rawMediaType != "" {
+			value := domain.SocialMediaType(rawMediaType)
+			mediaType = &value
+		}
+
+		items, err := h.socialService.ListPosts(r.Context(), auth.AuthPrincipal{
+			AccountID: principal.AccountID,
+			DeviceID:  principal.DeviceID,
+			SessionID: principal.SessionID,
+		}, social.ListPostsInput{
+			Offset:    offset,
+			Limit:     limit,
+			MediaType: mediaType,
+			Query:     query,
+			OnlyMine:  onlyMine,
+		})
+		if err != nil {
+			WriteServiceError(w, r, err, http.StatusBadRequest)
+			return
+		}
+		payload := make([]socialPostDTO, 0, len(items))
+		for _, item := range items {
+			payload = append(payload, mapSocialPost(item, principal.AccountID))
+		}
+		WriteJSON(w, http.StatusOK, map[string]any{"posts": payload})
+		return
+	case http.MethodPost:
+		if !h.enforceRateLimit(w, r, h.socialRateLimiter) {
+			return
+		}
+		if !h.enforceBodySize(w, r, maxAuthBodyBytes) {
+			return
+		}
+		var req createSocialPostRequest
+		if err := middleware.DecodeJSON(r, &req); err != nil {
+			WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "invalid request body"), http.StatusBadRequest)
+			return
+		}
+
+		var mediaType *domain.SocialMediaType
+		if req.MediaType != nil {
+			value := domain.SocialMediaType(strings.ToLower(strings.TrimSpace(*req.MediaType)))
+			mediaType = &value
+		}
+
+		created, err := h.socialService.CreatePost(r.Context(), auth.AuthPrincipal{
+			AccountID: principal.AccountID,
+			DeviceID:  principal.DeviceID,
+			SessionID: principal.SessionID,
+		}, social.CreatePostInput{
+			Content:   req.Content,
+			MediaType: mediaType,
+			MediaURL:  req.MediaURL,
+			Mood:      req.Mood,
+		})
+		if err != nil {
+			WriteServiceError(w, r, err, http.StatusBadRequest)
+			return
+		}
+		WriteJSON(w, http.StatusCreated, map[string]any{"post": mapSocialPost(created, principal.AccountID)})
+		return
+	default:
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "method not allowed"), http.StatusMethodNotAllowed)
+	}
+}
+
+func (h *Handler) handleSocialPostSubroutes(w http.ResponseWriter, r *http.Request) {
+	principal, ok := middleware.PrincipalFromContext(r.Context())
+	if !ok {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeUnauthorized, "missing auth context"), http.StatusUnauthorized)
+		return
+	}
+
+	postID, action, parseErr := parseSocialPostRoute(r.URL.Path)
+	if parseErr != nil {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeNotFound, "route not found"), http.StatusNotFound)
+		return
+	}
+
+	switch action {
+	case "":
+		if r.Method != http.MethodDelete {
+			WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "method not allowed"), http.StatusMethodNotAllowed)
+			return
+		}
+		if err := h.socialService.DeletePost(r.Context(), auth.AuthPrincipal{
+			AccountID: principal.AccountID,
+			DeviceID:  principal.DeviceID,
+			SessionID: principal.SessionID,
+		}, postID); err != nil {
+			WriteServiceError(w, r, err, http.StatusBadRequest)
+			return
+		}
+		WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
+		return
+	case "like":
+		if !h.enforceRateLimit(w, r, h.socialRateLimiter) {
+			return
+		}
+		switch r.Method {
+		case http.MethodPost:
+			likeCount, likedByMe, err := h.socialService.LikePost(r.Context(), auth.AuthPrincipal{
+				AccountID: principal.AccountID,
+				DeviceID:  principal.DeviceID,
+				SessionID: principal.SessionID,
+			}, postID)
+			if err != nil {
+				WriteServiceError(w, r, err, http.StatusBadRequest)
+				return
+			}
+			WriteJSON(w, http.StatusOK, map[string]any{"likeCount": likeCount, "likedByMe": likedByMe})
+			return
+		case http.MethodDelete:
+			likeCount, likedByMe, err := h.socialService.UnlikePost(r.Context(), auth.AuthPrincipal{
+				AccountID: principal.AccountID,
+				DeviceID:  principal.DeviceID,
+				SessionID: principal.SessionID,
+			}, postID)
+			if err != nil {
+				WriteServiceError(w, r, err, http.StatusBadRequest)
+				return
+			}
+			WriteJSON(w, http.StatusOK, map[string]any{"likeCount": likeCount, "likedByMe": likedByMe})
+			return
+		default:
+			WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "method not allowed"), http.StatusMethodNotAllowed)
+			return
+		}
+	default:
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeNotFound, "route not found"), http.StatusNotFound)
+	}
+}
+
+func (h *Handler) handleSocialNotifications(w http.ResponseWriter, r *http.Request) {
+	if !h.enforceRateLimit(w, r, h.socialRateLimiter) {
+		return
+	}
+	if r.Method != http.MethodGet {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "method not allowed"), http.StatusMethodNotAllowed)
+		return
+	}
+	principal, ok := middleware.PrincipalFromContext(r.Context())
+	if !ok {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeUnauthorized, "missing auth context"), http.StatusUnauthorized)
+		return
+	}
+	limit := 20
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil {
+			limit = parsed
+		}
+	}
+	items, err := h.socialService.ListNotifications(r.Context(), auth.AuthPrincipal{
+		AccountID: principal.AccountID,
+		DeviceID:  principal.DeviceID,
+		SessionID: principal.SessionID,
+	}, limit)
+	if err != nil {
+		WriteServiceError(w, r, err, http.StatusBadRequest)
+		return
+	}
+	payload := make([]socialNotificationDTO, 0, len(items))
+	for _, item := range items {
+		payload = append(payload, mapSocialNotification(item))
+	}
+	WriteJSON(w, http.StatusOK, map[string]any{"notifications": payload})
+}
+
 func (h *Handler) handlePublicConfig(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "method not allowed"), http.StatusMethodNotAllowed)
@@ -1380,6 +1585,23 @@ func parseAttachmentRoute(path string) (string, string, error) {
 	parts := strings.Split(tail, "/")
 	if len(parts) < 2 {
 		return "", "", fmt.Errorf("invalid attachment route")
+	}
+	return parts[0], parts[1], nil
+}
+
+func parseSocialPostRoute(path string) (string, string, error) {
+	anchor := "/social/posts/"
+	index := strings.Index(path, anchor)
+	if index == -1 {
+		return "", "", fmt.Errorf("missing social post route")
+	}
+	tail := strings.Trim(path[index+len(anchor):], "/")
+	parts := strings.Split(tail, "/")
+	if len(parts) == 0 || parts[0] == "" {
+		return "", "", fmt.Errorf("invalid social post route")
+	}
+	if len(parts) == 1 {
+		return parts[0], "", nil
 	}
 	return parts[0], parts[1], nil
 }

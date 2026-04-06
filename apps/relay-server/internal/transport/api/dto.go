@@ -362,6 +362,36 @@ type transportProfileDTO struct {
 	LongPollEnabled        bool   `json:"longPollEnabled"`
 }
 
+type createSocialPostRequest struct {
+	Content   string  `json:"content"`
+	MediaType *string `json:"mediaType,omitempty"`
+	MediaURL  *string `json:"mediaUrl,omitempty"`
+	Mood      *string `json:"mood,omitempty"`
+}
+
+type socialPostDTO struct {
+	ID              string  `json:"id"`
+	AuthorAccountID string  `json:"authorAccountId"`
+	AuthorEmail     string  `json:"authorEmail"`
+	Content         string  `json:"content"`
+	MediaType       *string `json:"mediaType,omitempty"`
+	MediaURL        *string `json:"mediaUrl,omitempty"`
+	Mood            *string `json:"mood,omitempty"`
+	LikeCount       int64   `json:"likeCount"`
+	LikedByMe       bool    `json:"likedByMe"`
+	CanDelete       bool    `json:"canDelete"`
+	CreatedAt       string  `json:"createdAt"`
+	UpdatedAt       string  `json:"updatedAt"`
+}
+
+type socialNotificationDTO struct {
+	PostID         string `json:"postId"`
+	ActorAccountID string `json:"actorAccountId"`
+	ActorEmail     string `json:"actorEmail"`
+	PostPreview    string `json:"postPreview"`
+	CreatedAt      string `json:"createdAt"`
+}
+
 type publicConfigPolicyHintsDTO struct {
 	AuthModesSupported            []string `json:"auth_modes_supported"`
 	BrowserSessionDefaultPersist  string   `json:"browser_session_default_persistence"`
@@ -602,6 +632,38 @@ func mapAttachmentMeta(attachment domain.AttachmentObject) attachmentMetaDTO {
 	dto.Encryption.Algorithm = attachment.Algorithm
 	dto.Encryption.Nonce = attachment.Nonce
 	return dto
+}
+
+func mapSocialPost(item domain.SocialPostFeedItem, viewerAccountID string) socialPostDTO {
+	var mediaType *string
+	if item.Post.MediaType != nil {
+		value := string(*item.Post.MediaType)
+		mediaType = &value
+	}
+	return socialPostDTO{
+		ID:              item.Post.ID,
+		AuthorAccountID: item.Post.AuthorAccountID,
+		AuthorEmail:     item.AuthorEmail,
+		Content:         item.Post.Content,
+		MediaType:       mediaType,
+		MediaURL:        item.Post.MediaURL,
+		Mood:            item.Post.Mood,
+		LikeCount:       item.LikeCount,
+		LikedByMe:       item.LikedByMe,
+		CanDelete:       item.Post.AuthorAccountID == viewerAccountID,
+		CreatedAt:       item.Post.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt:       item.Post.UpdatedAt.UTC().Format(time.RFC3339),
+	}
+}
+
+func mapSocialNotification(item domain.SocialNotification) socialNotificationDTO {
+	return socialNotificationDTO{
+		PostID:         item.PostID,
+		ActorAccountID: item.ActorAccountID,
+		ActorEmail:     item.ActorEmail,
+		PostPreview:    item.PostPreview,
+		CreatedAt:      item.CreatedAt.UTC().Format(time.RFC3339),
+	}
 }
 
 func fingerprintPair(fingerprint string) (string, string) {

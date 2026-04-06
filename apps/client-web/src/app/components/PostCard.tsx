@@ -1,140 +1,177 @@
-import { Heart, MessageCircle, Share2, MoreHorizontal } from 'lucide-react';
-import { useState } from 'react';
+import { Heart, MoreHorizontal, Trash2 } from "lucide-react";
+import * as React from "react";
 
 interface PostCardProps {
+  id: string;
   username: string;
   timestamp: string;
-  imageUrl: string;
+  imageUrl?: string | null;
+  videoUrl?: string | null;
   caption: string;
   likes: number;
-  comments: number;
+  likedByMe: boolean;
+  mood?: string | null;
+  canDelete: boolean;
+  onToggleLike: (postId: string, likedByMe: boolean) => Promise<void>;
+  onDelete: (postId: string) => Promise<void>;
 }
 
-export function PostCard({ username, timestamp, imageUrl, caption, likes, comments }: PostCardProps) {
-  const [isLiked, setIsLiked] = useState(false);
-  const [likeCount, setLikeCount] = useState(likes);
-  
-  const handleLike = () => {
-    setIsLiked(!isLiked);
-    setLikeCount(isLiked ? likeCount - 1 : likeCount + 1);
+export function PostCard({
+  id,
+  username,
+  timestamp,
+  imageUrl,
+  videoUrl,
+  caption,
+  likes,
+  likedByMe,
+  mood,
+  canDelete,
+  onToggleLike,
+  onDelete,
+}: PostCardProps) {
+  const [likeState, setLikeState] = React.useState(likedByMe);
+  const [likeCount, setLikeCount] = React.useState(likes);
+  const [isDeleting, setIsDeleting] = React.useState(false);
+  const [isMenuOpen, setIsMenuOpen] = React.useState(false);
+
+  React.useEffect(() => {
+    setLikeState(likedByMe);
+  }, [likedByMe]);
+
+  React.useEffect(() => {
+    setLikeCount(likes);
+  }, [likes]);
+
+  const handleLike = async () => {
+    const next = !likeState;
+    setLikeState(next);
+    setLikeCount((current) => Math.max(0, current + (next ? 1 : -1)));
+    try {
+      await onToggleLike(id, likeState);
+    } catch {
+      setLikeState(!next);
+      setLikeCount((current) => Math.max(0, current + (next ? -1 : 1)));
+    }
   };
-  
-  const renderCaption = (text: string) => {
-    const parts = text.split(/(#\w+)/g);
-    return parts.map((part, index) => {
-      if (part.startsWith('#')) {
-        return (
-          <span key={index} style={{ color: 'var(--accent-brown)' }}>
-            {part}
-          </span>
-        );
-      }
-      return <span key={index}>{part}</span>;
-    });
+
+  const handleDelete = async () => {
+    setIsDeleting(true);
+    try {
+      await onDelete(id);
+    } finally {
+      setIsDeleting(false);
+      setIsMenuOpen(false);
+    }
   };
-  
+
   return (
-    <div 
+    <div
       className="rounded-2xl p-5 border transition-all"
       style={{
-        backgroundColor: 'var(--glass-fill-base)',
-        borderColor: 'var(--glass-border)',
-        backdropFilter: 'blur(20px)',
+        backgroundColor: "var(--glass-fill-base)",
+        borderColor: "var(--glass-border)",
+        backdropFilter: "blur(20px)",
       }}
     >
-      {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">
-          <div 
+          <div
             className="w-10 h-10 rounded-full"
-            style={{ 
-              background: 'linear-gradient(135deg, var(--accent-brown), var(--base-grey-light))'
+            style={{
+              background: "linear-gradient(135deg, var(--accent-brown), var(--base-grey-light))",
             }}
           />
           <div>
-            <div style={{ color: 'var(--accent-brown)' }}>{username}</div>
-            <div className="text-xs" style={{ color: 'var(--base-grey-light)' }}>
+            <div style={{ color: "var(--accent-brown)" }}>{username}</div>
+            <div className="text-xs" style={{ color: "var(--base-grey-light)" }}>
               {timestamp}
             </div>
           </div>
         </div>
-        <button 
-          className="p-2 rounded-lg hover:bg-opacity-60 transition-colors"
-          style={{ color: 'var(--base-grey-light)' }}
-        >
-          <MoreHorizontal className="w-5 h-5" />
-        </button>
+
+        {canDelete ? (
+          <div className="relative">
+            <button
+              type="button"
+              className="p-2 rounded-lg transition-colors"
+              style={{ color: "var(--base-grey-light)" }}
+              onClick={() => setIsMenuOpen((current) => !current)}
+            >
+              <MoreHorizontal className="w-5 h-5" />
+            </button>
+            {isMenuOpen ? (
+              <div
+                className="absolute right-0 mt-1 rounded-lg border p-1"
+                style={{
+                  backgroundColor: "var(--glass-fill-hover)",
+                  borderColor: "var(--glass-border)",
+                  minWidth: 140,
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={handleDelete}
+                  disabled={isDeleting}
+                  className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-all"
+                  style={{ color: "#fda4af" }}
+                >
+                  <Trash2 className="w-4 h-4" />
+                  {isDeleting ? "Удаляем..." : "Удалить пост"}
+                </button>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </div>
-      
-      {/* Image */}
-      <div 
-        className="rounded-lg overflow-hidden mb-4"
-        style={{ 
-          padding: '8px',
-          backgroundColor: 'rgba(0, 0, 0, 0.3)'
-        }}
-      >
-        <img 
-          src={imageUrl} 
-          alt="Post content" 
-          className="w-full h-80 object-cover rounded-lg"
-        />
-      </div>
-      
-      {/* Caption */}
-      <p className="mb-4" style={{ color: 'var(--text-primary)' }}>
-        {renderCaption(caption)}
+
+      {imageUrl ? (
+        <MediaContainer>
+          <img src={imageUrl} alt="post" className="w-full h-80 object-cover rounded-lg" />
+        </MediaContainer>
+      ) : null}
+
+      {videoUrl ? (
+        <MediaContainer>
+          <video controls className="w-full h-80 object-cover rounded-lg" src={videoUrl} />
+        </MediaContainer>
+      ) : null}
+
+      {mood ? (
+        <div className="mb-3 text-sm" style={{ color: "var(--accent-brown)" }}>
+          Настроение: {mood}
+        </div>
+      ) : null}
+
+      <p className="mb-4 whitespace-pre-wrap break-words" style={{ color: "var(--text-primary)" }}>
+        {caption}
       </p>
-      
-      {/* Interaction Bar */}
-      <div className="flex items-center gap-6">
-        <InteractionButton 
-          icon={<Heart className="w-5 h-5" fill={isLiked ? 'var(--accent-brown)' : 'none'} />}
-          count={likeCount}
-          onClick={handleLike}
-          active={isLiked}
-        />
-        <InteractionButton 
-          icon={<MessageCircle className="w-5 h-5" />}
-          count={comments}
-        />
-        <InteractionButton 
-          icon={<Share2 className="w-5 h-5" />}
-        />
-      </div>
+
+      <button
+        type="button"
+        className="flex items-center gap-2 transition-colors"
+        style={{ color: likeState ? "var(--accent-brown)" : "var(--base-grey-light)" }}
+        onClick={handleLike}
+      >
+        <Heart className="w-5 h-5" fill={likeState ? "var(--accent-brown)" : "none"} />
+        <span className="text-xs" style={{ color: "var(--base-grey-light)" }}>
+          {likeCount}
+        </span>
+      </button>
     </div>
   );
 }
 
-function InteractionButton({ 
-  icon, 
-  count, 
-  onClick,
-  active 
-}: { 
-  icon: React.ReactNode; 
-  count?: number;
-  onClick?: () => void;
-  active?: boolean;
-}) {
-  const [isHovered, setIsHovered] = useState(false);
-  
+function MediaContainer({ children }: { children: React.ReactNode }) {
   return (
-    <button
-      className="flex items-center gap-2 transition-colors"
-      style={{ 
-        color: active ? 'var(--accent-brown)' : isHovered ? 'var(--accent-brown)' : 'var(--base-grey-light)'
+    <div
+      className="rounded-lg overflow-hidden mb-4"
+      style={{
+        padding: "8px",
+        backgroundColor: "rgba(0, 0, 0, 0.3)",
       }}
-      onClick={onClick}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
     >
-      {icon}
-      {count !== undefined && (
-        <span className="text-xs" style={{ color: 'var(--base-grey-light)' }}>
-          {count}
-        </span>
-      )}
-    </button>
+      {children}
+    </div>
   );
 }

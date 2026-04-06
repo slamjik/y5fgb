@@ -16,6 +16,7 @@ import (
 	"github.com/example/secure-messenger/apps/relay-server/internal/service/messaging"
 	"github.com/example/secure-messenger/apps/relay-server/internal/service/recovery"
 	"github.com/example/secure-messenger/apps/relay-server/internal/service/securityevents"
+	"github.com/example/secure-messenger/apps/relay-server/internal/service/social"
 	"github.com/example/secure-messenger/apps/relay-server/internal/transport"
 	"github.com/example/secure-messenger/apps/relay-server/internal/transport/middleware"
 )
@@ -47,6 +48,7 @@ func New(cfg config.Config, logger *slog.Logger) (*RelayServer, error) {
 	deviceService := devices.New(repo, authService, eventService, cfg.Auth.TokenPepper)
 	recoveryService := recovery.New(repo, authService, eventService, cfg.Auth.TokenPepper)
 	messagingService := messaging.New(cfg, repo, eventService, logger)
+	socialService := social.New(repo)
 	wsNotifier := transport.NewWSNotifier(logger)
 	messagingService.SetNotifier(wsNotifier)
 
@@ -57,6 +59,7 @@ func New(cfg config.Config, logger *slog.Logger) (*RelayServer, error) {
 		RecoveryService:  recoveryService,
 		EventService:     eventService,
 		MessagingService: messagingService,
+		SocialService:    socialService,
 		WSNotifier:       wsNotifier,
 		DBPing:           repo.Ping,
 	})

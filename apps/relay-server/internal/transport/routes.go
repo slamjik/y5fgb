@@ -11,6 +11,7 @@ import (
 	"github.com/example/secure-messenger/apps/relay-server/internal/service/messaging"
 	"github.com/example/secure-messenger/apps/relay-server/internal/service/recovery"
 	"github.com/example/secure-messenger/apps/relay-server/internal/service/securityevents"
+	"github.com/example/secure-messenger/apps/relay-server/internal/service/social"
 	apiTransport "github.com/example/secure-messenger/apps/relay-server/internal/transport/api"
 	"github.com/example/secure-messenger/apps/relay-server/internal/transport/middleware"
 )
@@ -21,6 +22,7 @@ type Dependencies struct {
 	RecoveryService  *recovery.Service
 	EventService     *securityevents.Service
 	MessagingService *messaging.Service
+	SocialService    *social.Service
 	WSNotifier       *WSNotifier
 	DBPing           func(context.Context) error
 }
@@ -35,6 +37,6 @@ func RegisterRoutes(mux *http.ServeMux, cfg config.Config, logger *slog.Logger, 
 		NewWebSocketHandler(logger, deps.AuthService, deps.WSNotifier, cfg.Transport.WSQueryTokenFallback, originPolicy),
 	)
 
-	apiHandler := apiTransport.NewHandler(logger, deps.AuthService, deps.DeviceService, deps.RecoveryService, deps.EventService, deps.MessagingService, cfg)
+	apiHandler := apiTransport.NewHandler(logger, deps.AuthService, deps.DeviceService, deps.RecoveryService, deps.EventService, deps.MessagingService, deps.SocialService, cfg)
 	apiTransport.RegisterRoutes(mux, cfg.HTTP.APIPrefix, apiHandler, deps.AuthService)
 }

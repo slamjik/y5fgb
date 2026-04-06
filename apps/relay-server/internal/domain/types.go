@@ -141,6 +141,13 @@ const (
 	AttachmentKindFile  AttachmentKind = "file"
 )
 
+type SocialMediaType string
+
+const (
+	SocialMediaTypeImage SocialMediaType = "image"
+	SocialMediaTypeVideo SocialMediaType = "video"
+)
+
 type TransportMode string
 
 const (
@@ -228,6 +235,39 @@ type AttachmentRef struct {
 	MessageID    string
 	AttachmentID string
 	CreatedAt    time.Time
+}
+
+type SocialPost struct {
+	ID              string
+	AuthorAccountID string
+	Content         string
+	MediaType       *SocialMediaType
+	MediaURL        *string
+	Mood            *string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+	DeletedAt       *time.Time
+}
+
+type SocialPostFeedItem struct {
+	Post        SocialPost
+	AuthorEmail string
+	LikeCount   int64
+	LikedByMe   bool
+}
+
+type SocialPostLike struct {
+	PostID    string
+	AccountID string
+	CreatedAt time.Time
+}
+
+type SocialNotification struct {
+	PostID         string
+	ActorAccountID string
+	ActorEmail     string
+	PostPreview    string
+	CreatedAt      time.Time
 }
 
 type DeviceSyncCursor struct {

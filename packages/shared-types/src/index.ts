@@ -10,6 +10,7 @@ export type RecoveryFlowID = Brand<string, "RecoveryFlowID">;
 export type SecurityEventID = Brand<string, "SecurityEventID">;
 export type ConversationID = Brand<string, "ConversationID">;
 export type AttachmentID = Brand<string, "AttachmentID">;
+export type PostID = Brand<string, "PostID">;
 export type ReceiptID = Brand<string, "ReceiptID">;
 export type SyncCursorID = Brand<string, "SyncCursorID">;
 export type TransportEndpointID = Brand<string, "TransportEndpointID">;
@@ -76,6 +77,7 @@ export const asRecoveryFlowID = (value: string): RecoveryFlowID => value as Reco
 export const asSecurityEventID = (value: string): SecurityEventID => value as SecurityEventID;
 export const asConversationID = (value: string): ConversationID => value as ConversationID;
 export const asAttachmentID = (value: string): AttachmentID => value as AttachmentID;
+export const asPostID = (value: string): PostID => value as PostID;
 export const asReceiptID = (value: string): ReceiptID => value as ReceiptID;
 export const asSyncCursorID = (value: string): SyncCursorID => value as SyncCursorID;
 export const asTransportEndpointID = (value: string): TransportEndpointID => value as TransportEndpointID;

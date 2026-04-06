@@ -1,4 +1,4 @@
-﻿package migrations
+package migrations
 
 import (
 	"context"
@@ -97,6 +97,8 @@ func Down(ctx context.Context, pool *pgxpool.Pool) error {
 	}()
 
 	statements := []string{
+		`DROP TABLE IF EXISTS social_post_likes`,
+		`DROP TABLE IF EXISTS social_posts`,
 		`DROP TABLE IF EXISTS transport_endpoints`,
 		`DROP TABLE IF EXISTS device_sync_cursors`,
 		`DROP TABLE IF EXISTS attachment_refs`,
