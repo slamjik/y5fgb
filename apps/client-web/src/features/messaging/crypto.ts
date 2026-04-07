@@ -7,7 +7,6 @@ const EXPECTED_NONCE_BYTES = 24;
 
 type SodiumLike = typeof sodium & {
   crypto_hash_sha256?: (input: Uint8Array) => Uint8Array;
-  crypto_generichash: (outlen: number, input: Uint8Array) => Uint8Array;
 };
 
 export interface IdentityKeyPair {
@@ -53,11 +52,16 @@ function toBase64(value: Uint8Array, lib: typeof sodium): string {
   return lib.to_base64(value, lib.base64_variants.ORIGINAL);
 }
 
-function hashSha256(value: Uint8Array, lib: SodiumLike): Uint8Array {
+async function hashSha256(value: Uint8Array, lib: SodiumLike): Promise<Uint8Array> {
   if (typeof lib.crypto_hash_sha256 === "function") {
     return lib.crypto_hash_sha256(value);
   }
-  return lib.crypto_generichash(32, value);
+  if (typeof globalThis.crypto?.subtle?.digest === "function") {
+    const bytes = new Uint8Array(value);
+    const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes.buffer);
+    return new Uint8Array(digest);
+  }
+  throw new Error("sha256_unavailable");
 }
 
 function wipeBytes(value: Uint8Array | null | undefined) {
@@ -79,7 +83,7 @@ export const webCryptoProvider = {
 
   async fingerprint(publicMaterial: string): Promise<string> {
     const lib = (await getSodium()) as SodiumLike;
-    return lib.to_hex(hashSha256(parseBase64(publicMaterial, lib), lib));
+    return lib.to_hex(await hashSha256(parseBase64(publicMaterial, lib), lib));
   },
 
   async encryptMessage(plaintext: string, recipients: RecipientPublicMaterial[]): Promise<EncryptedMessagePayload> {
@@ -158,7 +162,7 @@ export const webCryptoProvider = {
     const nonce = lib.randombytes_buf(lib.crypto_aead_xchacha20poly1305_ietf_NPUBBYTES);
     try {
       const ciphertext = lib.crypto_aead_xchacha20poly1305_ietf_encrypt(plaintext, null, null, nonce, symmetricKey);
-      const checksum = hashSha256(ciphertext, lib);
+      const checksum = await hashSha256(ciphertext, lib);
       return {
         algorithm: ATTACHMENT_ALGORITHM,
         nonce: toBase64(nonce, lib),
@@ -188,6 +192,6 @@ export const webCryptoProvider = {
 
   async hashBytesHex(value: Uint8Array): Promise<string> {
     const lib = (await getSodium()) as SodiumLike;
-    return lib.to_hex(hashSha256(value, lib));
+    return lib.to_hex(await hashSha256(value, lib));
   },
 };

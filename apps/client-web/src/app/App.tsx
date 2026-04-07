@@ -78,7 +78,6 @@ type DeviceMaterial = {
   platform: string;
   publicKey: string;
   privateKey: string;
-  fingerprint: string;
 };
 
 type AttachmentSecret = {
@@ -341,13 +340,11 @@ function App() {
   const ensureDeviceMaterial = React.useCallback(async (): Promise<DeviceMaterial> => {
     if (deviceMaterialRef.current) return deviceMaterialRef.current;
     const pair = await webCryptoProvider.generateIdentityKeyPair();
-    const fingerprint = await webCryptoProvider.fingerprint(pair.publicKey);
     const device: DeviceMaterial = {
       name: browserDeviceName(),
       platform: "web-browser",
       publicKey: pair.publicKey,
       privateKey: pair.privateKey,
-      fingerprint,
     };
     deviceMaterialRef.current = device;
     return device;
@@ -401,7 +398,6 @@ function App() {
       name: device.name,
       platform: device.platform,
       publicDeviceMaterial: device.publicKey,
-      fingerprint: device.fingerprint,
     };
 
     if (mode === "register") {
@@ -429,7 +425,6 @@ function App() {
         name: device.name,
         platform: device.platform,
         publicDeviceMaterial: device.publicKey,
-        fingerprint: device.fingerprint,
       },
       sessionPersistence: sessionMode,
     });
