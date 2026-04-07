@@ -45,6 +45,10 @@ type ApiErrorPayload = {
   };
 };
 
+const DEFAULT_REQUEST_TIMEOUT_MS = 12000;
+const LONG_POLL_GRACE_MS = 8000;
+const ATTACHMENT_TIMEOUT_MS = 120000;
+
 export class ApiClientError extends Error {
   readonly code: string;
   readonly status: number;
@@ -239,7 +243,14 @@ export class WebApiClient {
     if (typeof input.limit === "number") {
       params.set("limit", String(Math.max(1, Math.floor(input.limit))));
     }
-    return this.request<SyncPollResponse>(`/sync/poll?${params.toString()}`, "GET", undefined, accessToken);
+    const pollTimeoutSec = typeof input.timeoutSec === "number" ? Math.max(1, Math.floor(input.timeoutSec)) : 25;
+    return this.request<SyncPollResponse>(
+      `/sync/poll?${params.toString()}`,
+      "GET",
+      undefined,
+      accessToken,
+      pollTimeoutSec * 1000 + LONG_POLL_GRACE_MS,
+    );
   }
 
   async transportEndpoints(accessToken: string): Promise<TransportEndpointsResponse> {
@@ -247,7 +258,7 @@ export class WebApiClient {
   }
 
   async uploadAttachment(accessToken: string, body: AttachmentUploadRequest): Promise<AttachmentUploadResponse> {
-    return this.request<AttachmentUploadResponse>("/attachments/upload", "POST", body, accessToken);
+    return this.request<AttachmentUploadResponse>("/attachments/upload", "POST", body, accessToken, ATTACHMENT_TIMEOUT_MS);
   }
 
   async downloadAttachment(accessToken: string, attachmentId: string): Promise<AttachmentDownloadResponse> {
@@ -256,6 +267,7 @@ export class WebApiClient {
       "GET",
       undefined,
       accessToken,
+      ATTACHMENT_TIMEOUT_MS,
     );
   }
 
@@ -341,8 +353,9 @@ export class WebApiClient {
     method: HTTPMethod,
     body?: unknown,
     accessToken?: string,
+    timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
   ): Promise<T> {
-    const { response, payload } = await this.requestRaw(path, method, body, accessToken);
+    const { response, payload } = await this.requestRaw(path, method, body, accessToken, timeoutMs);
     if (!response.ok) {
       throw this.errorFromPayload(payload, response.status, "Ошибка запроса.");
     }
@@ -354,12 +367,16 @@ export class WebApiClient {
     method: HTTPMethod,
     body?: unknown,
     accessToken?: string,
+    timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
   ): Promise<{ response: Response; payload: unknown }> {
     const endpoint = `${this.config.apiBaseUrl}${this.config.apiPrefix}${path}`;
+    const controller = new AbortController();
+    const timeoutHandle = setTimeout(() => controller.abort(), Math.max(1000, timeoutMs));
     let response: Response;
     try {
       response = await fetch(endpoint, {
         method,
+        signal: controller.signal,
         headers: {
           Accept: "application/json",
           ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
@@ -368,8 +385,15 @@ export class WebApiClient {
         body: body === undefined ? undefined : JSON.stringify(body),
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "network error";
+      const message =
+        error instanceof Error && error.name === "AbortError"
+          ? "Превышено время ожидания ответа сервера."
+          : error instanceof Error
+            ? error.message
+            : "network error";
       throw new ApiClientError(message, 0, "network_error");
+    } finally {
+      clearTimeout(timeoutHandle);
     }
 
     const payload = await response.json().catch(() => ({}));

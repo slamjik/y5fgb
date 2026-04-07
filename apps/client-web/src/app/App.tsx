@@ -133,6 +133,7 @@ const serverStorageKey = "secure-messenger-web-server-v3";
 const refreshTokenStorageKey = "secure-messenger-web-refresh-token";
 const sessionModeStorageKey = "secure-messenger-web-session-mode";
 const syncCursorStorageKey = "secure-messenger-web-sync-cursor";
+const safeStoreTimeoutMs = 1500;
 
 const secretVault = createMemorySecretVault();
 const persistentStore = createIndexedDbStateStore();
@@ -1856,9 +1857,9 @@ async function fetchServerConfig(origin: string): Promise<ServerBootstrapConfig>
 }
 
 function loadSavedServer(): SavedServer | null {
-  const raw = localStorage.getItem(serverStorageKey);
-  if (!raw) return null;
   try {
+    const raw = localStorage.getItem(serverStorageKey);
+    if (!raw) return null;
     return JSON.parse(raw) as SavedServer;
   } catch {
     return null;
@@ -1912,7 +1913,7 @@ function normalizeSessionMode(value: string | null): SessionMode | null {
 
 async function safeStoreGet(key: string): Promise<string | null> {
   try {
-    return await persistentStore.get(key);
+    return await withTimeout(persistentStore.get(key), safeStoreTimeoutMs, null);
   } catch {
     return null;
   }
@@ -1920,7 +1921,14 @@ async function safeStoreGet(key: string): Promise<string | null> {
 
 async function safeStoreSet(key: string, value: string): Promise<void> {
   try {
-    await persistentStore.set(key, value);
+    await withTimeout(
+      persistentStore
+        .set(key, value)
+        .then(() => undefined)
+        .catch(() => undefined),
+      safeStoreTimeoutMs,
+      undefined,
+    );
   } catch {
     // noop
   }
@@ -1928,9 +1936,30 @@ async function safeStoreSet(key: string, value: string): Promise<void> {
 
 async function safeStoreDelete(key: string): Promise<void> {
   try {
-    await persistentStore.delete(key);
+    await withTimeout(
+      persistentStore
+        .delete(key)
+        .then(() => undefined)
+        .catch(() => undefined),
+      safeStoreTimeoutMs,
+      undefined,
+    );
   } catch {
     // noop
+  }
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
+  let handle: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race<T>([
+      promise,
+      new Promise<T>((resolve) => {
+        handle = setTimeout(() => resolve(fallback), Math.max(250, timeoutMs));
+      }),
+    ]);
+  } finally {
+    if (handle) clearTimeout(handle);
   }
 }
 
