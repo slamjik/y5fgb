@@ -15,12 +15,17 @@ Migration model is single-flow: `relay-server` applies migrations on startup (`R
 ## Update
 1. Pull latest code.
 2. Redeploy with orphan cleanup:
-   - `docker compose -f docker-compose.production.yml -f docker-compose.prod.yml --env-file .env up -d --build --remove-orphans`
+   - Linux/macOS: `./scripts/deploy-prod.sh`
+   - PowerShell: `./scripts/deploy-prod.ps1`
 3. Verify `/health` and `/ready`.
 
 ## Operational Checks
-- Container state: `docker compose -f docker-compose.production.yml -f docker-compose.prod.yml --env-file .env ps`
-- Logs: `docker compose -f docker-compose.production.yml -f docker-compose.prod.yml --env-file .env logs --tail=200`
+- Container state:
+  - Domain mode: `docker compose -f docker-compose.production.yml -f docker-compose.prod.yml --env-file .env ps`
+  - IP mode: `docker compose -f docker-compose.production.yml -f docker-compose.ip.yml --env-file .env ps`
+- Logs:
+  - Domain mode: `docker compose -f docker-compose.production.yml -f docker-compose.prod.yml --env-file .env logs --tail=200`
+  - IP mode: `docker compose -f docker-compose.production.yml -f docker-compose.ip.yml --env-file .env logs --tail=200`
 - Health route (domain): `https://<PUBLIC_HOST>/health`
 - Health route (ip): `http://<PUBLIC_HOST>:8080/health`
 - WS route (domain): `wss://<PUBLIC_HOST>/ws`

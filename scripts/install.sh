@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="$ROOT_DIR/.env"
 BASE_COMPOSE_FILE="$ROOT_DIR/docker-compose.production.yml"
 PROD_OVERRIDE_FILE="$ROOT_DIR/docker-compose.prod.yml"
+IP_OVERRIDE_FILE="$ROOT_DIR/docker-compose.ip.yml"
 
 require_command() {
   local command_name="$1"
@@ -120,6 +121,11 @@ fi
 
 if [[ ! -f "$PROD_OVERRIDE_FILE" ]]; then
   echo "[install] missing compose override file: $PROD_OVERRIDE_FILE" >&2
+  exit 1
+fi
+
+if [[ ! -f "$IP_OVERRIDE_FILE" ]]; then
+  echo "[install] missing compose override file: $IP_OVERRIDE_FILE" >&2
   exit 1
 fi
 
@@ -244,7 +250,13 @@ EOF
 
 echo "[install] .env generated: $ENV_FILE"
 
-compose_cmd=("${COMPOSE_BIN[@]}" -f "$BASE_COMPOSE_FILE" -f "$PROD_OVERRIDE_FILE" --env-file "$ENV_FILE")
+if [[ "$mode" == "domain" ]]; then
+  compose_override_file="$PROD_OVERRIDE_FILE"
+else
+  compose_override_file="$IP_OVERRIDE_FILE"
+fi
+
+compose_cmd=("${COMPOSE_BIN[@]}" -f "$BASE_COMPOSE_FILE" -f "$compose_override_file" --env-file "$ENV_FILE")
 
 echo "[install] removing old orphan containers (if any)"
 "${compose_cmd[@]}" down --remove-orphans >/dev/null 2>&1 || true
@@ -258,8 +270,8 @@ if [[ "$mode" == "domain" ]]; then
   site_health_url="https://${server_host}/"
   fallback_health_url="http://127.0.0.1/health"
 else
-  echo "[install] starting stack in IP mode (HTTP + Web UI + API, no Caddy)"
-  "${compose_cmd[@]}" up -d --build --remove-orphans postgres relay-server web-client
+  echo "[install] starting stack in IP mode (HTTP + Web UI + API)"
+  "${compose_cmd[@]}" up -d --build --remove-orphans
   health_url="http://${server_host}:8080/health"
   ready_url="http://${server_host}:8080/ready"
   config_url="http://${server_host}:8080/api/v1/config"

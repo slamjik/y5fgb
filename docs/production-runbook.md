@@ -6,7 +6,7 @@
 - Public DNS record for `PUBLIC_HOST` if TLS mode is used.
 - Open inbound ports:
   - TLS mode: `80/tcp`, `443/tcp`
-  - IP mode (no Caddy): `8080/tcp`
+  - IP mode (no Caddy): `80/tcp`, `8080/tcp`
 - Repository cloned on host.
 
 ## 2. Startup Flow (authoritative)
@@ -44,13 +44,17 @@ Deploy:
 - Windows PowerShell: `./scripts/deploy-prod.ps1`
 
 Auto mode selection in deploy scripts:
-- **IP mode**: `PUBLIC_HOST=<ip>` or `TLS_ENABLED=false` -> starts `postgres + relay-server`.
+- **IP mode**: `PUBLIC_HOST=<ip>` or `TLS_ENABLED=false` -> starts `postgres + relay-server + web-client` (without `caddy`).
 - **Domain mode**: `PUBLIC_HOST=<domain>` with TLS enabled -> starts full stack with `caddy`.
 
-Equivalent command:
+Equivalent commands:
 
 ```bash
+# Domain mode:
 docker compose -f docker-compose.production.yml -f docker-compose.prod.yml --env-file .env up -d --build --remove-orphans
+
+# IP mode:
+docker compose -f docker-compose.production.yml -f docker-compose.ip.yml --env-file .env up -d --build --remove-orphans
 ```
 
 ## 4. Normal Post-Deploy State
@@ -67,13 +71,21 @@ If `relay-server` is restarting or exited, check logs first (migration failure o
 ### Containers
 
 ```bash
+# Domain mode:
 docker compose -f docker-compose.production.yml -f docker-compose.prod.yml --env-file .env ps
+
+# IP mode:
+docker compose -f docker-compose.production.yml -f docker-compose.ip.yml --env-file .env ps
 ```
 
 ### Logs
 
 ```bash
+# Domain mode:
 docker compose -f docker-compose.production.yml -f docker-compose.prod.yml --env-file .env logs --tail=200
+
+# IP mode:
+docker compose -f docker-compose.production.yml -f docker-compose.ip.yml --env-file .env logs --tail=200
 ```
 
 ### Health/readiness through local edge
@@ -118,13 +130,17 @@ Update and redeploy:
 
 ```bash
 git pull
-docker compose -f docker-compose.production.yml -f docker-compose.prod.yml --env-file .env up -d --build --remove-orphans
+./scripts/deploy-prod.sh
 ```
 
 Restart:
 
 ```bash
+# Domain mode:
 docker compose -f docker-compose.production.yml -f docker-compose.prod.yml --env-file .env restart
+
+# IP mode:
+docker compose -f docker-compose.production.yml -f docker-compose.ip.yml --env-file .env restart
 ```
 
 ## 7. Backup & Restore (minimal)
@@ -132,26 +148,32 @@ docker compose -f docker-compose.production.yml -f docker-compose.prod.yml --env
 ### Backup
 
 ```bash
-docker compose -f docker-compose.production.yml -f docker-compose.prod.yml --env-file .env exec -T postgres \
+COMPOSE_FILES="-f docker-compose.production.yml -f docker-compose.prod.yml"
+# For IP mode use: COMPOSE_FILES="-f docker-compose.production.yml -f docker-compose.ip.yml"
+
+docker compose $COMPOSE_FILES --env-file .env exec -T postgres \
   sh -lc 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' > backup.sql
 
-docker compose -f docker-compose.production.yml -f docker-compose.prod.yml --env-file .env exec -T relay-server \
+docker compose $COMPOSE_FILES --env-file .env exec -T relay-server \
   sh -lc 'tar -czf - -C /app/data/attachments .' > attachments.tar.gz
 ```
 
 ### Restore
 
 ```bash
-docker compose -f docker-compose.production.yml -f docker-compose.prod.yml --env-file .env down --remove-orphans
-docker compose -f docker-compose.production.yml -f docker-compose.prod.yml --env-file .env up -d postgres
-docker compose -f docker-compose.production.yml -f docker-compose.prod.yml --env-file .env exec -T postgres \
+COMPOSE_FILES="-f docker-compose.production.yml -f docker-compose.prod.yml"
+# For IP mode use: COMPOSE_FILES="-f docker-compose.production.yml -f docker-compose.ip.yml"
+
+docker compose $COMPOSE_FILES --env-file .env down --remove-orphans
+docker compose $COMPOSE_FILES --env-file .env up -d postgres
+docker compose $COMPOSE_FILES --env-file .env exec -T postgres \
   sh -lc 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < backup.sql
 
-docker compose -f docker-compose.production.yml -f docker-compose.prod.yml --env-file .env up -d relay-server
-cat attachments.tar.gz | docker compose -f docker-compose.production.yml -f docker-compose.prod.yml --env-file .env exec -T relay-server \
+docker compose $COMPOSE_FILES --env-file .env up -d relay-server
+cat attachments.tar.gz | docker compose $COMPOSE_FILES --env-file .env exec -T relay-server \
   sh -lc 'tar -xzf - -C /app/data/attachments'
 
-docker compose -f docker-compose.production.yml -f docker-compose.prod.yml --env-file .env up -d --build --remove-orphans
+docker compose $COMPOSE_FILES --env-file .env up -d --build --remove-orphans
 ```
 
 ## 8. Deferred Scope

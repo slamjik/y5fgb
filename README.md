@@ -86,21 +86,20 @@ npm run tauri:dev --workspace apps/client-desktop
 
 ```bash
 cp .env.production.example .env
+# Domain mode (TLS + Caddy)
 docker compose -f docker-compose.production.yml -f docker-compose.prod.yml --env-file .env up -d --build --remove-orphans
+
+# IP mode (HTTP, without Caddy)
+docker compose -f docker-compose.production.yml -f docker-compose.ip.yml --env-file .env up -d --build --remove-orphans
 ```
 
 Миграции применяются на старте `relay-server` (`RUN_MIGRATIONS_ON_START=true`).  
 Если миграции не применились, контейнер `relay-server` завершится с ошибкой и не будет висеть в полурабочем состоянии.
 
-Если нужен edge TLS через Caddy, запускайте все сервисы.  
-Если нужен только IP-режим, можно поднять без Caddy:
-```bash
-docker compose -f docker-compose.production.yml -f docker-compose.prod.yml --env-file .env up -d --build postgres relay-server
-```
-
 Для cleanup старых контейнеров после обновлений:
 ```bash
-docker compose -f docker-compose.production.yml -f docker-compose.prod.yml --env-file .env up -d --build --remove-orphans
+docker compose -f docker-compose.production.yml -f docker-compose.prod.yml --env-file .env down --remove-orphans
+docker compose -f docker-compose.production.yml -f docker-compose.ip.yml --env-file .env down --remove-orphans
 ```
 
 ### Auto mode deploy (recommended)
@@ -109,7 +108,7 @@ Use one command and the script will auto-pick mode from `.env`:
 
 - IP mode: if `PUBLIC_HOST` is an IP or `TLS_ENABLED=false` -> starts `postgres + relay-server` (no Caddy/TLS).
 - Domain mode: if `PUBLIC_HOST` is a domain and TLS is enabled -> starts full stack with Caddy + ACME TLS.
-- In domain mode deploy script forces `RELAY_PUBLISH_ADDRESS=127.0.0.1` and `WEB_PUBLISH_ADDRESS=127.0.0.1` (web on `:8081`) to avoid port-80 conflicts with Caddy.
+- In domain mode deploy script uses `docker-compose.prod.yml` (web/relay bound to loopback), in IP mode it uses `docker-compose.ip.yml`.
 
 Linux:
 ```bash
@@ -127,10 +126,17 @@ powershell -ExecutionPolicy Bypass -File .\scripts\deploy-prod.ps1
 
 Пост-деплой sanity checks:
 ```bash
+# Domain mode:
 docker compose -f docker-compose.production.yml -f docker-compose.prod.yml --env-file .env ps
 docker compose -f docker-compose.production.yml -f docker-compose.prod.yml --env-file .env logs --tail=150
 curl -H "Host: <PUBLIC_HOST>" http://127.0.0.1/health
 curl -H "Host: <PUBLIC_HOST>" http://127.0.0.1/ready
+
+# IP mode:
+docker compose -f docker-compose.production.yml -f docker-compose.ip.yml --env-file .env ps
+docker compose -f docker-compose.production.yml -f docker-compose.ip.yml --env-file .env logs --tail=150
+curl http://127.0.0.1:8080/health
+curl http://127.0.0.1:8080/ready
 ```
 
 ## Как клиент подключается к серверу / Client Connection Flow

@@ -2,14 +2,18 @@ $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $PSScriptRoot
 $composeBaseFile = Join-Path $root "docker-compose.production.yml"
-$composeOverrideFile = Join-Path $root "docker-compose.prod.yml"
+$composeDomainOverrideFile = Join-Path $root "docker-compose.prod.yml"
+$composeIpOverrideFile = Join-Path $root "docker-compose.ip.yml"
 $envFile = if ($args.Count -gt 0) { $args[0] } else { Join-Path $root ".env" }
 
 if (!(Test-Path $composeBaseFile)) {
   throw "[deploy-prod] missing compose file: $composeBaseFile"
 }
-if (!(Test-Path $composeOverrideFile)) {
-  throw "[deploy-prod] missing compose override file: $composeOverrideFile"
+if (!(Test-Path $composeDomainOverrideFile)) {
+  throw "[deploy-prod] missing compose file: $composeDomainOverrideFile"
+}
+if (!(Test-Path $composeIpOverrideFile)) {
+  throw "[deploy-prod] missing compose file: $composeIpOverrideFile"
 }
 if (!(Test-Path $envFile)) {
   throw "[deploy-prod] missing env file: $envFile`nCopy .env.production.example to .env and fill required values."
@@ -67,6 +71,22 @@ function Require-Env([string]$Path, [string]$Key) {
   }
 }
 
+function Get-PublishedContainersByPort([int]$Port) {
+  $rows = & docker ps --filter "publish=$Port" --format "{{.Names}}"
+  if (-not $rows) {
+    return @()
+  }
+  return @($rows | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+}
+
+function Ensure-PortAvailable([int]$Port) {
+  $offenders = Get-PublishedContainersByPort -Port $Port
+  if ($offenders.Count -gt 0) {
+    $formatted = ($offenders | ForEach-Object { "  - $_" }) -join "`n"
+    throw "[deploy-prod] port $Port is already occupied by container(s):`n$formatted`n[deploy-prod] stop these containers or choose another port, then run deploy again."
+  }
+}
+
 $publicHost = Get-EnvValue -Path $envFile -Key "PUBLIC_HOST"
 if ([string]::IsNullOrWhiteSpace($publicHost)) {
   throw "[deploy-prod] required env 'PUBLIC_HOST' is missing or empty in $envFile"
@@ -98,48 +118,31 @@ foreach ($key in $required) {
 
 $webAllowedOrigins = Get-EnvValue -Path $envFile -Key "WEB_ALLOWED_ORIGINS"
 if ($mode -eq "domain") {
-  if ([string]::IsNullOrWhiteSpace($webAllowedOrigins)) { $webAllowedOrigins = "https://$publicHost" }
-  $currentWebPublishAddress = Get-EnvValue -Path $envFile -Key "WEB_PUBLISH_ADDRESS"
-  $currentWebPublishPort = Get-EnvValue -Path $envFile -Key "WEB_PUBLISH_PORT"
-  if ($currentWebPublishAddress -eq "0.0.0.0" -or $currentWebPublishPort -eq "80") {
-    Write-Host "[deploy-prod] domain mode: overriding WEB_PUBLISH_* to loopback to avoid :80 conflict with caddy"
+  if ([string]::IsNullOrWhiteSpace($webAllowedOrigins)) {
+    $webAllowedOrigins = "https://$publicHost"
   }
-  $webPublishAddress = "127.0.0.1"
-  $webPublishPort = "8081"
-  $env:RELAY_PUBLISH_ADDRESS = "127.0.0.1"
   $env:RELAY_PUBLISH_PORT = "8080"
+  $env:WEB_PUBLISH_PORT = "8081"
+  $composeOverride = $composeDomainOverrideFile
 }
 else {
-  if ([string]::IsNullOrWhiteSpace($webAllowedOrigins)) { $webAllowedOrigins = "http://$publicHost" }
-  $webPublishAddress = "0.0.0.0"
-  $webPublishPort = "80"
-  $env:RELAY_PUBLISH_ADDRESS = "0.0.0.0"
-  $env:RELAY_PUBLISH_PORT = "8080"
+  if ([string]::IsNullOrWhiteSpace($webAllowedOrigins)) {
+    $webAllowedOrigins = "http://$publicHost"
+  }
+  $relayPublishAddress = Get-EnvValue -Path $envFile -Key "RELAY_PUBLISH_ADDRESS"
+  $relayPublishPort = Get-EnvValue -Path $envFile -Key "RELAY_PUBLISH_PORT"
+  $webPublishAddress = Get-EnvValue -Path $envFile -Key "WEB_PUBLISH_ADDRESS"
+  $webPublishPort = Get-EnvValue -Path $envFile -Key "WEB_PUBLISH_PORT"
+
+  $env:RELAY_PUBLISH_ADDRESS = if ([string]::IsNullOrWhiteSpace($relayPublishAddress)) { "0.0.0.0" } else { $relayPublishAddress }
+  $env:RELAY_PUBLISH_PORT = if ([string]::IsNullOrWhiteSpace($relayPublishPort)) { "8080" } else { $relayPublishPort }
+  $env:WEB_PUBLISH_ADDRESS = if ([string]::IsNullOrWhiteSpace($webPublishAddress)) { "0.0.0.0" } else { $webPublishAddress }
+  $env:WEB_PUBLISH_PORT = if ([string]::IsNullOrWhiteSpace($webPublishPort)) { "80" } else { $webPublishPort }
+  $composeOverride = $composeIpOverrideFile
 }
 $env:WEB_ALLOWED_ORIGINS = $webAllowedOrigins
-$env:WEB_PUBLISH_ADDRESS = $webPublishAddress
-$env:WEB_PUBLISH_PORT = $webPublishPort
 
-$composeArgs = @("-f", $composeBaseFile, "-f", $composeOverrideFile, "--env-file", $envFile)
-
-function Get-PublishedContainersByPort([int]$Port) {
-  $rows = & docker ps --filter "publish=$Port" --format "{{.Names}}"
-  if (-not $rows) {
-    return @()
-  }
-  return @($rows | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-}
-
-function Ensure-DomainPortsAvailable {
-  $ports = @(80, 443)
-  foreach ($port in $ports) {
-    $offenders = Get-PublishedContainersByPort -Port $port
-    if ($offenders.Count -gt 0) {
-      $formatted = ($offenders | ForEach-Object { "  - $_" }) -join "`n"
-      throw "[deploy-prod] port $port is already occupied by container(s):`n$formatted`n[deploy-prod] stop these containers or free the port, then run deploy again."
-    }
-  }
-}
+$composeArgs = @("-f", $composeBaseFile, "-f", $composeOverride, "--env-file", $envFile)
 
 Write-Host "[deploy-prod] cleaning previous compose state (down --remove-orphans)"
 try {
@@ -150,24 +153,16 @@ catch {
 }
 
 if ($mode -eq "domain") {
-  Ensure-DomainPortsAvailable
+  Ensure-PortAvailable -Port 80
+  Ensure-PortAvailable -Port 443
+}
+else {
+  Ensure-PortAvailable -Port ([int]$env:WEB_PUBLISH_PORT)
+  Ensure-PortAvailable -Port ([int]$env:RELAY_PUBLISH_PORT)
 }
 
 Write-Host "[deploy-prod] starting stack with $envFile (mode: $mode)"
-if ($mode -eq "ip") {
-  Write-Host "[deploy-prod] IP mode detected: starting postgres + relay-server + web-client (without caddy)"
-  try {
-    Invoke-Compose @composeArgs rm -sf caddy | Out-Null
-  }
-  catch {
-    # Best-effort cleanup of old caddy container.
-  }
-  Invoke-Compose @composeArgs up -d --build --remove-orphans postgres relay-server web-client
-}
-else {
-  Write-Host "[deploy-prod] domain mode detected: starting full stack with caddy + web-client"
-  Invoke-Compose @composeArgs up -d --build --remove-orphans
-}
+Invoke-Compose @composeArgs up -d --build --remove-orphans
 
 Write-Host "[deploy-prod] container status"
 Invoke-Compose @composeArgs ps
@@ -203,7 +198,7 @@ for ($i = 0; $i -lt 30; $i++) {
 }
 
 if (-not $ready) {
-  throw "[deploy-prod] readiness check failed. Inspect logs with: docker compose -f $composeBaseFile -f $composeOverrideFile --env-file $envFile logs --tail=100"
+  throw "[deploy-prod] readiness check failed. Inspect logs with: docker compose -f $composeBaseFile -f $composeOverride --env-file $envFile logs --tail=100"
 }
 
 Write-Host "[deploy-prod] readiness check passed"

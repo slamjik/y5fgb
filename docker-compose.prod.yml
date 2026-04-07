@@ -1,7 +1,7 @@
-﻿services:
+services:
   relay-server:
     ports:
-      - "${RELAY_PUBLISH_ADDRESS:-127.0.0.1}:${RELAY_PUBLISH_PORT:-8080}:8080"
+      - "127.0.0.1:${RELAY_PUBLISH_PORT:-8080}:8080"
   web-client:
     ports:
-      - "${WEB_PUBLISH_ADDRESS:-127.0.0.1}:${WEB_PUBLISH_PORT:-8081}:80"
+      - "127.0.0.1:${WEB_PUBLISH_PORT:-8081}:80"

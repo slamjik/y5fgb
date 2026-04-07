@@ -4,6 +4,7 @@ $root = Split-Path -Parent $PSScriptRoot
 $envFile = Join-Path $root ".env"
 $baseCompose = Join-Path $root "docker-compose.production.yml"
 $prodOverride = Join-Path $root "docker-compose.prod.yml"
+$ipOverride = Join-Path $root "docker-compose.ip.yml"
 
 function Require-Command([string]$Name, [string]$Hint) {
   if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
@@ -88,6 +89,9 @@ if (-not (Test-Path $baseCompose)) {
 }
 if (-not (Test-Path $prodOverride)) {
   throw "[install] missing compose override file: $prodOverride"
+}
+if (-not (Test-Path $ipOverride)) {
+  throw "[install] missing compose override file: $ipOverride"
 }
 
 $serverInput = Read-Host "Enter domain or IP"
@@ -207,7 +211,14 @@ WEB_SESSION_ALLOW_REMEMBERED=true
 [System.IO.File]::WriteAllText($envFile, $envContent, [System.Text.UTF8Encoding]::new($false))
 Write-Host "[install] .env generated: $envFile"
 
-$composeArgs = @("-f", $baseCompose, "-f", $prodOverride, "--env-file", $envFile)
+if ($mode -eq "domain") {
+  $composeOverride = $prodOverride
+}
+else {
+  $composeOverride = $ipOverride
+}
+
+$composeArgs = @("-f", $baseCompose, "-f", $composeOverride, "--env-file", $envFile)
 
 Write-Host "[install] removing old orphan containers (if any)"
 try {
@@ -227,8 +238,8 @@ if ($mode -eq "domain") {
   $fallbackHealthUrl = "http://127.0.0.1/health"
 }
 else {
-  Write-Host "[install] starting stack in IP mode (HTTP + Web UI + API, no Caddy)"
-  Invoke-Compose @composeArgs up -d --build --remove-orphans postgres relay-server web-client
+  Write-Host "[install] starting stack in IP mode (HTTP + Web UI + API)"
+  Invoke-Compose @composeArgs up -d --build --remove-orphans
   $healthUrl = "http://$serverHost:8080/health"
   $readyUrl = "http://$serverHost:8080/ready"
   $configUrl = "http://$serverHost:8080/api/v1/config"

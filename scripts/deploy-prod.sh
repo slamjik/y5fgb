@@ -4,15 +4,21 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="${1:-$ROOT_DIR/.env}"
 COMPOSE_BASE_FILE="$ROOT_DIR/docker-compose.production.yml"
-COMPOSE_OVERRIDE_FILE="$ROOT_DIR/docker-compose.prod.yml"
+COMPOSE_DOMAIN_OVERRIDE_FILE="$ROOT_DIR/docker-compose.prod.yml"
+COMPOSE_IP_OVERRIDE_FILE="$ROOT_DIR/docker-compose.ip.yml"
 
 if [[ ! -f "$COMPOSE_BASE_FILE" ]]; then
   echo "[deploy-prod] missing compose file: $COMPOSE_BASE_FILE" >&2
   exit 1
 fi
 
-if [[ ! -f "$COMPOSE_OVERRIDE_FILE" ]]; then
-  echo "[deploy-prod] missing compose override file: $COMPOSE_OVERRIDE_FILE" >&2
+if [[ ! -f "$COMPOSE_DOMAIN_OVERRIDE_FILE" ]]; then
+  echo "[deploy-prod] missing compose file: $COMPOSE_DOMAIN_OVERRIDE_FILE" >&2
+  exit 1
+fi
+
+if [[ ! -f "$COMPOSE_IP_OVERRIDE_FILE" ]]; then
+  echo "[deploy-prod] missing compose file: $COMPOSE_IP_OVERRIDE_FILE" >&2
   exit 1
 fi
 
@@ -90,6 +96,23 @@ require_non_empty() {
   fi
 }
 
+collect_published_containers() {
+  local port="$1"
+  docker ps --filter "publish=${port}" --format '{{.Names}}'
+}
+
+ensure_ports_available() {
+  local port="$1"
+  local offenders
+  offenders="$(collect_published_containers "$port" | tr -d '\r')"
+  if [[ -n "$offenders" ]]; then
+    echo "[deploy-prod] port ${port} is already occupied by container(s):" >&2
+    echo "$offenders" | sed 's/^/  - /' >&2
+    echo "[deploy-prod] stop these containers or choose another port, then run deploy again." >&2
+    exit 1
+  fi
+}
+
 require_non_empty PUBLIC_HOST
 public_host="$(read_env_value PUBLIC_HOST)"
 tls_enabled="$(read_env_value TLS_ENABLED)"
@@ -126,64 +149,40 @@ if [[ "$mode" == "domain" ]]; then
   if [[ -z "$WEB_ALLOWED_ORIGINS" ]]; then
     export WEB_ALLOWED_ORIGINS="https://${public_host}"
   fi
-  current_web_publish_address="$(read_env_value WEB_PUBLISH_ADDRESS)"
-  current_web_publish_port="$(read_env_value WEB_PUBLISH_PORT)"
-  if [[ "$current_web_publish_address" == "0.0.0.0" || "$current_web_publish_port" == "80" ]]; then
-    echo "[deploy-prod] domain mode: overriding WEB_PUBLISH_* to loopback to avoid :80 conflict with caddy"
-  fi
-  export WEB_PUBLISH_ADDRESS="127.0.0.1"
-  export WEB_PUBLISH_PORT="8081"
-  export RELAY_PUBLISH_ADDRESS="127.0.0.1"
   export RELAY_PUBLISH_PORT="8080"
+  export WEB_PUBLISH_PORT="8081"
+  compose_override="$COMPOSE_DOMAIN_OVERRIDE_FILE"
 else
   export WEB_ALLOWED_ORIGINS="${WEB_ALLOWED_ORIGINS:-$(read_env_value WEB_ALLOWED_ORIGINS)}"
   if [[ -z "$WEB_ALLOWED_ORIGINS" ]]; then
     export WEB_ALLOWED_ORIGINS="http://${public_host}"
   fi
-  export WEB_PUBLISH_ADDRESS="0.0.0.0"
-  export WEB_PUBLISH_PORT="80"
-  export RELAY_PUBLISH_ADDRESS="0.0.0.0"
-  export RELAY_PUBLISH_PORT="8080"
+  export RELAY_PUBLISH_ADDRESS="${RELAY_PUBLISH_ADDRESS:-$(read_env_value RELAY_PUBLISH_ADDRESS)}"
+  export RELAY_PUBLISH_PORT="${RELAY_PUBLISH_PORT:-$(read_env_value RELAY_PUBLISH_PORT)}"
+  export WEB_PUBLISH_ADDRESS="${WEB_PUBLISH_ADDRESS:-$(read_env_value WEB_PUBLISH_ADDRESS)}"
+  export WEB_PUBLISH_PORT="${WEB_PUBLISH_PORT:-$(read_env_value WEB_PUBLISH_PORT)}"
+  [[ -z "$RELAY_PUBLISH_ADDRESS" ]] && export RELAY_PUBLISH_ADDRESS="0.0.0.0"
+  [[ -z "$RELAY_PUBLISH_PORT" ]] && export RELAY_PUBLISH_PORT="8080"
+  [[ -z "$WEB_PUBLISH_ADDRESS" ]] && export WEB_PUBLISH_ADDRESS="0.0.0.0"
+  [[ -z "$WEB_PUBLISH_PORT" ]] && export WEB_PUBLISH_PORT="80"
+  compose_override="$COMPOSE_IP_OVERRIDE_FILE"
 fi
 
-compose_cmd=("${COMPOSE_BIN[@]}" -f "$COMPOSE_BASE_FILE" -f "$COMPOSE_OVERRIDE_FILE" --env-file "$ENV_FILE")
-
-collect_published_containers() {
-  local port="$1"
-  docker ps --filter "publish=${port}" --format '{{.Names}}'
-}
-
-ensure_domain_ports_available() {
-  local port
-  local offenders
-
-  for port in 80 443; do
-    offenders="$(collect_published_containers "$port" | tr -d '\r')"
-    if [[ -n "$offenders" ]]; then
-      echo "[deploy-prod] port ${port} is already occupied by container(s):" >&2
-      echo "$offenders" | sed 's/^/  - /' >&2
-      echo "[deploy-prod] stop these containers or free the port, then run deploy again." >&2
-      exit 1
-    fi
-  done
-}
+compose_cmd=("${COMPOSE_BIN[@]}" -f "$COMPOSE_BASE_FILE" -f "$compose_override" --env-file "$ENV_FILE")
 
 echo "[deploy-prod] cleaning previous compose state (down --remove-orphans)"
 "${compose_cmd[@]}" down --remove-orphans >/dev/null 2>&1 || true
 
 if [[ "$mode" == "domain" ]]; then
-  ensure_domain_ports_available
+  ensure_ports_available 80
+  ensure_ports_available 443
+else
+  ensure_ports_available "$WEB_PUBLISH_PORT"
+  ensure_ports_available "$RELAY_PUBLISH_PORT"
 fi
 
 echo "[deploy-prod] starting stack with $ENV_FILE (mode: $mode)"
-if [[ "$mode" == "ip" ]]; then
-  echo "[deploy-prod] IP mode detected: starting postgres + relay-server + web-client (without caddy)"
-  "${compose_cmd[@]}" rm -sf caddy >/dev/null 2>&1 || true
-  "${compose_cmd[@]}" up -d --build --remove-orphans postgres relay-server web-client
-else
-  echo "[deploy-prod] domain mode detected: starting full stack with caddy + web-client"
-  "${compose_cmd[@]}" up -d --build --remove-orphans
-fi
+"${compose_cmd[@]}" up -d --build --remove-orphans
 
 echo "[deploy-prod] container status"
 "${compose_cmd[@]}" ps
