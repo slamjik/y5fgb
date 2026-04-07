@@ -97,6 +97,14 @@ func Down(ctx context.Context, pool *pgxpool.Pool) error {
 	}()
 
 	statements := []string{
+		`DROP TABLE IF EXISTS stories`,
+		`DROP TABLE IF EXISTS user_profiles`,
+		`DROP TABLE IF EXISTS media_variants`,
+		`DROP TABLE IF EXISTS media_objects`,
+		`DROP TABLE IF EXISTS user_blocks`,
+		`DROP TABLE IF EXISTS friendships`,
+		`DROP TABLE IF EXISTS friend_requests`,
+		`DROP TABLE IF EXISTS profile_privacy_settings`,
 		`DROP TABLE IF EXISTS social_post_likes`,
 		`DROP TABLE IF EXISTS social_posts`,
 		`DROP TABLE IF EXISTS transport_endpoints`,

@@ -12,6 +12,7 @@ var (
 	ErrNotFound              = errors.New("not found")
 	ErrDuplicateAccountEmail = errors.New("duplicate account email")
 	ErrDuplicateDeviceID     = errors.New("duplicate device id")
+	ErrDuplicateUsername     = errors.New("duplicate username")
 )
 
 func normalizeWriteError(err error) error {
@@ -29,8 +30,9 @@ func normalizeWriteError(err error) error {
 		return ErrDuplicateAccountEmail
 	case "devices_pkey":
 		return ErrDuplicateDeviceID
+	case "idx_user_profiles_username_lower_unique":
+		return ErrDuplicateUsername
 	default:
 		return err
 	}
 }
-

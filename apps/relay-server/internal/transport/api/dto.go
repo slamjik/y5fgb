@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/example/secure-messenger/apps/relay-server/internal/domain"
@@ -308,9 +309,11 @@ type conversationSummaryDTO struct {
 }
 
 type userSearchItemDTO struct {
-	AccountID string `json:"accountId"`
-	Email     string `json:"email"`
-	CreatedAt string `json:"createdAt"`
+	AccountID     string  `json:"accountId"`
+	Username      string  `json:"username"`
+	DisplayName   string  `json:"displayName"`
+	AvatarMediaID *string `json:"avatarMediaId,omitempty"`
+	CreatedAt     string  `json:"createdAt"`
 }
 
 type disappearingPolicyDTO struct {
@@ -414,22 +417,63 @@ type createSocialPostRequest struct {
 	Content   string  `json:"content"`
 	MediaType *string `json:"mediaType,omitempty"`
 	MediaURL  *string `json:"mediaUrl,omitempty"`
+	MediaID   *string `json:"mediaId,omitempty"`
 	Mood      *string `json:"mood,omitempty"`
 }
 
+type updateProfileRequest struct {
+	DisplayName   *string `json:"displayName"`
+	Username      *string `json:"username"`
+	Bio           *string `json:"bio"`
+	StatusText    *string `json:"statusText"`
+	BirthDate     *string `json:"birthDate"`
+	Location      *string `json:"location"`
+	WebsiteURL    *string `json:"websiteUrl"`
+	AvatarMediaID *string `json:"avatarMediaId"`
+	BannerMediaID *string `json:"bannerMediaId"`
+}
+
+type createFriendRequestBody struct {
+	TargetAccountID string `json:"targetAccountId"`
+}
+
+type updatePrivacyRequest struct {
+	ProfileVisibility    *string `json:"profileVisibility"`
+	PostsVisibility      *string `json:"postsVisibility"`
+	PhotosVisibility     *string `json:"photosVisibility"`
+	StoriesVisibility    *string `json:"storiesVisibility"`
+	FriendsVisibility    *string `json:"friendsVisibility"`
+	BirthDateVisibility  *string `json:"birthDateVisibility"`
+	LocationVisibility   *string `json:"locationVisibility"`
+	LinksVisibility      *string `json:"linksVisibility"`
+	FriendRequestsPolicy *string `json:"friendRequestsPolicy"`
+	DMPolicy             *string `json:"dmPolicy"`
+}
+
+type createStoryRequest struct {
+	MediaID    string  `json:"mediaId"`
+	Caption    *string `json:"caption"`
+	Visibility *string `json:"visibility"`
+}
+
 type socialPostDTO struct {
-	ID              string  `json:"id"`
-	AuthorAccountID string  `json:"authorAccountId"`
-	AuthorEmail     string  `json:"authorEmail"`
-	Content         string  `json:"content"`
-	MediaType       *string `json:"mediaType,omitempty"`
-	MediaURL        *string `json:"mediaUrl,omitempty"`
-	Mood            *string `json:"mood,omitempty"`
-	LikeCount       int64   `json:"likeCount"`
-	LikedByMe       bool    `json:"likedByMe"`
-	CanDelete       bool    `json:"canDelete"`
-	CreatedAt       string  `json:"createdAt"`
-	UpdatedAt       string  `json:"updatedAt"`
+	ID                string    `json:"id"`
+	AuthorAccountID   string    `json:"authorAccountId"`
+	AuthorEmail       string    `json:"authorEmail"`
+	AuthorDisplayName string    `json:"authorDisplayName,omitempty"`
+	AuthorUsername    string    `json:"authorUsername,omitempty"`
+	AuthorAvatarID    *string   `json:"authorAvatarId,omitempty"`
+	Content           string    `json:"content"`
+	MediaType         *string   `json:"mediaType,omitempty"`
+	MediaURL          *string   `json:"mediaUrl,omitempty"`
+	MediaID           *string   `json:"mediaId,omitempty"`
+	Media             *mediaDTO `json:"media,omitempty"`
+	Mood              *string   `json:"mood,omitempty"`
+	LikeCount         int64     `json:"likeCount"`
+	LikedByMe         bool      `json:"likedByMe"`
+	CanDelete         bool      `json:"canDelete"`
+	CreatedAt         string    `json:"createdAt"`
+	UpdatedAt         string    `json:"updatedAt"`
 }
 
 type socialNotificationDTO struct {
@@ -438,6 +482,108 @@ type socialNotificationDTO struct {
 	ActorEmail     string `json:"actorEmail"`
 	PostPreview    string `json:"postPreview"`
 	CreatedAt      string `json:"createdAt"`
+}
+
+type profilePrivacyDTO struct {
+	ProfileVisibility    string `json:"profileVisibility"`
+	PostsVisibility      string `json:"postsVisibility"`
+	PhotosVisibility     string `json:"photosVisibility"`
+	StoriesVisibility    string `json:"storiesVisibility"`
+	FriendsVisibility    string `json:"friendsVisibility"`
+	BirthDateVisibility  string `json:"birthDateVisibility"`
+	LocationVisibility   string `json:"locationVisibility"`
+	LinksVisibility      string `json:"linksVisibility"`
+	FriendRequestsPolicy string `json:"friendRequestsPolicy"`
+	DMPolicy             string `json:"dmPolicy"`
+	UpdatedAt            string `json:"updatedAt"`
+}
+
+type profileDTO struct {
+	AccountID                  string            `json:"accountId"`
+	DisplayName                string            `json:"displayName"`
+	Username                   string            `json:"username"`
+	Email                      string            `json:"email,omitempty"`
+	Bio                        string            `json:"bio,omitempty"`
+	StatusText                 string            `json:"statusText,omitempty"`
+	BirthDate                  *string           `json:"birthDate,omitempty"`
+	Location                   *string           `json:"location,omitempty"`
+	WebsiteURL                 *string           `json:"websiteUrl,omitempty"`
+	AvatarMediaID              *string           `json:"avatarMediaId,omitempty"`
+	BannerMediaID              *string           `json:"bannerMediaId,omitempty"`
+	FriendState                string            `json:"friendState"`
+	PostCount                  int64             `json:"postCount"`
+	PhotoCount                 int64             `json:"photoCount"`
+	FriendCount                int64             `json:"friendCount"`
+	CanStartDirectChat         bool              `json:"canStartDirectChat"`
+	ExistingDirectConversation *string           `json:"existingDirectConversationId,omitempty"`
+	CanViewPosts               bool              `json:"canViewPosts"`
+	CanViewPhotos              bool              `json:"canViewPhotos"`
+	CanViewStories             bool              `json:"canViewStories"`
+	CanViewFriends             bool              `json:"canViewFriends"`
+	CanSendFriendRequest       bool              `json:"canSendFriendRequest"`
+	CreatedAt                  string            `json:"createdAt"`
+	Privacy                    profilePrivacyDTO `json:"privacy"`
+}
+
+type friendListItemDTO struct {
+	AccountID   string  `json:"accountId"`
+	Username    string  `json:"username"`
+	DisplayName string  `json:"displayName"`
+	AvatarID    *string `json:"avatarMediaId,omitempty"`
+	CreatedAt   string  `json:"createdAt"`
+}
+
+type friendRequestDTO struct {
+	ID            string            `json:"id"`
+	FromAccountID string            `json:"fromAccountId"`
+	ToAccountID   string            `json:"toAccountId"`
+	Status        string            `json:"status"`
+	Direction     string            `json:"direction"`
+	IsOutgoing    bool              `json:"isOutgoing"`
+	CreatedAt     string            `json:"createdAt"`
+	UpdatedAt     string            `json:"updatedAt"`
+	Actor         friendListItemDTO `json:"actor"`
+	Target        friendListItemDTO `json:"target"`
+}
+
+type mediaDTO struct {
+	ID             string  `json:"id"`
+	OwnerAccountID string  `json:"ownerAccountId"`
+	Domain         string  `json:"domain"`
+	Kind           string  `json:"kind"`
+	MimeType       string  `json:"mimeType"`
+	SizeBytes      int64   `json:"sizeBytes"`
+	ChecksumSHA256 string  `json:"checksumSha256"`
+	ObjectKey      string  `json:"objectKey,omitempty"`
+	Visibility     string  `json:"visibility"`
+	Status         string  `json:"status"`
+	CreatedAt      string  `json:"createdAt"`
+	ExpiresAt      *string `json:"expiresAt,omitempty"`
+	ContentURL     string  `json:"contentUrl"`
+}
+
+type storyDTO struct {
+	ID             string    `json:"id"`
+	OwnerAccountID string    `json:"ownerAccountId"`
+	OwnerName      string    `json:"ownerName"`
+	OwnerUsername  string    `json:"ownerUsername"`
+	OwnerAvatarID  *string   `json:"ownerAvatarId,omitempty"`
+	Caption        string    `json:"caption"`
+	Visibility     string    `json:"visibility"`
+	CreatedAt      string    `json:"createdAt"`
+	ExpiresAt      string    `json:"expiresAt"`
+	Media          *mediaDTO `json:"media,omitempty"`
+}
+
+type appNotificationDTO struct {
+	ID             string  `json:"id"`
+	Type           string  `json:"type"`
+	ActorAccountID *string `json:"actorAccountId,omitempty"`
+	ActorName      *string `json:"actorName,omitempty"`
+	ActorUsername  *string `json:"actorUsername,omitempty"`
+	TargetID       *string `json:"targetId,omitempty"`
+	Preview        *string `json:"preview,omitempty"`
+	CreatedAt      string  `json:"createdAt"`
 }
 
 type publicConfigPolicyHintsDTO struct {
@@ -636,9 +782,11 @@ func mapConversationSummary(payload domain.ConversationSummary) conversationSumm
 
 func mapUserSearchItem(item domain.UserSearchItem) userSearchItemDTO {
 	return userSearchItemDTO{
-		AccountID: item.AccountID,
-		Email:     item.Email,
-		CreatedAt: item.CreatedAt.UTC().Format(time.RFC3339),
+		AccountID:     item.AccountID,
+		Username:      item.Username,
+		DisplayName:   item.Display,
+		AvatarMediaID: item.AvatarID,
+		CreatedAt:     item.CreatedAt.UTC().Format(time.RFC3339),
 	}
 }
 
@@ -722,18 +870,23 @@ func mapSocialPost(item domain.SocialPostFeedItem, viewerAccountID string) socia
 		mediaType = &value
 	}
 	return socialPostDTO{
-		ID:              item.Post.ID,
-		AuthorAccountID: item.Post.AuthorAccountID,
-		AuthorEmail:     item.AuthorEmail,
-		Content:         item.Post.Content,
-		MediaType:       mediaType,
-		MediaURL:        item.Post.MediaURL,
-		Mood:            item.Post.Mood,
-		LikeCount:       item.LikeCount,
-		LikedByMe:       item.LikedByMe,
-		CanDelete:       item.Post.AuthorAccountID == viewerAccountID,
-		CreatedAt:       item.Post.CreatedAt.UTC().Format(time.RFC3339),
-		UpdatedAt:       item.Post.UpdatedAt.UTC().Format(time.RFC3339),
+		ID:                item.Post.ID,
+		AuthorAccountID:   item.Post.AuthorAccountID,
+		AuthorEmail:       item.AuthorEmail,
+		AuthorDisplayName: item.AuthorDisplayName,
+		AuthorUsername:    item.AuthorUsername,
+		AuthorAvatarID:    item.AuthorAvatarID,
+		Content:           item.Post.Content,
+		MediaType:         mediaType,
+		MediaURL:          item.Post.MediaURL,
+		MediaID:           item.Post.MediaID,
+		Media:             mapOptionalMedia(item.Media),
+		Mood:              item.Post.Mood,
+		LikeCount:         item.LikeCount,
+		LikedByMe:         item.LikedByMe,
+		CanDelete:         item.Post.AuthorAccountID == viewerAccountID,
+		CreatedAt:         item.Post.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt:         item.Post.UpdatedAt.UTC().Format(time.RFC3339),
 	}
 }
 
@@ -743,6 +896,148 @@ func mapSocialNotification(item domain.SocialNotification) socialNotificationDTO
 		ActorAccountID: item.ActorAccountID,
 		ActorEmail:     item.ActorEmail,
 		PostPreview:    item.PostPreview,
+		CreatedAt:      item.CreatedAt.UTC().Format(time.RFC3339),
+	}
+}
+
+func mapProfile(profile domain.UserPublicProfile) profileDTO {
+	return profileDTO{
+		AccountID:                  profile.AccountID,
+		DisplayName:                profile.DisplayName,
+		Username:                   profile.Username,
+		Email:                      profile.Email,
+		Bio:                        profile.Bio,
+		StatusText:                 profile.StatusText,
+		BirthDate:                  formatNullableTime(profile.BirthDate),
+		Location:                   profile.Location,
+		WebsiteURL:                 profile.WebsiteURL,
+		AvatarMediaID:              profile.AvatarMediaID,
+		BannerMediaID:              profile.BannerMediaID,
+		FriendState:                string(profile.FriendState),
+		PostCount:                  profile.PostCount,
+		PhotoCount:                 profile.PhotoCount,
+		FriendCount:                profile.FriendCount,
+		CanStartDirectChat:         profile.CanStartDirectChat,
+		ExistingDirectConversation: profile.ExistingDirectConversation,
+		CanViewPosts:               profile.CanViewPosts,
+		CanViewPhotos:              profile.CanViewPhotos,
+		CanViewStories:             profile.CanViewStories,
+		CanViewFriends:             profile.CanViewFriends,
+		CanSendFriendRequest:       profile.CanSendFriendRequest,
+		CreatedAt:                  profile.CreatedAt.UTC().Format(time.RFC3339),
+		Privacy:                    mapProfilePrivacy(profile.Privacy),
+	}
+}
+
+func mapProfilePrivacy(settings domain.ProfilePrivacySettings) profilePrivacyDTO {
+	return profilePrivacyDTO{
+		ProfileVisibility:    string(settings.ProfileVisibility),
+		PostsVisibility:      string(settings.PostsVisibility),
+		PhotosVisibility:     string(settings.PhotosVisibility),
+		StoriesVisibility:    string(settings.StoriesVisibility),
+		FriendsVisibility:    string(settings.FriendsVisibility),
+		BirthDateVisibility:  string(settings.BirthDateVisibility),
+		LocationVisibility:   string(settings.LocationVisibility),
+		LinksVisibility:      string(settings.LinksVisibility),
+		FriendRequestsPolicy: string(settings.FriendRequestsPolicy),
+		DMPolicy:             string(settings.DMPolicy),
+		UpdatedAt:            settings.UpdatedAt.UTC().Format(time.RFC3339),
+	}
+}
+
+func mapFriendListItem(item domain.FriendListItem) friendListItemDTO {
+	return friendListItemDTO{
+		AccountID:   item.AccountID,
+		Username:    item.Username,
+		DisplayName: item.DisplayName,
+		AvatarID:    item.AvatarID,
+		CreatedAt:   item.CreatedAt.UTC().Format(time.RFC3339),
+	}
+}
+
+func mapFriendRequest(item domain.FriendRequestListItem) friendRequestDTO {
+	return friendRequestDTO{
+		ID:            item.Request.ID,
+		FromAccountID: item.Request.FromAccountID,
+		ToAccountID:   item.Request.ToAccountID,
+		Status:        string(item.Request.Status),
+		Direction:     item.Direction,
+		IsOutgoing:    item.IsOutgoing,
+		CreatedAt:     item.Request.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt:     item.Request.UpdatedAt.UTC().Format(time.RFC3339),
+		Actor:         mapFriendListItem(item.Actor),
+		Target:        mapFriendListItem(item.Target),
+	}
+}
+
+func mapMedia(media domain.MediaObject, apiPrefix string) mediaDTO {
+	contentURL := strings.TrimRight(apiPrefix, "/") + "/media/" + media.ID + "/content"
+	return mediaDTO{
+		ID:             media.ID,
+		OwnerAccountID: media.OwnerAccountID,
+		Domain:         string(media.Domain),
+		Kind:           string(media.Kind),
+		MimeType:       media.MimeType,
+		SizeBytes:      media.SizeBytes,
+		ChecksumSHA256: media.ChecksumSHA256,
+		ObjectKey:      media.ObjectKey,
+		Visibility:     string(media.Visibility),
+		Status:         string(media.Status),
+		CreatedAt:      media.CreatedAt.UTC().Format(time.RFC3339),
+		ExpiresAt:      formatNullableTime(media.ExpiresAt),
+		ContentURL:     contentURL,
+	}
+}
+
+func mapOptionalMedia(media *domain.MediaObject) *mediaDTO {
+	if media == nil {
+		return nil
+	}
+	return &mediaDTO{
+		ID:             media.ID,
+		OwnerAccountID: media.OwnerAccountID,
+		Domain:         string(media.Domain),
+		Kind:           string(media.Kind),
+		MimeType:       media.MimeType,
+		SizeBytes:      media.SizeBytes,
+		ChecksumSHA256: media.ChecksumSHA256,
+		ObjectKey:      media.ObjectKey,
+		Visibility:     string(media.Visibility),
+		Status:         string(media.Status),
+		CreatedAt:      media.CreatedAt.UTC().Format(time.RFC3339),
+		ExpiresAt:      formatNullableTime(media.ExpiresAt),
+	}
+}
+
+func mapStory(item domain.StoryFeedItem, apiPrefix string) storyDTO {
+	var media *mediaDTO
+	if item.Media != nil {
+		mapped := mapMedia(*item.Media, apiPrefix)
+		media = &mapped
+	}
+	return storyDTO{
+		ID:             item.Story.ID,
+		OwnerAccountID: item.Story.OwnerAccountID,
+		OwnerName:      item.OwnerName,
+		OwnerUsername:  item.OwnerUser,
+		OwnerAvatarID:  item.OwnerAvatar,
+		Caption:        item.Story.Caption,
+		Visibility:     string(item.Story.Visibility),
+		CreatedAt:      item.Story.CreatedAt.UTC().Format(time.RFC3339),
+		ExpiresAt:      item.Story.ExpiresAt.UTC().Format(time.RFC3339),
+		Media:          media,
+	}
+}
+
+func mapAppNotification(item domain.AppNotification) appNotificationDTO {
+	return appNotificationDTO{
+		ID:             item.ID,
+		Type:           string(item.Type),
+		ActorAccountID: item.ActorAccountID,
+		ActorName:      item.ActorName,
+		ActorUsername:  item.ActorUsername,
+		TargetID:       item.TargetID,
+		Preview:        item.Preview,
 		CreatedAt:      item.CreatedAt.UTC().Format(time.RFC3339),
 	}
 }

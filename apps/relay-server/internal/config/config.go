@@ -23,6 +23,17 @@ const (
 	defaultAttachmentsDir        = "./data/attachments"
 	defaultAttachmentMaxBytes    = int64(20 * 1024 * 1024)
 	defaultAttachmentTTLHours    = 24
+	defaultMediaStorageBackend   = "local"
+	defaultMediaLocalDir         = "./data/media"
+	defaultMediaStoryTTLHrs      = 24
+	defaultMediaSoftDeleteHrs    = 72
+	defaultMediaCleanupMinutes   = 30
+	defaultMediaMaxAvatarBytes   = int64(5 * 1024 * 1024)
+	defaultMediaMaxBannerBytes   = int64(10 * 1024 * 1024)
+	defaultMediaMaxPhotoBytes    = int64(12 * 1024 * 1024)
+	defaultMediaMaxVideoBytes    = int64(64 * 1024 * 1024)
+	defaultMediaLocalMaxTotal    = int64(4 * 1024 * 1024 * 1024)
+	defaultMediaLocalMaxPerUser  = int64(512 * 1024 * 1024)
 	defaultLongPollTimeoutSec    = 25
 	defaultReconnectBackoffMinMS = 500
 	defaultReconnectBackoffMaxMS = 10000
@@ -45,6 +56,7 @@ type Config struct {
 	Auth                 AuthConfig
 	Security             SecurityConfig
 	Messaging            MessagingConfig
+	Media                MediaConfig
 	Transport            TransportConfig
 	WebSecurity          WebSecurityConfig
 	WebSession           WebSessionConfig
@@ -83,6 +95,27 @@ type MessagingConfig struct {
 	AttachmentsDir         string
 	AttachmentMaxSizeBytes int64
 	UnattachedRetention    time.Duration
+}
+
+type MediaConfig struct {
+	StorageBackend       string
+	LocalDir             string
+	LocalMaxTotalBytes   int64
+	LocalMaxPerUserBytes int64
+	MaxAvatarBytes       int64
+	MaxBannerBytes       int64
+	MaxPhotoBytes        int64
+	MaxVideoBytes        int64
+	StoryTTL             time.Duration
+	SoftDeleteRetention  time.Duration
+	CleanupInterval      time.Duration
+	S3Endpoint           string
+	S3Region             string
+	S3Bucket             string
+	S3AccessKey          string
+	S3SecretKey          string
+	S3ForcePathStyle     bool
+	S3PublicBaseURL      string
 }
 
 type TransportConfig struct {
@@ -162,6 +195,42 @@ func Load() (Config, error) {
 	attachmentTTLHrs, err := getEnvAsInt("MESSAGING_UNATTACHED_TTL_HOURS", defaultAttachmentTTLHours)
 	if err != nil {
 		return Config{}, fmt.Errorf("invalid MESSAGING_UNATTACHED_TTL_HOURS: %w", err)
+	}
+	mediaStoryTTLHrs, err := getEnvAsInt("MEDIA_STORY_TTL_HOURS", defaultMediaStoryTTLHrs)
+	if err != nil {
+		return Config{}, fmt.Errorf("invalid MEDIA_STORY_TTL_HOURS: %w", err)
+	}
+	mediaSoftDeleteHrs, err := getEnvAsInt("MEDIA_SOFT_DELETE_RETENTION_HOURS", defaultMediaSoftDeleteHrs)
+	if err != nil {
+		return Config{}, fmt.Errorf("invalid MEDIA_SOFT_DELETE_RETENTION_HOURS: %w", err)
+	}
+	mediaCleanupMinutes, err := getEnvAsInt("MEDIA_CLEANUP_INTERVAL_MINUTES", defaultMediaCleanupMinutes)
+	if err != nil {
+		return Config{}, fmt.Errorf("invalid MEDIA_CLEANUP_INTERVAL_MINUTES: %w", err)
+	}
+	mediaLocalMaxTotal, err := getEnvAsInt64("MEDIA_LOCAL_MAX_TOTAL_BYTES", defaultMediaLocalMaxTotal)
+	if err != nil {
+		return Config{}, fmt.Errorf("invalid MEDIA_LOCAL_MAX_TOTAL_BYTES: %w", err)
+	}
+	mediaLocalMaxPerUser, err := getEnvAsInt64("MEDIA_LOCAL_MAX_PER_USER_BYTES", defaultMediaLocalMaxPerUser)
+	if err != nil {
+		return Config{}, fmt.Errorf("invalid MEDIA_LOCAL_MAX_PER_USER_BYTES: %w", err)
+	}
+	mediaMaxAvatarBytes, err := getEnvAsInt64("MEDIA_MAX_AVATAR_BYTES", defaultMediaMaxAvatarBytes)
+	if err != nil {
+		return Config{}, fmt.Errorf("invalid MEDIA_MAX_AVATAR_BYTES: %w", err)
+	}
+	mediaMaxBannerBytes, err := getEnvAsInt64("MEDIA_MAX_BANNER_BYTES", defaultMediaMaxBannerBytes)
+	if err != nil {
+		return Config{}, fmt.Errorf("invalid MEDIA_MAX_BANNER_BYTES: %w", err)
+	}
+	mediaMaxPhotoBytes, err := getEnvAsInt64("MEDIA_MAX_PHOTO_BYTES", defaultMediaMaxPhotoBytes)
+	if err != nil {
+		return Config{}, fmt.Errorf("invalid MEDIA_MAX_PHOTO_BYTES: %w", err)
+	}
+	mediaMaxVideoBytes, err := getEnvAsInt64("MEDIA_MAX_VIDEO_BYTES", defaultMediaMaxVideoBytes)
+	if err != nil {
+		return Config{}, fmt.Errorf("invalid MEDIA_MAX_VIDEO_BYTES: %w", err)
 	}
 	longPollTimeoutSec, err := getEnvAsInt("TRANSPORT_LONG_POLL_TIMEOUT_SEC", defaultLongPollTimeoutSec)
 	if err != nil {
@@ -249,6 +318,26 @@ func Load() (Config, error) {
 			AttachmentMaxSizeBytes: attachmentMaxBytes,
 			UnattachedRetention:    time.Duration(attachmentTTLHrs) * time.Hour,
 		},
+		Media: MediaConfig{
+			StorageBackend:       strings.ToLower(strings.TrimSpace(getEnv("MEDIA_STORAGE_BACKEND", defaultMediaStorageBackend))),
+			LocalDir:             getEnv("MEDIA_LOCAL_DIR", defaultMediaLocalDir),
+			LocalMaxTotalBytes:   mediaLocalMaxTotal,
+			LocalMaxPerUserBytes: mediaLocalMaxPerUser,
+			MaxAvatarBytes:       mediaMaxAvatarBytes,
+			MaxBannerBytes:       mediaMaxBannerBytes,
+			MaxPhotoBytes:        mediaMaxPhotoBytes,
+			MaxVideoBytes:        mediaMaxVideoBytes,
+			StoryTTL:             time.Duration(mediaStoryTTLHrs) * time.Hour,
+			SoftDeleteRetention:  time.Duration(mediaSoftDeleteHrs) * time.Hour,
+			CleanupInterval:      time.Duration(mediaCleanupMinutes) * time.Minute,
+			S3Endpoint:           getEnv("MEDIA_S3_ENDPOINT", ""),
+			S3Region:             getEnv("MEDIA_S3_REGION", ""),
+			S3Bucket:             getEnv("MEDIA_S3_BUCKET", ""),
+			S3AccessKey:          getEnv("MEDIA_S3_ACCESS_KEY", ""),
+			S3SecretKey:          getEnv("MEDIA_S3_SECRET_KEY", ""),
+			S3ForcePathStyle:     getEnvAsBool("MEDIA_S3_FORCE_PATH_STYLE", true),
+			S3PublicBaseURL:      getEnv("MEDIA_S3_PUBLIC_BASE_URL", ""),
+		},
 		Transport: TransportConfig{
 			PrimaryWebSocketEndpoint: getEnv("TRANSPORT_PRIMARY_WS_ENDPOINT", ""),
 			AlternateEndpoints:       splitCSV(getEnv("TRANSPORT_ALTERNATE_ENDPOINTS", "")),
@@ -277,6 +366,17 @@ func Load() (Config, error) {
 	}
 	if cfg.WebSession.DefaultPersistence == "remembered" && !cfg.WebSession.AllowRemembered {
 		cfg.WebSession.DefaultPersistence = "ephemeral"
+	}
+	if cfg.Media.StorageBackend != "local" && cfg.Media.StorageBackend != "s3" {
+		return Config{}, fmt.Errorf("MEDIA_STORAGE_BACKEND must be local or s3")
+	}
+	if cfg.Media.StorageBackend == "s3" {
+		if strings.TrimSpace(cfg.Media.S3Bucket) == "" {
+			return Config{}, fmt.Errorf("MEDIA_S3_BUCKET is required when MEDIA_STORAGE_BACKEND=s3")
+		}
+		if strings.TrimSpace(cfg.Media.S3Region) == "" {
+			cfg.Media.S3Region = "auto"
+		}
 	}
 
 	return cfg, nil

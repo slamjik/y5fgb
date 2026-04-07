@@ -148,6 +148,100 @@ const (
 	SocialMediaTypeVideo SocialMediaType = "video"
 )
 
+type VisibilityScope string
+
+const (
+	VisibilityEveryone VisibilityScope = "everyone"
+	VisibilityFriends  VisibilityScope = "friends"
+	VisibilityOnlyMe   VisibilityScope = "only_me"
+)
+
+type FriendRequestPolicy string
+
+const (
+	FriendRequestPolicyEveryone FriendRequestPolicy = "everyone"
+	FriendRequestPolicyFriends  FriendRequestPolicy = "friends"
+	FriendRequestPolicyNobody   FriendRequestPolicy = "nobody"
+)
+
+type DMPolicy string
+
+const (
+	DMPolicyEveryone DMPolicy = "everyone"
+	DMPolicyFriends  DMPolicy = "friends"
+	DMPolicyNobody   DMPolicy = "nobody"
+)
+
+type FriendRequestStatus string
+
+const (
+	FriendRequestStatusPending   FriendRequestStatus = "pending"
+	FriendRequestStatusAccepted  FriendRequestStatus = "accepted"
+	FriendRequestStatusRejected  FriendRequestStatus = "rejected"
+	FriendRequestStatusCancelled FriendRequestStatus = "cancelled"
+)
+
+type FriendRelationState string
+
+const (
+	FriendRelationNone     FriendRelationState = "none"
+	FriendRelationIncoming FriendRelationState = "incoming"
+	FriendRelationOutgoing FriendRelationState = "outgoing"
+	FriendRelationFriends  FriendRelationState = "friends"
+	FriendRelationBlocked  FriendRelationState = "blocked"
+)
+
+type MediaDomain string
+
+const (
+	MediaDomainProfile MediaDomain = "profile"
+	MediaDomainSocial  MediaDomain = "social"
+	MediaDomainStory   MediaDomain = "story"
+)
+
+type MediaKind string
+
+const (
+	MediaKindAvatar     MediaKind = "avatar"
+	MediaKindBanner     MediaKind = "banner"
+	MediaKindPhoto      MediaKind = "photo"
+	MediaKindVideo      MediaKind = "video"
+	MediaKindStoryImage MediaKind = "story_image"
+	MediaKindStoryVideo MediaKind = "story_video"
+)
+
+type MediaStorageBackend string
+
+const (
+	MediaStorageBackendLocal MediaStorageBackend = "local"
+	MediaStorageBackendS3    MediaStorageBackend = "s3"
+)
+
+type MediaStatus string
+
+const (
+	MediaStatusActive  MediaStatus = "active"
+	MediaStatusDeleted MediaStatus = "deleted"
+	MediaStatusExpired MediaStatus = "expired"
+)
+
+type MediaVariantType string
+
+const (
+	MediaVariantThumb    MediaVariantType = "thumb"
+	MediaVariantPreview  MediaVariantType = "preview"
+	MediaVariantOriginal MediaVariantType = "original"
+)
+
+type NotificationType string
+
+const (
+	NotificationTypeSocialLike     NotificationType = "social_like"
+	NotificationTypeFriendRequest  NotificationType = "friend_request"
+	NotificationTypeFriendAccepted NotificationType = "friend_accepted"
+	NotificationTypeStoryPublished NotificationType = "story_published"
+)
+
 type TransportMode string
 
 const (
@@ -260,6 +354,7 @@ type SocialPost struct {
 	Content         string
 	MediaType       *SocialMediaType
 	MediaURL        *string
+	MediaID         *string
 	Mood            *string
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
@@ -267,10 +362,14 @@ type SocialPost struct {
 }
 
 type SocialPostFeedItem struct {
-	Post        SocialPost
-	AuthorEmail string
-	LikeCount   int64
-	LikedByMe   bool
+	Post              SocialPost
+	AuthorEmail       string
+	AuthorDisplayName string
+	AuthorUsername    string
+	AuthorAvatarID    *string
+	Media             *MediaObject
+	LikeCount         int64
+	LikedByMe         bool
 }
 
 type SocialPostLike struct {
@@ -315,16 +414,166 @@ type AccountIdentity struct {
 type UserSearchItem struct {
 	AccountID string
 	Email     string
+	Username  string
+	Display   string
+	AvatarID  *string
 	CreatedAt time.Time
 }
 
 type UserPublicProfile struct {
 	AccountID                  string
 	Email                      string
+	DisplayName                string
+	Username                   string
+	Bio                        string
+	StatusText                 string
+	Location                   *string
+	WebsiteURL                 *string
+	BirthDate                  *time.Time
+	AvatarMediaID              *string
+	BannerMediaID              *string
+	FriendState                FriendRelationState
+	Privacy                    ProfilePrivacySettings
 	CreatedAt                  time.Time
 	PostCount                  int64
+	PhotoCount                 int64
+	FriendCount                int64
 	CanStartDirectChat         bool
 	ExistingDirectConversation *string
+	CanViewPosts               bool
+	CanViewPhotos              bool
+	CanViewStories             bool
+	CanViewFriends             bool
+	CanSendFriendRequest       bool
+}
+
+type UserProfile struct {
+	AccountID         string
+	DisplayName       string
+	Username          string
+	Bio               string
+	StatusText        string
+	BirthDate         *time.Time
+	Location          *string
+	WebsiteURL        *string
+	AvatarMediaID     *string
+	BannerMediaID     *string
+	UsernameChangedAt *time.Time
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+}
+
+type ProfilePrivacySettings struct {
+	AccountID            string
+	ProfileVisibility    VisibilityScope
+	PostsVisibility      VisibilityScope
+	PhotosVisibility     VisibilityScope
+	StoriesVisibility    VisibilityScope
+	FriendsVisibility    VisibilityScope
+	BirthDateVisibility  VisibilityScope
+	LocationVisibility   VisibilityScope
+	LinksVisibility      VisibilityScope
+	FriendRequestsPolicy FriendRequestPolicy
+	DMPolicy             DMPolicy
+	UpdatedAt            time.Time
+}
+
+type FriendRequest struct {
+	ID            string
+	FromAccountID string
+	ToAccountID   string
+	Status        FriendRequestStatus
+	ActedBy       *string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+}
+
+type FriendListItem struct {
+	AccountID   string
+	Username    string
+	DisplayName string
+	AvatarID    *string
+	CreatedAt   time.Time
+}
+
+type FriendRequestListItem struct {
+	Request    FriendRequest
+	Actor      FriendListItem
+	Target     FriendListItem
+	Direction  string
+	IsOutgoing bool
+}
+
+type Friendship struct {
+	AccountAID string
+	AccountBID string
+	CreatedAt  time.Time
+}
+
+type UserBlock struct {
+	BlockerAccountID string
+	BlockedAccountID string
+	CreatedAt        time.Time
+}
+
+type MediaObject struct {
+	ID             string
+	OwnerAccountID string
+	Domain         MediaDomain
+	Kind           MediaKind
+	StorageBackend MediaStorageBackend
+	Bucket         *string
+	ObjectKey      string
+	MimeType       string
+	SizeBytes      int64
+	ChecksumSHA256 string
+	Width          *int
+	Height         *int
+	DurationMS     *int64
+	Visibility     VisibilityScope
+	Status         MediaStatus
+	CreatedAt      time.Time
+	ExpiresAt      *time.Time
+	DeletedAt      *time.Time
+}
+
+type MediaVariant struct {
+	MediaID     string
+	VariantType MediaVariantType
+	ObjectKey   string
+	Width       *int
+	Height      *int
+	SizeBytes   int64
+}
+
+type Story struct {
+	ID             string
+	OwnerAccountID string
+	MediaID        string
+	Caption        string
+	Visibility     VisibilityScope
+	ExpiresAt      time.Time
+	CreatedAt      time.Time
+	DeletedAt      *time.Time
+}
+
+type StoryFeedItem struct {
+	Story       Story
+	OwnerName   string
+	OwnerUser   string
+	OwnerAvatar *string
+	Media       *MediaObject
+}
+
+type AppNotification struct {
+	ID             string
+	Type           NotificationType
+	ActorAccountID *string
+	ActorName      *string
+	ActorUsername  *string
+	TargetID       *string
+	Preview        *string
+	CreatedAt      time.Time
 }
 
 type Device struct {

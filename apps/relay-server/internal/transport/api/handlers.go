@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -13,10 +14,16 @@ import (
 	"github.com/example/secure-messenger/apps/relay-server/internal/service"
 	"github.com/example/secure-messenger/apps/relay-server/internal/service/auth"
 	"github.com/example/secure-messenger/apps/relay-server/internal/service/devices"
+	"github.com/example/secure-messenger/apps/relay-server/internal/service/friends"
+	"github.com/example/secure-messenger/apps/relay-server/internal/service/media"
 	"github.com/example/secure-messenger/apps/relay-server/internal/service/messaging"
+	"github.com/example/secure-messenger/apps/relay-server/internal/service/notifications"
+	"github.com/example/secure-messenger/apps/relay-server/internal/service/privacy"
+	"github.com/example/secure-messenger/apps/relay-server/internal/service/profile"
 	"github.com/example/secure-messenger/apps/relay-server/internal/service/recovery"
 	"github.com/example/secure-messenger/apps/relay-server/internal/service/securityevents"
 	"github.com/example/secure-messenger/apps/relay-server/internal/service/social"
+	"github.com/example/secure-messenger/apps/relay-server/internal/service/stories"
 	"github.com/example/secure-messenger/apps/relay-server/internal/service/users"
 	"github.com/example/secure-messenger/apps/relay-server/internal/transport/middleware"
 )
@@ -30,12 +37,19 @@ type Handler struct {
 	messagingService      *messaging.Service
 	socialService         *social.Service
 	userService           *users.Service
+	profileService        *profile.Service
+	friendsService        *friends.Service
+	privacyService        *privacy.Service
+	mediaService          *media.Service
+	storiesService        *stories.Service
+	notificationsService  *notifications.Service
 	cfg                   config.Config
 	authRateLimiter       *middleware.IPRateLimiter
 	recoveryRateLimiter   *middleware.IPRateLimiter
 	messageRateLimiter    *middleware.IPRateLimiter
 	attachmentRateLimiter *middleware.IPRateLimiter
 	socialRateLimiter     *middleware.IPRateLimiter
+	mediaRateLimiter      *middleware.IPRateLimiter
 }
 
 const (
@@ -54,6 +68,12 @@ func NewHandler(
 	messagingService *messaging.Service,
 	socialService *social.Service,
 	userService *users.Service,
+	profileService *profile.Service,
+	friendsService *friends.Service,
+	privacyService *privacy.Service,
+	mediaService *media.Service,
+	storiesService *stories.Service,
+	notificationsService *notifications.Service,
 	cfg config.Config,
 ) *Handler {
 	return &Handler{
@@ -65,12 +85,19 @@ func NewHandler(
 		messagingService:      messagingService,
 		socialService:         socialService,
 		userService:           userService,
+		profileService:        profileService,
+		friendsService:        friendsService,
+		privacyService:        privacyService,
+		mediaService:          mediaService,
+		storiesService:        storiesService,
+		notificationsService:  notificationsService,
 		cfg:                   cfg,
 		authRateLimiter:       middleware.NewIPRateLimiter(30, time.Minute, nil),
 		recoveryRateLimiter:   middleware.NewIPRateLimiter(10, time.Minute, nil),
 		messageRateLimiter:    middleware.NewIPRateLimiter(180, time.Minute, nil),
 		attachmentRateLimiter: middleware.NewIPRateLimiter(60, time.Minute, nil),
 		socialRateLimiter:     middleware.NewIPRateLimiter(120, time.Minute, nil),
+		mediaRateLimiter:      middleware.NewIPRateLimiter(30, time.Minute, nil),
 	}
 }
 
@@ -124,6 +151,21 @@ func RegisterRoutes(mux *http.ServeMux, prefix string, handler *Handler, authSer
 	mux.Handle(base+"/social/posts", middleware.AuthRequired(authService, http.HandlerFunc(handler.handleSocialPosts)))
 	mux.Handle(base+"/social/posts/", middleware.AuthRequired(authService, http.HandlerFunc(handler.handleSocialPostSubroutes)))
 	mux.Handle(base+"/social/notifications", middleware.AuthRequired(authService, http.HandlerFunc(handler.handleSocialNotifications)))
+	mux.Handle(base+"/profiles/me", middleware.AuthRequired(authService, http.HandlerFunc(handler.handleMyProfile)))
+	mux.Handle(base+"/profiles/search", middleware.AuthRequired(authService, http.HandlerFunc(handler.handleProfileSearch)))
+	mux.Handle(base+"/profiles/by-username/", middleware.AuthRequired(authService, http.HandlerFunc(handler.handleProfileByUsername)))
+	mux.Handle(base+"/profiles/", middleware.AuthRequired(authService, http.HandlerFunc(handler.handleProfileSubroutes)))
+	mux.Handle(base+"/friends", middleware.AuthRequired(authService, http.HandlerFunc(handler.handleFriends)))
+	mux.Handle(base+"/friends/requests", middleware.AuthRequired(authService, http.HandlerFunc(handler.handleFriendRequests)))
+	mux.Handle(base+"/friends/requests/", middleware.AuthRequired(authService, http.HandlerFunc(handler.handleFriendRequestSubroutes)))
+	mux.Handle(base+"/friends/", middleware.AuthRequired(authService, http.HandlerFunc(handler.handleFriendSubroutes)))
+	mux.Handle(base+"/privacy/me", middleware.AuthRequired(authService, http.HandlerFunc(handler.handlePrivacyMe)))
+	mux.Handle(base+"/media/upload", middleware.AuthRequired(authService, http.HandlerFunc(handler.handleMediaUpload)))
+	mux.Handle(base+"/media/", middleware.AuthRequired(authService, http.HandlerFunc(handler.handleMediaSubroutes)))
+	mux.Handle(base+"/stories", middleware.AuthRequired(authService, http.HandlerFunc(handler.handleStories)))
+	mux.Handle(base+"/stories/feed", middleware.AuthRequired(authService, http.HandlerFunc(handler.handleStoryFeed)))
+	mux.Handle(base+"/stories/", middleware.AuthRequired(authService, http.HandlerFunc(handler.handleStorySubroutes)))
+	mux.Handle(base+"/notifications", middleware.AuthRequired(authService, http.HandlerFunc(handler.handleNotifications)))
 	mux.HandleFunc(base+"/config", handler.handlePublicConfig)
 }
 
@@ -1067,10 +1109,11 @@ func (h *Handler) handleUserSearch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	items, err := h.userService.Search(r.Context(), principal, users.SearchInput{
-		Query: query,
-		Limit: limit,
-	})
+	items, err := h.profileService.SearchProfiles(r.Context(), auth.AuthPrincipal{
+		AccountID: principal.AccountID,
+		DeviceID:  principal.DeviceID,
+		SessionID: principal.SessionID,
+	}, query, limit)
 	if err != nil {
 		WriteServiceError(w, r, err, http.StatusBadRequest)
 		return
@@ -1086,6 +1129,679 @@ func (h *Handler) handleUserSearch(w http.ResponseWriter, r *http.Request) {
 		"total": len(usersPayload),
 		"limit": limit,
 	})
+}
+
+func (h *Handler) handleProfileSearch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "method not allowed"), http.StatusMethodNotAllowed)
+		return
+	}
+	principal, ok := middleware.PrincipalFromContext(r.Context())
+	if !ok {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeUnauthorized, "missing auth context"), http.StatusUnauthorized)
+		return
+	}
+	query := strings.TrimSpace(r.URL.Query().Get("query"))
+	limit := 20
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil {
+			limit = parsed
+		}
+	}
+	items, err := h.profileService.SearchProfiles(r.Context(), auth.AuthPrincipal{
+		AccountID: principal.AccountID,
+		DeviceID:  principal.DeviceID,
+		SessionID: principal.SessionID,
+	}, query, limit)
+	if err != nil {
+		WriteServiceError(w, r, err, http.StatusBadRequest)
+		return
+	}
+	payload := make([]userSearchItemDTO, 0, len(items))
+	for _, item := range items {
+		payload = append(payload, mapUserSearchItem(item))
+	}
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"users": payload,
+		"total": len(payload),
+		"limit": limit,
+	})
+}
+
+func (h *Handler) handleProfileByUsername(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "method not allowed"), http.StatusMethodNotAllowed)
+		return
+	}
+	principal, ok := middleware.PrincipalFromContext(r.Context())
+	if !ok {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeUnauthorized, "missing auth context"), http.StatusUnauthorized)
+		return
+	}
+	username, parseErr := parseProfileByUsernameRoute(r.URL.Path)
+	if parseErr != nil {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeNotFound, "route not found"), http.StatusNotFound)
+		return
+	}
+	profile, err := h.profileService.GetProfileByUsername(r.Context(), auth.AuthPrincipal{
+		AccountID: principal.AccountID,
+		DeviceID:  principal.DeviceID,
+		SessionID: principal.SessionID,
+	}, username)
+	if err != nil {
+		WriteServiceError(w, r, err, http.StatusBadRequest)
+		return
+	}
+	WriteJSON(w, http.StatusOK, map[string]any{"profile": mapProfile(profile)})
+}
+
+func (h *Handler) handleMyProfile(w http.ResponseWriter, r *http.Request) {
+	principal, ok := middleware.PrincipalFromContext(r.Context())
+	if !ok {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeUnauthorized, "missing auth context"), http.StatusUnauthorized)
+		return
+	}
+	authPrincipal := auth.AuthPrincipal{
+		AccountID: principal.AccountID,
+		DeviceID:  principal.DeviceID,
+		SessionID: principal.SessionID,
+	}
+	switch r.Method {
+	case http.MethodGet:
+		profilePayload, err := h.profileService.GetMyProfile(r.Context(), authPrincipal)
+		if err != nil {
+			WriteServiceError(w, r, err, http.StatusBadRequest)
+			return
+		}
+		WriteJSON(w, http.StatusOK, map[string]any{"profile": mapProfile(profilePayload)})
+		return
+	case http.MethodPatch:
+		if !h.enforceBodySize(w, r, maxAuthBodyBytes) {
+			return
+		}
+		var req updateProfileRequest
+		if err := middleware.DecodeJSON(r, &req); err != nil {
+			WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "invalid request body"), http.StatusBadRequest)
+			return
+		}
+		updateInput := profile.UpdateInput{
+			DisplayName:   req.DisplayName,
+			Username:      req.Username,
+			Bio:           req.Bio,
+			StatusText:    req.StatusText,
+			Location:      req.Location,
+			WebsiteURL:    req.WebsiteURL,
+			AvatarMediaID: req.AvatarMediaID,
+			BannerMediaID: req.BannerMediaID,
+		}
+		if req.BirthDate != nil {
+			updateInput.BirthDateSet = true
+			trimmedBirthDate := strings.TrimSpace(*req.BirthDate)
+			if trimmedBirthDate == "" {
+				updateInput.BirthDate = nil
+			} else {
+				parsed, err := time.Parse("2006-01-02", trimmedBirthDate)
+				if err != nil {
+					WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "birthDate must use YYYY-MM-DD"), http.StatusBadRequest)
+					return
+				}
+				utc := parsed.UTC()
+				updateInput.BirthDate = &utc
+			}
+		}
+
+		if _, err := h.profileService.UpdateProfile(r.Context(), authPrincipal, updateInput); err != nil {
+			WriteServiceError(w, r, err, http.StatusBadRequest)
+			return
+		}
+		profilePayload, err := h.profileService.GetMyProfile(r.Context(), authPrincipal)
+		if err != nil {
+			WriteServiceError(w, r, err, http.StatusBadRequest)
+			return
+		}
+		WriteJSON(w, http.StatusOK, map[string]any{"profile": mapProfile(profilePayload)})
+		return
+	default:
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "method not allowed"), http.StatusMethodNotAllowed)
+		return
+	}
+}
+
+func (h *Handler) handleProfileSubroutes(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "method not allowed"), http.StatusMethodNotAllowed)
+		return
+	}
+	principal, ok := middleware.PrincipalFromContext(r.Context())
+	if !ok {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeUnauthorized, "missing auth context"), http.StatusUnauthorized)
+		return
+	}
+	accountID, parseErr := parseProfileRoute(r.URL.Path)
+	if parseErr != nil {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeNotFound, "route not found"), http.StatusNotFound)
+		return
+	}
+	profilePayload, err := h.profileService.GetProfileByAccountID(r.Context(), auth.AuthPrincipal{
+		AccountID: principal.AccountID,
+		DeviceID:  principal.DeviceID,
+		SessionID: principal.SessionID,
+	}, accountID)
+	if err != nil {
+		WriteServiceError(w, r, err, http.StatusBadRequest)
+		return
+	}
+	WriteJSON(w, http.StatusOK, map[string]any{"profile": mapProfile(profilePayload)})
+}
+
+func (h *Handler) handlePrivacyMe(w http.ResponseWriter, r *http.Request) {
+	principal, ok := middleware.PrincipalFromContext(r.Context())
+	if !ok {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeUnauthorized, "missing auth context"), http.StatusUnauthorized)
+		return
+	}
+	authPrincipal := auth.AuthPrincipal{
+		AccountID: principal.AccountID,
+		DeviceID:  principal.DeviceID,
+		SessionID: principal.SessionID,
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		settings, err := h.privacyService.GetSettings(r.Context(), authPrincipal.AccountID)
+		if err != nil {
+			WriteServiceError(w, r, err, http.StatusBadRequest)
+			return
+		}
+		WriteJSON(w, http.StatusOK, map[string]any{"privacy": mapProfilePrivacy(settings)})
+		return
+	case http.MethodPatch:
+		if !h.enforceBodySize(w, r, maxAuthBodyBytes) {
+			return
+		}
+		var req updatePrivacyRequest
+		if err := middleware.DecodeJSON(r, &req); err != nil {
+			WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "invalid request body"), http.StatusBadRequest)
+			return
+		}
+		input := privacy.UpdateInput{
+			ProfileVisibility:    parseVisibilityPointer(req.ProfileVisibility),
+			PostsVisibility:      parseVisibilityPointer(req.PostsVisibility),
+			PhotosVisibility:     parseVisibilityPointer(req.PhotosVisibility),
+			StoriesVisibility:    parseVisibilityPointer(req.StoriesVisibility),
+			FriendsVisibility:    parseVisibilityPointer(req.FriendsVisibility),
+			BirthDateVisibility:  parseVisibilityPointer(req.BirthDateVisibility),
+			LocationVisibility:   parseVisibilityPointer(req.LocationVisibility),
+			LinksVisibility:      parseVisibilityPointer(req.LinksVisibility),
+			FriendRequestsPolicy: parseFriendRequestPolicyPointer(req.FriendRequestsPolicy),
+			DMPolicy:             parseDMPolicyPointer(req.DMPolicy),
+		}
+		settings, err := h.privacyService.UpdateSettings(r.Context(), authPrincipal.AccountID, input)
+		if err != nil {
+			WriteServiceError(w, r, err, http.StatusBadRequest)
+			return
+		}
+		WriteJSON(w, http.StatusOK, map[string]any{"privacy": mapProfilePrivacy(settings)})
+		return
+	default:
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "method not allowed"), http.StatusMethodNotAllowed)
+		return
+	}
+}
+
+func (h *Handler) handleFriends(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "method not allowed"), http.StatusMethodNotAllowed)
+		return
+	}
+	principal, ok := middleware.PrincipalFromContext(r.Context())
+	if !ok {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeUnauthorized, "missing auth context"), http.StatusUnauthorized)
+		return
+	}
+	limit := 100
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil {
+			limit = parsed
+		}
+	}
+	items, err := h.friendsService.ListFriends(r.Context(), auth.AuthPrincipal{
+		AccountID: principal.AccountID,
+		DeviceID:  principal.DeviceID,
+		SessionID: principal.SessionID,
+	}, limit)
+	if err != nil {
+		WriteServiceError(w, r, err, http.StatusBadRequest)
+		return
+	}
+	payload := make([]friendListItemDTO, 0, len(items))
+	for _, item := range items {
+		payload = append(payload, mapFriendListItem(item))
+	}
+	WriteJSON(w, http.StatusOK, map[string]any{"friends": payload, "total": len(payload)})
+}
+
+func (h *Handler) handleFriendRequests(w http.ResponseWriter, r *http.Request) {
+	principal, ok := middleware.PrincipalFromContext(r.Context())
+	if !ok {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeUnauthorized, "missing auth context"), http.StatusUnauthorized)
+		return
+	}
+	authPrincipal := auth.AuthPrincipal{
+		AccountID: principal.AccountID,
+		DeviceID:  principal.DeviceID,
+		SessionID: principal.SessionID,
+	}
+	switch r.Method {
+	case http.MethodGet:
+		limit := 50
+		if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+			if parsed, err := strconv.Atoi(raw); err == nil {
+				limit = parsed
+			}
+		}
+		direction := strings.TrimSpace(r.URL.Query().Get("direction"))
+		if direction == "" {
+			direction = "incoming"
+		}
+		items, err := h.friendsService.ListRequests(r.Context(), authPrincipal, direction, limit)
+		if err != nil {
+			WriteServiceError(w, r, err, http.StatusBadRequest)
+			return
+		}
+		payload := make([]friendRequestDTO, 0, len(items))
+		for _, item := range items {
+			payload = append(payload, mapFriendRequest(item))
+		}
+		WriteJSON(w, http.StatusOK, map[string]any{"requests": payload, "total": len(payload), "direction": direction})
+		return
+	case http.MethodPost:
+		if !h.enforceBodySize(w, r, maxAuthBodyBytes) {
+			return
+		}
+		var req createFriendRequestBody
+		if err := middleware.DecodeJSON(r, &req); err != nil {
+			WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "invalid request body"), http.StatusBadRequest)
+			return
+		}
+		created, err := h.friendsService.SendRequest(r.Context(), authPrincipal, req.TargetAccountID)
+		if err != nil {
+			WriteServiceError(w, r, err, http.StatusBadRequest)
+			return
+		}
+		WriteJSON(w, http.StatusCreated, map[string]any{
+			"request": map[string]any{
+				"id":            created.ID,
+				"fromAccountId": created.FromAccountID,
+				"toAccountId":   created.ToAccountID,
+				"status":        created.Status,
+				"createdAt":     created.CreatedAt.UTC().Format(time.RFC3339),
+				"updatedAt":     created.UpdatedAt.UTC().Format(time.RFC3339),
+			},
+		})
+		return
+	default:
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "method not allowed"), http.StatusMethodNotAllowed)
+		return
+	}
+}
+
+func (h *Handler) handleFriendRequestSubroutes(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "method not allowed"), http.StatusMethodNotAllowed)
+		return
+	}
+	principal, ok := middleware.PrincipalFromContext(r.Context())
+	if !ok {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeUnauthorized, "missing auth context"), http.StatusUnauthorized)
+		return
+	}
+	requestID, action, parseErr := parseFriendRequestRoute(r.URL.Path)
+	if parseErr != nil {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeNotFound, "route not found"), http.StatusNotFound)
+		return
+	}
+	authPrincipal := auth.AuthPrincipal{
+		AccountID: principal.AccountID,
+		DeviceID:  principal.DeviceID,
+		SessionID: principal.SessionID,
+	}
+	var (
+		updated domain.FriendRequest
+		err     error
+	)
+	switch action {
+	case "accept":
+		updated, err = h.friendsService.AcceptRequest(r.Context(), authPrincipal, requestID)
+	case "reject":
+		updated, err = h.friendsService.RejectRequest(r.Context(), authPrincipal, requestID)
+	case "cancel":
+		updated, err = h.friendsService.CancelRequest(r.Context(), authPrincipal, requestID)
+	default:
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeNotFound, "route not found"), http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		WriteServiceError(w, r, err, http.StatusBadRequest)
+		return
+	}
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"request": map[string]any{
+			"id":            updated.ID,
+			"fromAccountId": updated.FromAccountID,
+			"toAccountId":   updated.ToAccountID,
+			"status":        updated.Status,
+			"createdAt":     updated.CreatedAt.UTC().Format(time.RFC3339),
+			"updatedAt":     updated.UpdatedAt.UTC().Format(time.RFC3339),
+		},
+	})
+}
+
+func (h *Handler) handleFriendSubroutes(w http.ResponseWriter, r *http.Request) {
+	principal, ok := middleware.PrincipalFromContext(r.Context())
+	if !ok {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeUnauthorized, "missing auth context"), http.StatusUnauthorized)
+		return
+	}
+	targetAccountID, action, parseErr := parseFriendRoute(r.URL.Path)
+	if parseErr != nil {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeNotFound, "route not found"), http.StatusNotFound)
+		return
+	}
+	authPrincipal := auth.AuthPrincipal{
+		AccountID: principal.AccountID,
+		DeviceID:  principal.DeviceID,
+		SessionID: principal.SessionID,
+	}
+
+	if action == "" {
+		if r.Method != http.MethodDelete {
+			WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "method not allowed"), http.StatusMethodNotAllowed)
+			return
+		}
+		if err := h.friendsService.RemoveFriend(r.Context(), authPrincipal, targetAccountID); err != nil {
+			WriteServiceError(w, r, err, http.StatusBadRequest)
+			return
+		}
+		WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
+		return
+	}
+	if action != "block" {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeNotFound, "route not found"), http.StatusNotFound)
+		return
+	}
+	switch r.Method {
+	case http.MethodPost:
+		if err := h.friendsService.Block(r.Context(), authPrincipal, targetAccountID); err != nil {
+			WriteServiceError(w, r, err, http.StatusBadRequest)
+			return
+		}
+		WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
+	case http.MethodDelete:
+		if err := h.friendsService.Unblock(r.Context(), authPrincipal, targetAccountID); err != nil {
+			WriteServiceError(w, r, err, http.StatusBadRequest)
+			return
+		}
+		WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
+	default:
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "method not allowed"), http.StatusMethodNotAllowed)
+	}
+}
+
+func (h *Handler) handleMediaUpload(w http.ResponseWriter, r *http.Request) {
+	if !h.enforceRateLimit(w, r, h.mediaRateLimiter) {
+		return
+	}
+	if r.Method != http.MethodPost {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "method not allowed"), http.StatusMethodNotAllowed)
+		return
+	}
+	principal, ok := middleware.PrincipalFromContext(r.Context())
+	if !ok {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeUnauthorized, "missing auth context"), http.StatusUnauthorized)
+		return
+	}
+	if !h.enforceBodySize(w, r, maxAttachmentBodyBytes*2) {
+		return
+	}
+	if err := r.ParseMultipartForm(maxAttachmentBodyBytes * 2); err != nil {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "invalid multipart body"), http.StatusBadRequest)
+		return
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "file is required"), http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+
+	payload, err := io.ReadAll(io.LimitReader(file, maxAttachmentBodyBytes*2+1))
+	if err != nil {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "failed to read file"), http.StatusBadRequest)
+		return
+	}
+	if len(payload) == 0 {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "empty file payload"), http.StatusBadRequest)
+		return
+	}
+	mediaDomain := domain.MediaDomain(strings.ToLower(strings.TrimSpace(r.FormValue("domain"))))
+	mediaKind := domain.MediaKind(strings.ToLower(strings.TrimSpace(r.FormValue("kind"))))
+	visibility := domain.VisibilityScope(strings.ToLower(strings.TrimSpace(r.FormValue("visibility"))))
+	if visibility == "" {
+		visibility = domain.VisibilityFriends
+	}
+	mimeType := strings.TrimSpace(r.FormValue("mimeType"))
+
+	created, createErr := h.mediaService.Upload(r.Context(), media.UploadInput{
+		Principal: auth.AuthPrincipal{
+			AccountID: principal.AccountID,
+			DeviceID:  principal.DeviceID,
+			SessionID: principal.SessionID,
+		},
+		Domain:     mediaDomain,
+		Kind:       mediaKind,
+		Visibility: visibility,
+		FileName:   header.Filename,
+		MimeType:   mimeType,
+		Payload:    payload,
+	})
+	if createErr != nil {
+		WriteServiceError(w, r, createErr, http.StatusBadRequest)
+		return
+	}
+	WriteJSON(w, http.StatusCreated, map[string]any{"media": mapMedia(created, h.cfg.HTTP.APIPrefix)})
+}
+
+func (h *Handler) handleMediaSubroutes(w http.ResponseWriter, r *http.Request) {
+	principal, ok := middleware.PrincipalFromContext(r.Context())
+	if !ok {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeUnauthorized, "missing auth context"), http.StatusUnauthorized)
+		return
+	}
+	mediaID, action, parseErr := parseMediaRoute(r.URL.Path)
+	if parseErr != nil {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeNotFound, "route not found"), http.StatusNotFound)
+		return
+	}
+	authPrincipal := auth.AuthPrincipal{
+		AccountID: principal.AccountID,
+		DeviceID:  principal.DeviceID,
+		SessionID: principal.SessionID,
+	}
+
+	if action == "content" {
+		if r.Method != http.MethodGet {
+			WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "method not allowed"), http.StatusMethodNotAllowed)
+			return
+		}
+		result, err := h.mediaService.Download(r.Context(), authPrincipal, mediaID)
+		if err != nil {
+			WriteServiceError(w, r, err, http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", result.Media.MimeType)
+		w.Header().Set("Content-Length", strconv.FormatInt(int64(len(result.Content)), 10))
+		w.Header().Set("Cache-Control", "private, max-age=120")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(result.Content)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		mediaMetadata, err := h.mediaService.GetMedia(r.Context(), authPrincipal, mediaID)
+		if err != nil {
+			WriteServiceError(w, r, err, http.StatusBadRequest)
+			return
+		}
+		WriteJSON(w, http.StatusOK, map[string]any{"media": mapMedia(mediaMetadata, h.cfg.HTTP.APIPrefix)})
+	case http.MethodDelete:
+		if err := h.mediaService.Delete(r.Context(), authPrincipal, mediaID); err != nil {
+			WriteServiceError(w, r, err, http.StatusBadRequest)
+			return
+		}
+		WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
+	default:
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "method not allowed"), http.StatusMethodNotAllowed)
+	}
+}
+
+func (h *Handler) handleStories(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "method not allowed"), http.StatusMethodNotAllowed)
+		return
+	}
+	if !h.enforceBodySize(w, r, maxAuthBodyBytes) {
+		return
+	}
+	principal, ok := middleware.PrincipalFromContext(r.Context())
+	if !ok {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeUnauthorized, "missing auth context"), http.StatusUnauthorized)
+		return
+	}
+	var req createStoryRequest
+	if err := middleware.DecodeJSON(r, &req); err != nil {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "invalid request body"), http.StatusBadRequest)
+		return
+	}
+	var visibility *domain.VisibilityScope
+	if req.Visibility != nil {
+		value := domain.VisibilityScope(strings.ToLower(strings.TrimSpace(*req.Visibility)))
+		visibility = &value
+	}
+	created, err := h.storiesService.Create(r.Context(), auth.AuthPrincipal{
+		AccountID: principal.AccountID,
+		DeviceID:  principal.DeviceID,
+		SessionID: principal.SessionID,
+	}, stories.CreateInput{
+		MediaID:    req.MediaID,
+		Caption:    req.Caption,
+		Visibility: visibility,
+	})
+	if err != nil {
+		WriteServiceError(w, r, err, http.StatusBadRequest)
+		return
+	}
+	WriteJSON(w, http.StatusCreated, map[string]any{"story": mapStory(created, h.cfg.HTTP.APIPrefix)})
+}
+
+func (h *Handler) handleStoryFeed(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "method not allowed"), http.StatusMethodNotAllowed)
+		return
+	}
+	principal, ok := middleware.PrincipalFromContext(r.Context())
+	if !ok {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeUnauthorized, "missing auth context"), http.StatusUnauthorized)
+		return
+	}
+	limit := 60
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil {
+			limit = parsed
+		}
+	}
+	items, err := h.storiesService.Feed(r.Context(), auth.AuthPrincipal{
+		AccountID: principal.AccountID,
+		DeviceID:  principal.DeviceID,
+		SessionID: principal.SessionID,
+	}, limit)
+	if err != nil {
+		WriteServiceError(w, r, err, http.StatusBadRequest)
+		return
+	}
+	payload := make([]storyDTO, 0, len(items))
+	for _, item := range items {
+		payload = append(payload, mapStory(item, h.cfg.HTTP.APIPrefix))
+	}
+	WriteJSON(w, http.StatusOK, map[string]any{"stories": payload, "total": len(payload)})
+}
+
+func (h *Handler) handleStorySubroutes(w http.ResponseWriter, r *http.Request) {
+	principal, ok := middleware.PrincipalFromContext(r.Context())
+	if !ok {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeUnauthorized, "missing auth context"), http.StatusUnauthorized)
+		return
+	}
+	storyID, parseErr := parseStoryRoute(r.URL.Path)
+	if parseErr != nil {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeNotFound, "route not found"), http.StatusNotFound)
+		return
+	}
+	authPrincipal := auth.AuthPrincipal{
+		AccountID: principal.AccountID,
+		DeviceID:  principal.DeviceID,
+		SessionID: principal.SessionID,
+	}
+	switch r.Method {
+	case http.MethodGet:
+		item, err := h.storiesService.GetByID(r.Context(), authPrincipal, storyID)
+		if err != nil {
+			WriteServiceError(w, r, err, http.StatusBadRequest)
+			return
+		}
+		WriteJSON(w, http.StatusOK, map[string]any{"story": mapStory(item, h.cfg.HTTP.APIPrefix)})
+	case http.MethodDelete:
+		if err := h.storiesService.Delete(r.Context(), authPrincipal, storyID); err != nil {
+			WriteServiceError(w, r, err, http.StatusBadRequest)
+			return
+		}
+		WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
+	default:
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "method not allowed"), http.StatusMethodNotAllowed)
+	}
+}
+
+func (h *Handler) handleNotifications(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "method not allowed"), http.StatusMethodNotAllowed)
+		return
+	}
+	principal, ok := middleware.PrincipalFromContext(r.Context())
+	if !ok {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeUnauthorized, "missing auth context"), http.StatusUnauthorized)
+		return
+	}
+	limit := 30
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil {
+			limit = parsed
+		}
+	}
+	items, err := h.notificationsService.List(r.Context(), auth.AuthPrincipal{
+		AccountID: principal.AccountID,
+		DeviceID:  principal.DeviceID,
+		SessionID: principal.SessionID,
+	}, limit)
+	if err != nil {
+		WriteServiceError(w, r, err, http.StatusBadRequest)
+		return
+	}
+	payload := make([]appNotificationDTO, 0, len(items))
+	for _, item := range items {
+		payload = append(payload, mapAppNotification(item))
+	}
+	WriteJSON(w, http.StatusOK, map[string]any{"notifications": payload, "total": len(payload)})
 }
 
 func (h *Handler) handleUserSubroutes(w http.ResponseWriter, r *http.Request) {
@@ -1105,19 +1821,28 @@ func (h *Handler) handleUserSubroutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	profile, err := h.userService.GetPublicProfile(r.Context(), principal, accountID)
+	profilePayload, err := h.profileService.GetProfileByAccountID(r.Context(), auth.AuthPrincipal{
+		AccountID: principal.AccountID,
+		DeviceID:  principal.DeviceID,
+		SessionID: principal.SessionID,
+	}, accountID)
 	if err != nil {
 		WriteServiceError(w, r, err, http.StatusBadRequest)
 		return
 	}
 
 	WriteJSON(w, http.StatusOK, map[string]any{
-		"accountId":                    profile.AccountID,
-		"email":                        profile.Email,
-		"createdAt":                    profile.CreatedAt.UTC().Format(time.RFC3339),
-		"postCount":                    profile.PostCount,
-		"canStartDirectChat":           profile.CanStartDirectChat,
-		"existingDirectConversationId": profile.ExistingDirectConversation,
+		"accountId":                    profilePayload.AccountID,
+		"email":                        profilePayload.Email,
+		"createdAt":                    profilePayload.CreatedAt.UTC().Format(time.RFC3339),
+		"postCount":                    profilePayload.PostCount,
+		"canStartDirectChat":           profilePayload.CanStartDirectChat,
+		"existingDirectConversationId": profilePayload.ExistingDirectConversation,
+		"displayName":                  profilePayload.DisplayName,
+		"username":                     profilePayload.Username,
+		"avatarMediaId":                profilePayload.AvatarMediaID,
+		"bannerMediaId":                profilePayload.BannerMediaID,
+		"friendState":                  profilePayload.FriendState,
 	})
 }
 
@@ -1519,6 +2244,7 @@ func (h *Handler) handleSocialPosts(w http.ResponseWriter, r *http.Request) {
 			Content:   req.Content,
 			MediaType: mediaType,
 			MediaURL:  req.MediaURL,
+			MediaID:   req.MediaID,
 			Mood:      req.Mood,
 		})
 		if err != nil {
@@ -1762,6 +2488,121 @@ func parseUserRoute(path string) (string, string, error) {
 		return "", "", fmt.Errorf("invalid user route")
 	}
 	return parts[0], parts[1], nil
+}
+
+func parseProfileRoute(path string) (string, error) {
+	anchor := "/profiles/"
+	index := strings.Index(path, anchor)
+	if index == -1 {
+		return "", fmt.Errorf("missing profile route")
+	}
+	tail := strings.Trim(path[index+len(anchor):], "/")
+	parts := strings.Split(tail, "/")
+	if len(parts) == 0 || parts[0] == "" {
+		return "", fmt.Errorf("invalid profile route")
+	}
+	if len(parts) != 1 {
+		return "", fmt.Errorf("invalid profile route")
+	}
+	return parts[0], nil
+}
+
+func parseProfileByUsernameRoute(path string) (string, error) {
+	anchor := "/profiles/by-username/"
+	index := strings.Index(path, anchor)
+	if index == -1 {
+		return "", fmt.Errorf("missing username profile route")
+	}
+	tail := strings.Trim(path[index+len(anchor):], "/")
+	if tail == "" || strings.Contains(tail, "/") {
+		return "", fmt.Errorf("invalid username profile route")
+	}
+	return tail, nil
+}
+
+func parseFriendRequestRoute(path string) (string, string, error) {
+	anchor := "/friends/requests/"
+	index := strings.Index(path, anchor)
+	if index == -1 {
+		return "", "", fmt.Errorf("missing friend request route")
+	}
+	tail := strings.Trim(path[index+len(anchor):], "/")
+	parts := strings.Split(tail, "/")
+	if len(parts) < 2 {
+		return "", "", fmt.Errorf("invalid friend request route")
+	}
+	return parts[0], parts[1], nil
+}
+
+func parseFriendRoute(path string) (string, string, error) {
+	anchor := "/friends/"
+	index := strings.Index(path, anchor)
+	if index == -1 {
+		return "", "", fmt.Errorf("missing friend route")
+	}
+	tail := strings.Trim(path[index+len(anchor):], "/")
+	parts := strings.Split(tail, "/")
+	if len(parts) == 0 || parts[0] == "" {
+		return "", "", fmt.Errorf("invalid friend route")
+	}
+	if len(parts) == 1 {
+		return parts[0], "", nil
+	}
+	return parts[0], parts[1], nil
+}
+
+func parseMediaRoute(path string) (string, string, error) {
+	anchor := "/media/"
+	index := strings.Index(path, anchor)
+	if index == -1 {
+		return "", "", fmt.Errorf("missing media route")
+	}
+	tail := strings.Trim(path[index+len(anchor):], "/")
+	parts := strings.Split(tail, "/")
+	if len(parts) == 0 || parts[0] == "" {
+		return "", "", fmt.Errorf("invalid media route")
+	}
+	if len(parts) == 1 {
+		return parts[0], "", nil
+	}
+	return parts[0], parts[1], nil
+}
+
+func parseStoryRoute(path string) (string, error) {
+	anchor := "/stories/"
+	index := strings.Index(path, anchor)
+	if index == -1 {
+		return "", fmt.Errorf("missing story route")
+	}
+	tail := strings.Trim(path[index+len(anchor):], "/")
+	if tail == "" || strings.Contains(tail, "/") {
+		return "", fmt.Errorf("invalid story route")
+	}
+	return tail, nil
+}
+
+func parseVisibilityPointer(raw *string) *domain.VisibilityScope {
+	if raw == nil {
+		return nil
+	}
+	value := domain.VisibilityScope(strings.ToLower(strings.TrimSpace(*raw)))
+	return &value
+}
+
+func parseFriendRequestPolicyPointer(raw *string) *domain.FriendRequestPolicy {
+	if raw == nil {
+		return nil
+	}
+	value := domain.FriendRequestPolicy(strings.ToLower(strings.TrimSpace(*raw)))
+	return &value
+}
+
+func parseDMPolicyPointer(raw *string) *domain.DMPolicy {
+	if raw == nil {
+		return nil
+	}
+	value := domain.DMPolicy(strings.ToLower(strings.TrimSpace(*raw)))
+	return &value
 }
 
 func (h *Handler) enforceRateLimit(w http.ResponseWriter, r *http.Request, limiter *middleware.IPRateLimiter) bool {

@@ -1,9 +1,11 @@
 package social
 
 import (
+	"context"
 	"testing"
 
 	"github.com/example/secure-messenger/apps/relay-server/internal/domain"
+	"github.com/example/secure-messenger/apps/relay-server/internal/service/auth"
 )
 
 func TestNormalizeMedia(t *testing.T) {
@@ -58,7 +60,8 @@ func TestNormalizeMedia(t *testing.T) {
 	for _, testCase := range tests {
 		testCase := testCase
 		t.Run(testCase.name, func(t *testing.T) {
-			_, _, err := normalizeMedia(testCase.mediaType, testCase.mediaURL)
+			svc := &Service{}
+			_, _, _, err := svc.normalizeMediaInput(context.Background(), auth.AuthPrincipal{}, testCase.mediaType, testCase.mediaURL, nil)
 			if testCase.wantErr && err == nil {
 				t.Fatalf("expected error, got nil")
 			}

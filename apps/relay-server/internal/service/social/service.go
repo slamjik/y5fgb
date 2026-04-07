@@ -11,6 +11,7 @@ import (
 	"github.com/example/secure-messenger/apps/relay-server/internal/security"
 	"github.com/example/secure-messenger/apps/relay-server/internal/service"
 	"github.com/example/secure-messenger/apps/relay-server/internal/service/auth"
+	"github.com/example/secure-messenger/apps/relay-server/internal/service/privacy"
 )
 
 const (
@@ -21,7 +22,8 @@ const (
 )
 
 type Service struct {
-	repo *postgres.Store
+	repo          *postgres.Store
+	privacyPolicy *privacy.Service
 }
 
 type ListPostsInput struct {
@@ -36,11 +38,15 @@ type CreatePostInput struct {
 	Content   string
 	MediaType *domain.SocialMediaType
 	MediaURL  *string
+	MediaID   *string
 	Mood      *string
 }
 
-func New(repo *postgres.Store) *Service {
-	return &Service{repo: repo}
+func New(repo *postgres.Store, privacyPolicy *privacy.Service) *Service {
+	return &Service{
+		repo:          repo,
+		privacyPolicy: privacyPolicy,
+	}
 }
 
 func (s *Service) ListPosts(ctx context.Context, principal auth.AuthPrincipal, input ListPostsInput) ([]domain.SocialPostFeedItem, error) {
@@ -56,7 +62,7 @@ func (s *Service) ListPosts(ctx context.Context, principal auth.AuthPrincipal, i
 		onlyAuthor = &accountID
 	}
 
-	items, err := s.repo.ListSocialPosts(ctx, postgres.ListSocialPostsParams{
+	rawItems, err := s.repo.ListSocialPosts(ctx, postgres.ListSocialPostsParams{
 		ViewerAccountID:   principal.AccountID,
 		Offset:            offset,
 		Limit:             limit,
@@ -67,7 +73,38 @@ func (s *Service) ListPosts(ctx context.Context, principal auth.AuthPrincipal, i
 	if err != nil {
 		return nil, service.NewError(service.ErrorCodeInternal, "failed to list social posts")
 	}
-	return items, nil
+	filtered := make([]domain.SocialPostFeedItem, 0, len(rawItems))
+	for _, item := range rawItems {
+		if item.Post.AuthorAccountID == principal.AccountID {
+			filtered = append(filtered, item)
+			continue
+		}
+		blockedByViewer, blockErr := s.repo.IsBlocked(ctx, principal.AccountID, item.Post.AuthorAccountID)
+		if blockErr != nil {
+			return nil, service.NewError(service.ErrorCodeInternal, "failed to resolve block state")
+		}
+		blockedByAuthor, blockErr := s.repo.IsBlocked(ctx, item.Post.AuthorAccountID, principal.AccountID)
+		if blockErr != nil {
+			return nil, service.NewError(service.ErrorCodeInternal, "failed to resolve block state")
+		}
+		if blockedByViewer || blockedByAuthor {
+			continue
+		}
+
+		settings, settingsErr := s.privacyPolicy.GetSettings(ctx, item.Post.AuthorAccountID)
+		if settingsErr != nil {
+			return nil, settingsErr
+		}
+		canView, visibilityErr := s.privacyPolicy.CanView(ctx, item.Post.AuthorAccountID, principal.AccountID, settings.PostsVisibility)
+		if visibilityErr != nil {
+			return nil, visibilityErr
+		}
+		if !canView {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	return filtered, nil
 }
 
 func (s *Service) CreatePost(ctx context.Context, principal auth.AuthPrincipal, input CreatePostInput) (domain.SocialPostFeedItem, error) {
@@ -79,7 +116,7 @@ func (s *Service) CreatePost(ctx context.Context, principal auth.AuthPrincipal, 
 		return domain.SocialPostFeedItem{}, service.NewError(service.ErrorCodeValidation, "post content is too long")
 	}
 
-	normalizedMediaType, normalizedMediaURL, validationErr := normalizeMedia(input.MediaType, input.MediaURL)
+	normalizedMediaType, normalizedMediaURL, normalizedMediaID, validationErr := s.normalizeMediaInput(ctx, principal, input.MediaType, input.MediaURL, input.MediaID)
 	if validationErr != nil {
 		return domain.SocialPostFeedItem{}, validationErr
 	}
@@ -96,6 +133,7 @@ func (s *Service) CreatePost(ctx context.Context, principal auth.AuthPrincipal, 
 		Content:         content,
 		MediaType:       normalizedMediaType,
 		MediaURL:        normalizedMediaURL,
+		MediaID:         normalizedMediaID,
 		Mood:            mood,
 		CreatedAt:       now,
 		UpdatedAt:       now,
@@ -108,12 +146,27 @@ func (s *Service) CreatePost(ctx context.Context, principal auth.AuthPrincipal, 
 	if accountErr != nil {
 		return domain.SocialPostFeedItem{}, service.NewError(service.ErrorCodeInternal, "failed to resolve social post author")
 	}
+	profile, profileErr := s.repo.GetUserProfileByAccountID(ctx, principal.AccountID)
+	if profileErr != nil && profileErr != postgres.ErrNotFound {
+		return domain.SocialPostFeedItem{}, service.NewError(service.ErrorCodeInternal, "failed to resolve social post author profile")
+	}
+
+	var mediaObject *domain.MediaObject
+	if created.MediaID != nil {
+		if media, mediaErr := s.repo.GetMediaObjectByID(ctx, *created.MediaID); mediaErr == nil {
+			mediaObject = &media
+		}
+	}
 
 	return domain.SocialPostFeedItem{
-		Post:        created,
-		AuthorEmail: account.Email,
-		LikeCount:   0,
-		LikedByMe:   false,
+		Post:              created,
+		AuthorEmail:       account.Email,
+		AuthorDisplayName: profile.DisplayName,
+		AuthorUsername:    profile.Username,
+		AuthorAvatarID:    profile.AvatarMediaID,
+		Media:             mediaObject,
+		LikeCount:         0,
+		LikedByMe:         false,
 	}, nil
 }
 
@@ -199,21 +252,52 @@ func (s *Service) ensurePostVisibleToViewer(ctx context.Context, postID string) 
 	return nil
 }
 
-func normalizeMedia(mediaType *domain.SocialMediaType, mediaURL *string) (*domain.SocialMediaType, *string, error) {
+func (s *Service) normalizeMediaInput(ctx context.Context, principal auth.AuthPrincipal, mediaType *domain.SocialMediaType, mediaURL *string, mediaID *string) (*domain.SocialMediaType, *string, *string, error) {
+	normalizedMediaID := normalizeOptionalText(mediaID)
+	normalizedMediaURL := normalizeOptionalText(mediaURL)
+	if normalizedMediaID != nil && normalizedMediaURL != nil {
+		return nil, nil, nil, service.NewError(service.ErrorCodeValidation, "use either mediaId or mediaUrl, not both")
+	}
+	if normalizedMediaID != nil {
+		media, err := s.repo.GetMediaObjectByID(ctx, *normalizedMediaID)
+		if err != nil {
+			if err == postgres.ErrNotFound {
+				return nil, nil, nil, service.NewError(service.ErrorCodeNotFound, "media not found")
+			}
+			return nil, nil, nil, service.NewError(service.ErrorCodeInternal, "failed to resolve media")
+		}
+		if media.OwnerAccountID != principal.AccountID {
+			return nil, nil, nil, service.NewError(service.ErrorCodeForbidden, "media must belong to current account")
+		}
+		if media.Domain != domain.MediaDomainSocial {
+			return nil, nil, nil, service.NewError(service.ErrorCodeValidation, "media domain must be social")
+		}
+		switch media.Kind {
+		case domain.MediaKindPhoto:
+			kind := domain.SocialMediaTypeImage
+			return &kind, nil, normalizedMediaID, nil
+		case domain.MediaKindVideo:
+			kind := domain.SocialMediaTypeVideo
+			return &kind, nil, normalizedMediaID, nil
+		default:
+			return nil, nil, nil, service.NewError(service.ErrorCodeValidation, "unsupported social media kind")
+		}
+	}
+
 	var normalizedURL *string
-	if mediaURL != nil {
-		trimmed := strings.TrimSpace(*mediaURL)
+	if normalizedMediaURL != nil {
+		trimmed := strings.TrimSpace(*normalizedMediaURL)
 		if trimmed != "" {
 			if len(trimmed) > maxMediaURLLength {
-				return nil, nil, service.NewError(service.ErrorCodeValidation, "media url is too long")
+				return nil, nil, nil, service.NewError(service.ErrorCodeValidation, "media url is too long")
 			}
 			parsed, parseErr := url.Parse(trimmed)
 			if parseErr != nil || parsed == nil || parsed.Host == "" || parsed.Scheme == "" {
-				return nil, nil, service.NewError(service.ErrorCodeValidation, "media url is invalid")
+				return nil, nil, nil, service.NewError(service.ErrorCodeValidation, "media url is invalid")
 			}
 			scheme := strings.ToLower(parsed.Scheme)
 			if scheme != "http" && scheme != "https" {
-				return nil, nil, service.NewError(service.ErrorCodeValidation, "media url must use http/https")
+				return nil, nil, nil, service.NewError(service.ErrorCodeValidation, "media url must use http/https")
 			}
 			normalized := parsed.String()
 			normalizedURL = &normalized
@@ -221,17 +305,17 @@ func normalizeMedia(mediaType *domain.SocialMediaType, mediaURL *string) (*domai
 	}
 
 	if normalizedURL == nil {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 
 	if mediaType == nil {
-		return nil, nil, service.NewError(service.ErrorCodeValidation, "media type is required when media url is set")
+		return nil, nil, nil, service.NewError(service.ErrorCodeValidation, "media type is required when media url is set")
 	}
 	mediaTypeValue := domain.SocialMediaType(strings.ToLower(strings.TrimSpace(string(*mediaType))))
 	if mediaTypeValue != domain.SocialMediaTypeImage && mediaTypeValue != domain.SocialMediaTypeVideo {
-		return nil, nil, service.NewError(service.ErrorCodeValidation, "media type must be image or video")
+		return nil, nil, nil, service.NewError(service.ErrorCodeValidation, "media type must be image or video")
 	}
-	return &mediaTypeValue, normalizedURL, nil
+	return &mediaTypeValue, normalizedURL, nil, nil
 }
 
 func normalizeMood(mood *string) (*string, error) {
@@ -246,4 +330,15 @@ func normalizeMood(mood *string) (*string, error) {
 		return nil, service.NewError(service.ErrorCodeValidation, "mood is too long")
 	}
 	return &trimmed, nil
+}
+
+func normalizeOptionalText(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(*value)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
 }

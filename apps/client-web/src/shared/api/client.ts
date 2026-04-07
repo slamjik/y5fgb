@@ -4,28 +4,41 @@
   AttachmentUploadResponse,
   AuthSessionResponse,
   ConversationDetailsResponse,
+  CreateFriendRequestBody,
   CreateConversationResponse,
   CreateGroupConversationRequest,
   CreateSocialPostRequest,
   CreateSocialPostResponse,
+  CreateStoryRequest,
   DeviceListResponse,
+  FriendListResponse,
+  FriendRequestActionResponse,
+  FriendRequestsResponse,
   ListConversationSummariesResponse,
   ListConversationsResponse,
   ListSocialPostsResponse,
   LoginSuccessResponse,
   LoginTwoFactorRequiredResponse,
+  MediaMetadataResponse,
+  MediaUploadResponse,
   MessageDTO,
+  NotificationsResponse,
+  PrivacyResponse,
+  PrivacyUpdateRequest,
+  ProfileResponse,
+  ProfileSearchResponse,
   SecurityEventsResponse,
   SendMessageRequest,
   SendMessageResponse,
   SocialNotificationsResponse,
   SocialPostLikeResponse,
+  StoryFeedResponse,
+  StoryResponse,
   SyncBootstrapResponse,
   SyncPollResponse,
   TwoFactorSetupConfirmResponse,
   TwoFactorSetupStartResponse,
   TransportEndpointsResponse,
-  UserPublicProfileResponse,
   UserSearchResponse,
   WebLoginRequest,
   WebRefreshRequest,
@@ -33,10 +46,11 @@
   WebTwoFactorLoginVerifyRequest,
 } from "@project/protocol";
 import type { ServerBootstrapConfig } from "@project/client-core";
+import type { MediaID, StoryID } from "@project/shared-types";
 
 export type WebDevicePayload = NonNullable<WebLoginRequest["device"]>;
 
-type HTTPMethod = "GET" | "POST" | "DELETE";
+type HTTPMethod = "GET" | "POST" | "PATCH" | "DELETE";
 
 type ApiErrorPayload = {
   error?: {
@@ -315,8 +329,136 @@ export class WebApiClient {
     return this.request<UserSearchResponse>(`/users/search?${params.toString()}`, "GET", undefined, accessToken);
   }
 
-  async getUserProfile(accessToken: string, accountId: string): Promise<UserPublicProfileResponse> {
-    return this.request<UserPublicProfileResponse>(`/users/${accountId}/profile`, "GET", undefined, accessToken);
+  async getUserProfile(accessToken: string, accountId: string): Promise<ProfileResponse> {
+    return this.request<ProfileResponse>(`/profiles/${accountId}`, "GET", undefined, accessToken);
+  }
+
+  async getMyProfile(accessToken: string): Promise<ProfileResponse> {
+    return this.request<ProfileResponse>("/profiles/me", "GET", undefined, accessToken);
+  }
+
+  async updateMyProfile(accessToken: string, patch: {
+    displayName?: string | null;
+    username?: string | null;
+    bio?: string | null;
+    statusText?: string | null;
+    birthDate?: string | null;
+    location?: string | null;
+    websiteUrl?: string | null;
+    avatarMediaId?: MediaID | null;
+    bannerMediaId?: MediaID | null;
+  }): Promise<ProfileResponse> {
+    return this.request<ProfileResponse>("/profiles/me", "PATCH", patch, accessToken);
+  }
+
+  async getProfileByUsername(accessToken: string, username: string): Promise<ProfileResponse> {
+    return this.request<ProfileResponse>(
+      `/profiles/by-username/${encodeURIComponent(username)}`,
+      "GET",
+      undefined,
+      accessToken,
+    );
+  }
+
+  async searchProfiles(accessToken: string, query: string, limit = 20): Promise<ProfileSearchResponse> {
+    const params = new URLSearchParams({ query, limit: String(limit) });
+    return this.request<ProfileSearchResponse>(`/profiles/search?${params.toString()}`, "GET", undefined, accessToken);
+  }
+
+  async getPrivacy(accessToken: string): Promise<PrivacyResponse> {
+    return this.request<PrivacyResponse>("/privacy/me", "GET", undefined, accessToken);
+  }
+
+  async updatePrivacy(accessToken: string, patch: PrivacyUpdateRequest): Promise<PrivacyResponse> {
+    return this.request<PrivacyResponse>("/privacy/me", "PATCH", patch, accessToken);
+  }
+
+  async listFriends(accessToken: string, limit = 100): Promise<FriendListResponse> {
+    return this.request<FriendListResponse>(`/friends?limit=${Math.max(1, limit)}`, "GET", undefined, accessToken);
+  }
+
+  async listFriendRequests(
+    accessToken: string,
+    direction: "incoming" | "outgoing",
+    limit = 100,
+  ): Promise<FriendRequestsResponse> {
+    const params = new URLSearchParams({ direction, limit: String(Math.max(1, limit)) });
+    return this.request<FriendRequestsResponse>(`/friends/requests?${params.toString()}`, "GET", undefined, accessToken);
+  }
+
+  async createFriendRequest(accessToken: string, body: CreateFriendRequestBody): Promise<FriendRequestActionResponse> {
+    return this.request<FriendRequestActionResponse>("/friends/requests", "POST", body, accessToken);
+  }
+
+  async acceptFriendRequest(accessToken: string, requestId: string): Promise<FriendRequestActionResponse> {
+    return this.request<FriendRequestActionResponse>(`/friends/requests/${requestId}/accept`, "POST", undefined, accessToken);
+  }
+
+  async rejectFriendRequest(accessToken: string, requestId: string): Promise<FriendRequestActionResponse> {
+    return this.request<FriendRequestActionResponse>(`/friends/requests/${requestId}/reject`, "POST", undefined, accessToken);
+  }
+
+  async cancelFriendRequest(accessToken: string, requestId: string): Promise<FriendRequestActionResponse> {
+    return this.request<FriendRequestActionResponse>(`/friends/requests/${requestId}/cancel`, "POST", undefined, accessToken);
+  }
+
+  async removeFriend(accessToken: string, accountId: string): Promise<void> {
+    await this.request(`/friends/${accountId}`, "DELETE", undefined, accessToken);
+  }
+
+  async blockUser(accessToken: string, accountId: string): Promise<void> {
+    await this.request(`/friends/${accountId}/block`, "POST", undefined, accessToken);
+  }
+
+  async unblockUser(accessToken: string, accountId: string): Promise<void> {
+    await this.request(`/friends/${accountId}/block`, "DELETE", undefined, accessToken);
+  }
+
+  async uploadMedia(
+    accessToken: string,
+    input: {
+      file: File;
+      domain: "profile" | "social" | "story";
+      kind: "avatar" | "banner" | "photo" | "video" | "story_image" | "story_video";
+      visibility?: "public" | "friends" | "only_me";
+    },
+  ): Promise<MediaUploadResponse> {
+    const form = new FormData();
+    form.set("file", input.file, input.file.name);
+    form.set("domain", input.domain);
+    form.set("kind", input.kind);
+    if (input.visibility) {
+      form.set("visibility", input.visibility);
+    }
+    return this.requestForm<MediaUploadResponse>("/media/upload", "POST", form, accessToken, ATTACHMENT_TIMEOUT_MS);
+  }
+
+  async getMedia(accessToken: string, mediaId: string): Promise<MediaMetadataResponse> {
+    return this.request<MediaMetadataResponse>(`/media/${mediaId}`, "GET", undefined, accessToken);
+  }
+
+  async deleteMedia(accessToken: string, mediaId: string): Promise<void> {
+    await this.request(`/media/${mediaId}`, "DELETE", undefined, accessToken);
+  }
+
+  async createStory(accessToken: string, payload: CreateStoryRequest): Promise<StoryResponse> {
+    return this.request<StoryResponse>("/stories", "POST", payload, accessToken);
+  }
+
+  async listStoryFeed(accessToken: string, limit = 60): Promise<StoryFeedResponse> {
+    return this.request<StoryFeedResponse>(`/stories/feed?limit=${Math.max(1, limit)}`, "GET", undefined, accessToken);
+  }
+
+  async getStory(accessToken: string, storyId: StoryID | string): Promise<StoryResponse> {
+    return this.request<StoryResponse>(`/stories/${storyId as string}`, "GET", undefined, accessToken);
+  }
+
+  async deleteStory(accessToken: string, storyId: StoryID | string): Promise<void> {
+    await this.request(`/stories/${storyId as string}`, "DELETE", undefined, accessToken);
+  }
+
+  async listNotifications(accessToken: string, limit = 50): Promise<NotificationsResponse> {
+    return this.request<NotificationsResponse>(`/notifications?limit=${Math.max(1, limit)}`, "GET", undefined, accessToken);
   }
 
   async listDevices(accessToken: string): Promise<DeviceListResponse> {
@@ -398,6 +540,46 @@ export class WebApiClient {
 
     const payload = await response.json().catch(() => ({}));
     return { response, payload };
+  }
+
+  private async requestForm<T>(
+    path: string,
+    method: HTTPMethod,
+    body: FormData,
+    accessToken?: string,
+    timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+  ): Promise<T> {
+    const endpoint = `${this.config.apiBaseUrl}${this.config.apiPrefix}${path}`;
+    const controller = new AbortController();
+    const timeoutHandle = setTimeout(() => controller.abort(), Math.max(1000, timeoutMs));
+    let response: Response;
+    try {
+      response = await fetch(endpoint, {
+        method,
+        signal: controller.signal,
+        headers: {
+          Accept: "application/json",
+          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+        },
+        body,
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error && error.name === "AbortError"
+          ? "Превышено время ожидания ответа сервера."
+          : error instanceof Error
+            ? error.message
+            : "network error";
+      throw new ApiClientError(message, 0, "network_error");
+    } finally {
+      clearTimeout(timeoutHandle);
+    }
+
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw this.errorFromPayload(payload, response.status, "Ошибка загрузки файла.");
+    }
+    return payload as T;
   }
 
   private errorFromPayload(payload: unknown, status: number, fallback: string): ApiClientError {

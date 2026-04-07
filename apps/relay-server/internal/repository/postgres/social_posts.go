@@ -35,13 +35,14 @@ func (s *Store) CreateSocialPost(ctx context.Context, post domain.SocialPost) (d
 			content,
 			media_type,
 			media_url,
+			media_id,
 			mood,
 			created_at,
 			updated_at
 		)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
 		RETURNING created_at, updated_at
-	`, post.ID, post.AuthorAccountID, post.Content, post.MediaType, post.MediaURL, post.Mood, post.CreatedAt, post.UpdatedAt).Scan(
+	`, post.ID, post.AuthorAccountID, post.Content, post.MediaType, post.MediaURL, post.MediaID, post.Mood, post.CreatedAt, post.UpdatedAt).Scan(
 		&post.CreatedAt,
 		&post.UpdatedAt,
 	)
@@ -56,7 +57,7 @@ func (s *Store) GetSocialPostByID(ctx context.Context, postID string) (domain.So
 	var mediaType *string
 
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, author_account_id, content, media_type, media_url, mood, created_at, updated_at, deleted_at
+		SELECT id, author_account_id, content, media_type, media_url, media_id, mood, created_at, updated_at, deleted_at
 		FROM social_posts
 		WHERE id = $1
 	`, postID).Scan(
@@ -65,6 +66,7 @@ func (s *Store) GetSocialPostByID(ctx context.Context, postID string) (domain.So
 		&post.Content,
 		&mediaType,
 		&post.MediaURL,
+		&post.MediaID,
 		&post.Mood,
 		&post.CreatedAt,
 		&post.UpdatedAt,
@@ -179,12 +181,34 @@ func (s *Store) ListSocialPosts(ctx context.Context, params ListSocialPostsParam
 			p.id,
 			p.author_account_id,
 			a.email,
+			prof.display_name,
+			prof.username,
+			prof.avatar_media_id,
 			p.content,
 			p.media_type,
 			p.media_url,
+			p.media_id,
 			p.mood,
 			p.created_at,
 			p.updated_at,
+			mo.id,
+			mo.owner_account_id,
+			mo.domain,
+			mo.kind,
+			mo.storage_backend,
+			mo.bucket,
+			mo.object_key,
+			mo.mime_type,
+			mo.size_bytes,
+			mo.checksum_sha256,
+			mo.width,
+			mo.height,
+			mo.duration_ms,
+			mo.visibility,
+			mo.status,
+			mo.created_at,
+			mo.expires_at,
+			mo.deleted_at,
 			COALESCE(likes.like_count, 0) AS like_count,
 			EXISTS (
 				SELECT 1
@@ -194,6 +218,8 @@ func (s *Store) ListSocialPosts(ctx context.Context, params ListSocialPostsParam
 			) AS liked_by_me
 		FROM social_posts p
 		JOIN accounts a ON a.id = p.author_account_id
+		LEFT JOIN user_profiles prof ON prof.account_id = p.author_account_id
+		LEFT JOIN media_objects mo ON mo.id = p.media_id
 		LEFT JOIN (
 			SELECT post_id, COUNT(*)::BIGINT AS like_count
 			FROM social_post_likes
@@ -216,22 +242,87 @@ func (s *Store) ListSocialPosts(ctx context.Context, params ListSocialPostsParam
 	for rows.Next() {
 		var item domain.SocialPostFeedItem
 		var mediaType *string
+		var mediaID *string
+		var mediaObjectID *string
+		var mediaOwnerAccountID *string
+		var mediaDomain *domain.MediaDomain
+		var mediaKind *domain.MediaKind
+		var mediaStorageBackend *domain.MediaStorageBackend
+		var mediaBucket *string
+		var mediaObjectKey *string
+		var mediaMimeType *string
+		var mediaSizeBytes *int64
+		var mediaChecksum *string
+		var mediaWidth *int
+		var mediaHeight *int
+		var mediaDurationMS *int64
+		var mediaVisibility *domain.VisibilityScope
+		var mediaStatus *domain.MediaStatus
+		var mediaCreatedAt *time.Time
+		var mediaExpiresAt *time.Time
+		var mediaDeletedAt *time.Time
 		if scanErr := rows.Scan(
 			&item.Post.ID,
 			&item.Post.AuthorAccountID,
 			&item.AuthorEmail,
+			&item.AuthorDisplayName,
+			&item.AuthorUsername,
+			&item.AuthorAvatarID,
 			&item.Post.Content,
 			&mediaType,
 			&item.Post.MediaURL,
+			&item.Post.MediaID,
 			&item.Post.Mood,
 			&item.Post.CreatedAt,
 			&item.Post.UpdatedAt,
+			&mediaObjectID,
+			&mediaOwnerAccountID,
+			&mediaDomain,
+			&mediaKind,
+			&mediaStorageBackend,
+			&mediaBucket,
+			&mediaObjectKey,
+			&mediaMimeType,
+			&mediaSizeBytes,
+			&mediaChecksum,
+			&mediaWidth,
+			&mediaHeight,
+			&mediaDurationMS,
+			&mediaVisibility,
+			&mediaStatus,
+			&mediaCreatedAt,
+			&mediaExpiresAt,
+			&mediaDeletedAt,
 			&item.LikeCount,
 			&item.LikedByMe,
 		); scanErr != nil {
 			return nil, fmt.Errorf("failed to scan social post row: %w", scanErr)
 		}
 		item.Post.MediaType = mapSocialMediaType(mediaType)
+		mediaID = item.Post.MediaID
+		if mediaID != nil && mediaObjectID != nil {
+			media := domain.MediaObject{
+				ID:             safeString(mediaObjectID),
+				OwnerAccountID: safeString(mediaOwnerAccountID),
+				Domain:         safeMediaDomain(mediaDomain),
+				Kind:           safeMediaKind(mediaKind),
+				StorageBackend: safeMediaBackend(mediaStorageBackend),
+				Bucket:         mediaBucket,
+				ObjectKey:      safeString(mediaObjectKey),
+				MimeType:       safeString(mediaMimeType),
+				SizeBytes:      safeInt64(mediaSizeBytes),
+				ChecksumSHA256: safeString(mediaChecksum),
+				Width:          mediaWidth,
+				Height:         mediaHeight,
+				DurationMS:     mediaDurationMS,
+				Visibility:     safeVisibility(mediaVisibility),
+				Status:         safeMediaStatus(mediaStatus),
+				CreatedAt:      safeTime(mediaCreatedAt),
+				ExpiresAt:      mediaExpiresAt,
+				DeletedAt:      mediaDeletedAt,
+			}
+			item.Media = &media
+		}
 		items = append(items, item)
 	}
 
@@ -311,4 +402,60 @@ func mapSocialMediaType(value *string) *domain.SocialMediaType {
 	}
 	mapped := domain.SocialMediaType(trimmed)
 	return &mapped
+}
+
+func safeString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
+func safeInt64(value *int64) int64 {
+	if value == nil {
+		return 0
+	}
+	return *value
+}
+
+func safeTime(value *time.Time) time.Time {
+	if value == nil {
+		return time.Time{}
+	}
+	return *value
+}
+
+func safeVisibility(value *domain.VisibilityScope) domain.VisibilityScope {
+	if value == nil {
+		return domain.VisibilityFriends
+	}
+	return *value
+}
+
+func safeMediaDomain(value *domain.MediaDomain) domain.MediaDomain {
+	if value == nil {
+		return domain.MediaDomainSocial
+	}
+	return *value
+}
+
+func safeMediaKind(value *domain.MediaKind) domain.MediaKind {
+	if value == nil {
+		return domain.MediaKindPhoto
+	}
+	return *value
+}
+
+func safeMediaBackend(value *domain.MediaStorageBackend) domain.MediaStorageBackend {
+	if value == nil {
+		return domain.MediaStorageBackendLocal
+	}
+	return *value
+}
+
+func safeMediaStatus(value *domain.MediaStatus) domain.MediaStatus {
+	if value == nil {
+		return domain.MediaStatusActive
+	}
+	return *value
 }

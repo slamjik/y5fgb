@@ -13,10 +13,16 @@ import (
 	"github.com/example/secure-messenger/apps/relay-server/internal/repository/postgres"
 	"github.com/example/secure-messenger/apps/relay-server/internal/service/auth"
 	"github.com/example/secure-messenger/apps/relay-server/internal/service/devices"
+	"github.com/example/secure-messenger/apps/relay-server/internal/service/friends"
+	"github.com/example/secure-messenger/apps/relay-server/internal/service/media"
 	"github.com/example/secure-messenger/apps/relay-server/internal/service/messaging"
+	"github.com/example/secure-messenger/apps/relay-server/internal/service/notifications"
+	"github.com/example/secure-messenger/apps/relay-server/internal/service/privacy"
+	"github.com/example/secure-messenger/apps/relay-server/internal/service/profile"
 	"github.com/example/secure-messenger/apps/relay-server/internal/service/recovery"
 	"github.com/example/secure-messenger/apps/relay-server/internal/service/securityevents"
 	"github.com/example/secure-messenger/apps/relay-server/internal/service/social"
+	"github.com/example/secure-messenger/apps/relay-server/internal/service/stories"
 	"github.com/example/secure-messenger/apps/relay-server/internal/service/users"
 	"github.com/example/secure-messenger/apps/relay-server/internal/transport"
 	"github.com/example/secure-messenger/apps/relay-server/internal/transport/middleware"
@@ -49,7 +55,17 @@ func New(cfg config.Config, logger *slog.Logger) (*RelayServer, error) {
 	deviceService := devices.New(repo, authService, eventService, cfg.Auth.TokenPepper)
 	recoveryService := recovery.New(repo, authService, eventService, cfg.Auth.TokenPepper)
 	messagingService := messaging.New(cfg, repo, eventService, logger)
-	socialService := social.New(repo)
+	privacyService := privacy.New(repo)
+	mediaService, mediaErr := media.New(cfg.Media, repo, privacyService)
+	if mediaErr != nil {
+		repo.Close()
+		return nil, fmt.Errorf("failed to initialize media service: %w", mediaErr)
+	}
+	storiesService := stories.New(repo, cfg.Media, privacyService)
+	friendsService := friends.New(repo, privacyService)
+	profileService := profile.New(repo, privacyService)
+	socialService := social.New(repo, privacyService)
+	notifyService := notifications.New(repo)
 	userService := users.New(repo)
 	wsNotifier := transport.NewWSNotifier(logger)
 	messagingService.SetNotifier(wsNotifier)
@@ -63,6 +79,12 @@ func New(cfg config.Config, logger *slog.Logger) (*RelayServer, error) {
 		MessagingService: messagingService,
 		SocialService:    socialService,
 		UserService:      userService,
+		ProfileService:   profileService,
+		FriendsService:   friendsService,
+		PrivacyService:   privacyService,
+		MediaService:     mediaService,
+		StoriesService:   storiesService,
+		NotifyService:    notifyService,
 		WSNotifier:       wsNotifier,
 		DBPing:           repo.Ping,
 	})

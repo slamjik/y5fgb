@@ -1,4 +1,4 @@
-﻿import { Image, Smile, Video } from "lucide-react";
+import { Image, Smile, Upload, Video } from "lucide-react";
 import * as React from "react";
 
 export type ComposerMediaType = "image" | "video";
@@ -7,6 +7,7 @@ export interface CreatePostPayload {
   content: string;
   mediaType?: ComposerMediaType;
   mediaUrl?: string;
+  mediaFile?: File;
   mood?: string;
 }
 
@@ -16,19 +17,69 @@ interface CreatePostProps {
 }
 
 const moodOptions = ["Радость", "Вдохновение", "Спокойствие", "Идея", "Фокус"];
+const maxMediaSizeBytes = 25 * 1024 * 1024;
 
 export function CreatePost({ onSubmit, disabled = false }: CreatePostProps) {
   const [postText, setPostText] = React.useState("");
   const [mediaType, setMediaType] = React.useState<ComposerMediaType | null>(null);
   const [mediaUrl, setMediaUrl] = React.useState("");
+  const [mediaFile, setMediaFile] = React.useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = React.useState<string | null>(null);
+  const [showLegacyUrlInput, setShowLegacyUrlInput] = React.useState(false);
   const [mood, setMood] = React.useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const fileInputRef = React.useRef<HTMLInputElement | null>(null);
+
+  React.useEffect(() => {
+    return () => {
+      if (previewUrl) {
+        URL.revokeObjectURL(previewUrl);
+      }
+    };
+  }, [previewUrl]);
 
   const submitDisabled = disabled || isSubmitting || postText.trim().length === 0;
 
+  const onFileChange = (files: FileList | null) => {
+    const file = files?.[0] ?? null;
+    if (!file) return;
+    if (file.size > maxMediaSizeBytes) {
+      setError("Файл слишком большой. Максимум 25 МБ.");
+      return;
+    }
+    if (mediaType === "image" && !file.type.startsWith("image/")) {
+      setError("Для фото выберите изображение.");
+      return;
+    }
+    if (mediaType === "video" && !file.type.startsWith("video/")) {
+      setError("Для видео выберите видеофайл.");
+      return;
+    }
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+    }
+    setError(null);
+    setMediaUrl("");
+    setMediaFile(file);
+    setPreviewUrl(URL.createObjectURL(file));
+  };
+
+  const resetMedia = () => {
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+    }
+    setPreviewUrl(null);
+    setMediaFile(null);
+    setMediaUrl("");
+  };
+
   const handleSubmit = async () => {
     if (submitDisabled) {
+      return;
+    }
+    if (mediaType && !mediaFile && !mediaUrl.trim()) {
+      setError("Добавьте файл или укажите ссылку на медиа.");
       return;
     }
 
@@ -39,14 +90,21 @@ export function CreatePost({ onSubmit, disabled = false }: CreatePostProps) {
       await onSubmit({
         content: postText.trim(),
         mediaType: mediaType ?? undefined,
-        mediaUrl: mediaUrl.trim() || undefined,
+        mediaUrl: mediaFile ? undefined : mediaUrl.trim() || undefined,
+        mediaFile: mediaFile ?? undefined,
         mood: mood ?? undefined,
       });
 
       setPostText("");
       setMediaType(null);
       setMediaUrl("");
+      setMediaFile(null);
+      if (previewUrl) {
+        URL.revokeObjectURL(previewUrl);
+      }
+      setPreviewUrl(null);
       setMood(null);
+      setShowLegacyUrlInput(false);
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : "Не удалось опубликовать пост.");
     } finally {
@@ -80,13 +138,21 @@ export function CreatePost({ onSubmit, disabled = false }: CreatePostProps) {
           active={mediaType === "image"}
           icon={<Image className="w-5 h-5" />}
           label="Фото"
-          onClick={() => setMediaType((current) => (current === "image" ? null : "image"))}
+          onClick={() => {
+            setMediaType((current) => (current === "image" ? null : "image"));
+            setError(null);
+            resetMedia();
+          }}
         />
         <ActionButton
           active={mediaType === "video"}
           icon={<Video className="w-5 h-5" />}
           label="Видео"
-          onClick={() => setMediaType((current) => (current === "video" ? null : "video"))}
+          onClick={() => {
+            setMediaType((current) => (current === "video" ? null : "video"));
+            setError(null);
+            resetMedia();
+          }}
         />
         <ActionButton
           active={mood !== null}
@@ -97,18 +163,84 @@ export function CreatePost({ onSubmit, disabled = false }: CreatePostProps) {
       </div>
 
       {mediaType !== null ? (
-        <div className="mt-3">
+        <div className="mt-3 space-y-3">
           <input
-            type="url"
-            value={mediaUrl}
-            onChange={(event) => setMediaUrl(event.target.value)}
-            placeholder={mediaType === "image" ? "URL фото (https://...)" : "URL видео (https://...)"}
-            className="w-full bg-transparent rounded-lg px-4 py-2 outline-none transition-colors border"
-            style={{
-              borderColor: "var(--base-grey-light)",
-              color: "var(--text-primary)",
+            ref={fileInputRef}
+            type="file"
+            accept={mediaType === "image" ? "image/*" : "video/*"}
+            className="hidden"
+            onChange={(event) => {
+              onFileChange(event.target.files);
+              event.currentTarget.value = "";
             }}
           />
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              className="px-4 py-2 rounded-lg border"
+              style={{
+                borderColor: "var(--accent-brown)",
+                color: "var(--accent-brown)",
+              }}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <Upload className="w-4 h-4 inline mr-2" />
+              Загрузить {mediaType === "image" ? "фото" : "видео"}
+            </button>
+            <button
+              type="button"
+              className="px-4 py-2 rounded-lg border text-sm"
+              style={{
+                borderColor: "var(--glass-border)",
+                color: "var(--base-grey-light)",
+              }}
+              onClick={() => setShowLegacyUrlInput((current) => !current)}
+            >
+              {showLegacyUrlInput ? "Скрыть URL" : "Использовать URL"}
+            </button>
+          </div>
+
+          {mediaFile ? (
+            <div
+              className="rounded-xl border p-3"
+              style={{
+                backgroundColor: "rgba(20, 20, 20, 0.52)",
+                borderColor: "var(--glass-border)",
+              }}
+            >
+              <p className="text-sm mb-2" style={{ color: "var(--text-primary)" }}>
+                {mediaFile.name}
+              </p>
+              {previewUrl && mediaType === "image" ? (
+                <img src={previewUrl} alt="Предпросмотр" className="w-full max-h-80 object-cover rounded-lg" />
+              ) : null}
+              {previewUrl && mediaType === "video" ? (
+                <video src={previewUrl} className="w-full max-h-80 rounded-lg" controls />
+              ) : null}
+              <button
+                type="button"
+                className="mt-3 px-3 py-1.5 rounded-lg border text-sm"
+                style={{ borderColor: "var(--glass-border)", color: "var(--base-grey-light)" }}
+                onClick={resetMedia}
+              >
+                Убрать файл
+              </button>
+            </div>
+          ) : null}
+
+          {showLegacyUrlInput ? (
+            <input
+              type="url"
+              value={mediaUrl}
+              onChange={(event) => setMediaUrl(event.target.value)}
+              placeholder={mediaType === "image" ? "URL фото (https://...)" : "URL видео (https://...)"}
+              className="w-full bg-transparent rounded-lg px-4 py-2 outline-none transition-colors border"
+              style={{
+                borderColor: "var(--base-grey-light)",
+                color: "var(--text-primary)",
+              }}
+            />
+          ) : null}
         </div>
       ) : null}
 

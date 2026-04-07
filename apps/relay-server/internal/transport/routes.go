@@ -8,10 +8,16 @@ import (
 	"github.com/example/secure-messenger/apps/relay-server/internal/config"
 	"github.com/example/secure-messenger/apps/relay-server/internal/service/auth"
 	"github.com/example/secure-messenger/apps/relay-server/internal/service/devices"
+	"github.com/example/secure-messenger/apps/relay-server/internal/service/friends"
+	"github.com/example/secure-messenger/apps/relay-server/internal/service/media"
 	"github.com/example/secure-messenger/apps/relay-server/internal/service/messaging"
+	"github.com/example/secure-messenger/apps/relay-server/internal/service/notifications"
+	"github.com/example/secure-messenger/apps/relay-server/internal/service/privacy"
+	"github.com/example/secure-messenger/apps/relay-server/internal/service/profile"
 	"github.com/example/secure-messenger/apps/relay-server/internal/service/recovery"
 	"github.com/example/secure-messenger/apps/relay-server/internal/service/securityevents"
 	"github.com/example/secure-messenger/apps/relay-server/internal/service/social"
+	"github.com/example/secure-messenger/apps/relay-server/internal/service/stories"
 	"github.com/example/secure-messenger/apps/relay-server/internal/service/users"
 	apiTransport "github.com/example/secure-messenger/apps/relay-server/internal/transport/api"
 	"github.com/example/secure-messenger/apps/relay-server/internal/transport/middleware"
@@ -25,6 +31,12 @@ type Dependencies struct {
 	MessagingService *messaging.Service
 	SocialService    *social.Service
 	UserService      *users.Service
+	ProfileService   *profile.Service
+	FriendsService   *friends.Service
+	PrivacyService   *privacy.Service
+	MediaService     *media.Service
+	StoriesService   *stories.Service
+	NotifyService    *notifications.Service
 	WSNotifier       *WSNotifier
 	DBPing           func(context.Context) error
 }
@@ -39,6 +51,22 @@ func RegisterRoutes(mux *http.ServeMux, cfg config.Config, logger *slog.Logger, 
 		NewWebSocketHandler(logger, deps.AuthService, deps.WSNotifier, cfg.Transport.WSQueryTokenFallback, originPolicy),
 	)
 
-	apiHandler := apiTransport.NewHandler(logger, deps.AuthService, deps.DeviceService, deps.RecoveryService, deps.EventService, deps.MessagingService, deps.SocialService, deps.UserService, cfg)
+	apiHandler := apiTransport.NewHandler(
+		logger,
+		deps.AuthService,
+		deps.DeviceService,
+		deps.RecoveryService,
+		deps.EventService,
+		deps.MessagingService,
+		deps.SocialService,
+		deps.UserService,
+		deps.ProfileService,
+		deps.FriendsService,
+		deps.PrivacyService,
+		deps.MediaService,
+		deps.StoriesService,
+		deps.NotifyService,
+		cfg,
+	)
 	apiTransport.RegisterRoutes(mux, cfg.HTTP.APIPrefix, apiHandler, deps.AuthService)
 }

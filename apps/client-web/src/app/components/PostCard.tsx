@@ -1,12 +1,18 @@
-﻿import { Heart, MoreHorizontal, Trash2 } from "lucide-react";
+import { Heart, MoreHorizontal, Trash2, UserRound } from "lucide-react";
 import * as React from "react";
 
 interface PostCardProps {
   id: string;
-  username: string;
+  authorDisplayName: string;
+  authorUsername?: string;
   timestamp: string;
   imageUrl?: string | null;
   videoUrl?: string | null;
+  media?: {
+    contentUrl: string;
+    mimeType: string;
+  } | null;
+  accessToken?: string;
   caption: string;
   likes: number;
   likedByMe: boolean;
@@ -14,14 +20,18 @@ interface PostCardProps {
   canDelete: boolean;
   onToggleLike: (postId: string, likedByMe: boolean) => Promise<void>;
   onDelete: (postId: string) => Promise<void>;
+  onOpenAuthor?: () => void;
 }
 
 export function PostCard({
   id,
-  username,
+  authorDisplayName,
+  authorUsername,
   timestamp,
   imageUrl,
   videoUrl,
+  media,
+  accessToken,
   caption,
   likes,
   likedByMe,
@@ -29,6 +39,7 @@ export function PostCard({
   canDelete,
   onToggleLike,
   onDelete,
+  onOpenAuthor,
 }: PostCardProps) {
   const [likeState, setLikeState] = React.useState(likedByMe);
   const [likeCount, setLikeCount] = React.useState(likes);
@@ -76,15 +87,29 @@ export function PostCard({
     >
       <header className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">
-          <div
-            className="w-10 h-10 rounded-full"
+          <button
+            type="button"
+            className="w-10 h-10 rounded-full flex items-center justify-center border"
             style={{
-              background: "linear-gradient(135deg, var(--accent-brown), var(--base-grey-light))",
+              background: "rgba(12,12,12,0.45)",
+              borderColor: "var(--glass-border)",
+              color: "var(--accent-brown)",
             }}
-          />
+            onClick={onOpenAuthor}
+          >
+            <UserRound className="w-5 h-5" />
+          </button>
           <div>
-            <div style={{ color: "var(--accent-brown)" }}>{username}</div>
+            <button
+              type="button"
+              style={{ color: "var(--accent-brown)", fontWeight: 600 }}
+              onClick={onOpenAuthor}
+              className="text-left"
+            >
+              {authorDisplayName || "Пользователь"}
+            </button>
             <div className="text-xs" style={{ color: "var(--base-grey-light)" }}>
+              {authorUsername ? `@${authorUsername} · ` : ""}
               {timestamp}
             </div>
           </div>
@@ -125,13 +150,17 @@ export function PostCard({
         ) : null}
       </header>
 
-      {imageUrl ? (
+      {media ? (
+        <ProtectedMedia
+          contentUrl={media.contentUrl}
+          mimeType={media.mimeType}
+          accessToken={accessToken}
+        />
+      ) : imageUrl ? (
         <MediaContainer>
           <img src={imageUrl} alt="Изображение поста" className="w-full h-80 object-cover rounded-lg" loading="lazy" />
         </MediaContainer>
-      ) : null}
-
-      {videoUrl ? (
+      ) : videoUrl ? (
         <MediaContainer>
           <video controls className="w-full h-80 object-cover rounded-lg" src={videoUrl} preload="metadata" />
         </MediaContainer>
@@ -159,6 +188,96 @@ export function PostCard({
         </span>
       </button>
     </article>
+  );
+}
+
+function ProtectedMedia({
+  contentUrl,
+  mimeType,
+  accessToken,
+}: {
+  contentUrl: string;
+  mimeType: string;
+  accessToken?: string;
+}) {
+  const [blobUrl, setBlobUrl] = React.useState<string | null>(null);
+  const [error, setError] = React.useState("");
+  const [loading, setLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    let disposed = false;
+    let currentUrl: string | null = null;
+    const load = async () => {
+      setLoading(true);
+      setError("");
+      try {
+        const response = await fetch(contentUrl, {
+          method: "GET",
+          headers: {
+            ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+          },
+        });
+        if (!response.ok) {
+          throw new Error("Не удалось загрузить медиа.");
+        }
+        const blob = await response.blob();
+        currentUrl = URL.createObjectURL(blob);
+        if (!disposed) {
+          setBlobUrl(currentUrl);
+        }
+      } catch (loadError) {
+        if (!disposed) {
+          setError(loadError instanceof Error ? loadError.message : "Не удалось загрузить медиа.");
+        }
+      } finally {
+        if (!disposed) {
+          setLoading(false);
+        }
+      }
+    };
+
+    void load();
+
+    return () => {
+      disposed = true;
+      if (currentUrl) {
+        URL.revokeObjectURL(currentUrl);
+      }
+    };
+  }, [accessToken, contentUrl]);
+
+  if (loading) {
+    return (
+      <MediaContainer>
+        <div className="h-52 flex items-center justify-center" style={{ color: "var(--base-grey-light)" }}>
+          Загружаем медиа...
+        </div>
+      </MediaContainer>
+    );
+  }
+
+  if (error || !blobUrl) {
+    return (
+      <MediaContainer>
+        <div className="h-52 flex items-center justify-center" style={{ color: "#fca5a5" }}>
+          {error || "Медиа недоступно"}
+        </div>
+      </MediaContainer>
+    );
+  }
+
+  if (mimeType.startsWith("video/")) {
+    return (
+      <MediaContainer>
+        <video controls className="w-full h-80 object-cover rounded-lg" src={blobUrl} preload="metadata" />
+      </MediaContainer>
+    );
+  }
+
+  return (
+    <MediaContainer>
+      <img src={blobUrl} alt="Изображение поста" className="w-full h-80 object-cover rounded-lg" loading="lazy" />
+    </MediaContainer>
   );
 }
 

@@ -11,11 +11,15 @@
   LoginSuccessResponse,
   LoginTwoFactorRequiredResponse,
   MessageDTO,
+  FriendListItemDTO,
+  FriendRequestDTO,
+  NotificationsResponse,
+  PrivacyResponse,
+  ProfileDTO,
   SecurityEventsResponse,
-  SocialNotificationsResponse,
+  StoryDTO,
   SyncBatchDTO,
   TwoFactorSetupStartResponse,
-  UserPublicProfileResponse,
   UserSearchResponse,
 } from "@project/protocol";
 import {
@@ -58,7 +62,7 @@ import { Sidebar, type SidebarSection } from "./components/Sidebar";
 type SessionMode = "ephemeral" | "remembered";
 type AuthMode = "login" | "register";
 type ChatFilter = "all" | "direct" | "group" | "unread";
-type SettingsSection = "account" | "sessions" | "devices" | "security" | "app" | "connection";
+type SettingsSection = "account" | "sessions" | "devices" | "security" | "privacy" | "app" | "connection";
 
 type SavedServer = {
   input: string;
@@ -179,10 +183,25 @@ function App() {
   const [groupMembers, setGroupMembers] = React.useState<string[]>([]);
   const [exploreQuery, setExploreQuery] = React.useState("");
   const [exploreLoading, setExploreLoading] = React.useState(false);
-  const [exploreUsers, setExploreUsers] = React.useState<UserSearchResponse["users"]>([]);
+  const [exploreUsers, setExploreUsers] = React.useState<ProfileDTO[]>([]);
   const [explorePosts, setExplorePosts] = React.useState<CreateSocialPostResponse["post"][]>([]);
-  const [profileTarget, setProfileTarget] = React.useState<UserPublicProfileResponse | null>(null);
+  const [myProfile, setMyProfile] = React.useState<ProfileDTO | null>(null);
+  const [profileTarget, setProfileTarget] = React.useState<ProfileDTO | null>(null);
+  const [profileEdit, setProfileEdit] = React.useState({
+    displayName: "",
+    username: "",
+    bio: "",
+    statusText: "",
+    location: "",
+    websiteUrl: "",
+  });
   const [profilePosts, setProfilePosts] = React.useState<CreateSocialPostResponse["post"][]>([]);
+  const [friends, setFriends] = React.useState<FriendListItemDTO[]>([]);
+  const [incomingRequests, setIncomingRequests] = React.useState<FriendRequestDTO[]>([]);
+  const [outgoingRequests, setOutgoingRequests] = React.useState<FriendRequestDTO[]>([]);
+  const [privacy, setPrivacy] = React.useState<PrivacyResponse["privacy"] | null>(null);
+  const [stories, setStories] = React.useState<StoryDTO[]>([]);
+  const [storyCaption, setStoryCaption] = React.useState("");
   const [profileLoading, setProfileLoading] = React.useState(false);
   const [settingsSection, setSettingsSection] = React.useState<SettingsSection>("account");
   const [twoFASetup, setTwoFASetup] = React.useState<TwoFactorSetupStartResponse | null>(null);
@@ -193,7 +212,7 @@ function App() {
   const [posts, setPosts] = React.useState<CreateSocialPostResponse["post"][]>([]);
   const [postsLoading, setPostsLoading] = React.useState(false);
   const [postsError, setPostsError] = React.useState("");
-  const [notifications, setNotifications] = React.useState<SocialNotificationsResponse["notifications"]>([]);
+  const [notifications, setNotifications] = React.useState<NotificationsResponse["notifications"]>([]);
 
   const [sessionInfo, setSessionInfo] = React.useState<AuthSessionResponse | null>(null);
   const [deviceList, setDeviceList] = React.useState<DeviceListResponse | null>(null);
@@ -224,6 +243,13 @@ function App() {
       .sort((a, b) => b.lastServerSequence - a.lastServerSequence);
   }, [summaries, conversationSearch, conversationFilter, unreadByConversation]);
 
+  const resolveServer = React.useCallback(async (input?: string): Promise<SavedServer> => {
+    const source = (input ?? "").trim() || detectDefaultServerInput();
+    const normalized = normalizeServerInput(source);
+    const config = await fetchServerConfig(normalized.origin);
+    return { input: normalized.origin, config };
+  }, []);
+
   React.useEffect(() => {
     let cancelled = false;
     const boot = async () => {
@@ -232,14 +258,15 @@ function App() {
       if (cancelled) return;
       setSessionMode(mode);
 
-      const saved = loadSavedServer();
-      if (!saved) {
-        setBooting(false);
-        return;
+      let targetServer = loadSavedServer();
+      if (!targetServer) {
+        targetServer = await resolveServer();
+        localStorage.setItem(serverStorageKey, JSON.stringify(targetServer));
       }
-      setServer(saved);
+      if (cancelled) return;
+      setServer(targetServer);
 
-      const restored = await restoreSession(saved.config, mode);
+      const restored = await restoreSession(targetServer.config, mode);
       if (!cancelled && restored) {
         setSession(restored);
       }
@@ -258,12 +285,23 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [resolveServer]);
 
   React.useEffect(() => {
     if (!api || !session) return;
     void loadSummaries(api, session, setSummaries, setSummariesLoading, setSummariesError, setActiveConversationId);
     void loadSettingsData(api, session, setSessionInfo, setDeviceList, setSecurityEvents);
+    void loadProfileState(
+      api,
+      session,
+      setMyProfile,
+      setProfileEdit,
+      setFriends,
+      setIncomingRequests,
+      setOutgoingRequests,
+      setPrivacy,
+      setStories,
+    );
   }, [api, session?.accessToken]);
 
   React.useEffect(() => {
@@ -272,12 +310,12 @@ function App() {
       void loadFeed(api, session, setPosts, setPostsLoading, setPostsError);
     }
     if (section === "notifications") {
-      void loadSocialNotifications(api, session, setNotifications);
+      void loadNotifications(api, session, setNotifications);
     }
     if (section === "profile") {
-      void loadProfilePosts(api, session, setProfilePosts, setProfileLoading);
+      void loadProfilePosts(api, session, setProfilePosts, setProfileLoading, profileTarget?.accountId as string | undefined);
     }
-  }, [section, api, session?.accessToken]);
+  }, [section, api, session?.accessToken, profileTarget?.accountId]);
 
   React.useEffect(() => {
     if (!api || !session) return;
@@ -379,18 +417,6 @@ function App() {
     [api, sessionMode],
   );
 
-  const connectServer = async (input: string) => {
-    const normalized = normalizeServerInput(input);
-    const config = await fetchServerConfig(normalized.origin);
-    const next = { input: input.trim(), config };
-    localStorage.setItem(serverStorageKey, JSON.stringify(next));
-    await clearAuthState();
-    setServer(next);
-    setSession(null);
-    setPending2fa(null);
-    setSection("messages");
-  };
-
   const submitAuth = async (mode: AuthMode, email: string, password: string) => {
     if (!api) throw new Error("Сначала подключитесь к серверу.");
     const device = await ensureDeviceMaterial();
@@ -453,8 +479,14 @@ function App() {
     setUploadsByConversation({});
     setUnreadByConversation({});
     setAttachmentOps({});
+    setMyProfile(null);
     setProfileTarget(null);
     setProfilePosts([]);
+    setFriends([]);
+    setIncomingRequests([]);
+    setOutgoingRequests([]);
+    setPrivacy(null);
+    setStories([]);
     setSection("messages");
   };
 
@@ -705,11 +737,11 @@ function App() {
 
     setExploreLoading(true);
     try {
-      const [usersResponse, postsResponse] = await Promise.all([
-        api.searchUsers(session.accessToken, query, 20),
+      const [profilesResponse, postsResponse] = await Promise.all([
+        api.searchProfiles(session.accessToken, query, 20),
         api.listPosts(session.accessToken, { query, limit: 20, mediaType: "all" }),
       ]);
-      setExploreUsers(usersResponse.users);
+      setExploreUsers(profilesResponse.profiles);
       setExplorePosts(postsResponse.posts);
     } catch (error) {
       setGlobalError(toUserError(error));
@@ -721,8 +753,8 @@ function App() {
   const openUserProfile = async (accountId: string) => {
     if (!api || !session) return;
     try {
-      const profile = await api.getUserProfile(session.accessToken, accountId as never);
-      setProfileTarget(profile);
+      const profileResponse = await api.getUserProfile(session.accessToken, accountId);
+      setProfileTarget(profileResponse.profile);
       setSection("profile");
     } catch (error) {
       setGlobalError(toUserError(error));
@@ -735,14 +767,168 @@ function App() {
 
   const publishPost = async (payload: CreatePostPayload) => {
     if (!api || !session) throw new Error("Сессия не активна.");
+    let mediaId: string | undefined;
+    if (payload.mediaFile) {
+      const uploaded = await api.uploadMedia(session.accessToken, {
+        file: payload.mediaFile,
+        domain: "social",
+        kind: payload.mediaType === "video" ? "video" : "photo",
+        visibility: "friends",
+      });
+      mediaId = uploaded.media.id as string;
+    }
     const request: CreateSocialPostRequest = {
       content: payload.content,
       mediaType: payload.mediaType,
       mediaUrl: payload.mediaUrl,
+      mediaId: mediaId as never,
       mood: payload.mood,
     };
     const created = await api.createPost(session.accessToken, request);
     setPosts((prev) => [created.post, ...prev]);
+  };
+
+  const saveProfile = async () => {
+    if (!api || !session) return;
+    try {
+      const response = await api.updateMyProfile(session.accessToken, {
+        displayName: profileEdit.displayName || null,
+        username: profileEdit.username || null,
+        bio: profileEdit.bio || null,
+        statusText: profileEdit.statusText || null,
+        location: profileEdit.location || null,
+        websiteUrl: profileEdit.websiteUrl || null,
+      });
+      setMyProfile(response.profile);
+      setSettingsMessage("Профиль обновлён.");
+    } catch (error) {
+      setSettingsMessage(toUserError(error));
+    }
+  };
+
+  const uploadProfileMedia = async (file: File, kind: "avatar" | "banner") => {
+    if (!api || !session) return;
+    try {
+      const uploaded = await api.uploadMedia(session.accessToken, {
+        file,
+        domain: "profile",
+        kind,
+        visibility: "public",
+      });
+      const response = await api.updateMyProfile(session.accessToken, {
+        avatarMediaId: kind === "avatar" ? uploaded.media.id : undefined,
+        bannerMediaId: kind === "banner" ? uploaded.media.id : undefined,
+      });
+      setMyProfile(response.profile);
+      setSettingsMessage(kind === "avatar" ? "Аватар обновлён." : "Обложка обновлена.");
+    } catch (error) {
+      setSettingsMessage(toUserError(error));
+    }
+  };
+
+  const createStory = async (file: File) => {
+    if (!api || !session) return;
+    try {
+      const uploaded = await api.uploadMedia(session.accessToken, {
+        file,
+        domain: "story",
+        kind: file.type.startsWith("video/") ? "story_video" : "story_image",
+        visibility: "friends",
+      });
+      await api.createStory(session.accessToken, {
+        mediaId: uploaded.media.id,
+        caption: storyCaption.trim() || undefined,
+        visibility: "friends",
+      });
+      setStoryCaption("");
+      const feed = await api.listStoryFeed(session.accessToken, 60);
+      setStories(feed.stories);
+      setSettingsMessage("История опубликована.");
+    } catch (error) {
+      setSettingsMessage(toUserError(error));
+    }
+  };
+
+  const sendFriendRequest = async (accountId: string) => {
+    if (!api || !session) return;
+    try {
+      await api.createFriendRequest(session.accessToken, { targetAccountId: accountId as never });
+      await loadProfileState(
+        api,
+        session,
+        setMyProfile,
+        setProfileEdit,
+        setFriends,
+        setIncomingRequests,
+        setOutgoingRequests,
+        setPrivacy,
+        setStories,
+      );
+      if (profileTarget && profileTarget.accountId === (accountId as never)) {
+        const refreshed = await api.getUserProfile(session.accessToken, accountId);
+        setProfileTarget(refreshed.profile);
+      }
+    } catch (error) {
+      setGlobalError(toUserError(error));
+    }
+  };
+
+  const processFriendRequest = async (
+    requestId: string,
+    action: "accept" | "reject" | "cancel",
+    accountIdToRefresh?: string,
+  ) => {
+    if (!api || !session) return;
+    try {
+      if (action === "accept") {
+        await api.acceptFriendRequest(session.accessToken, requestId);
+      } else if (action === "reject") {
+        await api.rejectFriendRequest(session.accessToken, requestId);
+      } else {
+        await api.cancelFriendRequest(session.accessToken, requestId);
+      }
+      await loadProfileState(
+        api,
+        session,
+        setMyProfile,
+        setProfileEdit,
+        setFriends,
+        setIncomingRequests,
+        setOutgoingRequests,
+        setPrivacy,
+        setStories,
+      );
+      if (accountIdToRefresh) {
+        const refreshed = await api.getUserProfile(session.accessToken, accountIdToRefresh);
+        setProfileTarget(refreshed.profile);
+      }
+    } catch (error) {
+      setGlobalError(toUserError(error));
+    }
+  };
+
+  const removeFriend = async (accountId: string) => {
+    if (!api || !session) return;
+    try {
+      await api.removeFriend(session.accessToken, accountId);
+      await loadProfileState(
+        api,
+        session,
+        setMyProfile,
+        setProfileEdit,
+        setFriends,
+        setIncomingRequests,
+        setOutgoingRequests,
+        setPrivacy,
+        setStories,
+      );
+      if (profileTarget && profileTarget.accountId === (accountId as never)) {
+        const refreshed = await api.getUserProfile(session.accessToken, accountId);
+        setProfileTarget(refreshed.profile);
+      }
+    } catch (error) {
+      setGlobalError(toUserError(error));
+    }
   };
 
   const toggleLike = async (postId: string, likedByMe: boolean) => {
@@ -832,7 +1018,24 @@ function App() {
     setUnreadByConversation({});
     setMessagesByConversation({});
     setSummaries([]);
+    setMyProfile(null);
+    setProfileTarget(null);
+    setProfilePosts([]);
+    setFriends([]);
+    setIncomingRequests([]);
+    setOutgoingRequests([]);
+    setPrivacy(null);
+    setStories([]);
     setSection("messages");
+    try {
+      const next = await resolveServer();
+      localStorage.setItem(serverStorageKey, JSON.stringify(next));
+      setServer(next);
+      setGlobalError("");
+    } catch (error) {
+      setServer(null);
+      setGlobalError(toUserError(error));
+    }
   };
 
   const activeBucket = activeConversationId ? messagesByConversation[activeConversationId] : undefined;
@@ -842,7 +1045,21 @@ function App() {
   }
 
   if (!server) {
-    return <ConnectScreen onConnect={connectServer} error={globalError} />;
+    return (
+      <AutoConnectScreen
+        error={globalError}
+        onRetry={async () => {
+          setGlobalError("");
+          try {
+            const next = await resolveServer();
+            localStorage.setItem(serverStorageKey, JSON.stringify(next));
+            setServer(next);
+          } catch (error) {
+            setGlobalError(toUserError(error));
+          }
+        }}
+      />
+    );
   }
 
   if (!session) {
@@ -937,7 +1154,10 @@ function App() {
                         const selected = groupMembers.includes(accountId);
                         return (
                           <div key={accountId} className="rounded-lg border p-2" style={innerCardStyle}>
-                            <p style={{ color: "var(--text-primary)", fontSize: 13 }}>{user.email}</p>
+                            <p style={{ color: "var(--text-primary)", fontSize: 13 }}>
+                              {user.displayName || user.username || "Пользователь"}
+                            </p>
+                            <p style={{ color: "var(--base-grey-light)", fontSize: 12 }}>@{user.username}</p>
                             <div className="flex gap-2 mt-2">
                               <button type="button" className="px-2 py-1 rounded-lg border text-xs" style={outlineButtonStyle} onClick={() => void createDirect(accountId)}>Личный</button>
                               <button type="button" className="px-2 py-1 rounded-lg border text-xs" style={selected ? solidButtonStyle : outlineButtonStyle} onClick={() => setGroupMembers((prev) => (prev.includes(accountId) ? prev.filter((id) => id !== accountId) : [...prev, accountId]))}>{selected ? "Выбран" : "В группу"}</button>
@@ -1058,7 +1278,25 @@ function App() {
               {postsLoading ? <InlineInfo text="Загрузка ленты..." /> : null}
               {postsError ? <InlineInfo tone="error" text={postsError} /> : null}
               {posts.map((post) => (
-                <PostCard key={post.id as string} id={post.id as string} username={post.authorEmail} timestamp={new Date(post.createdAt as string).toLocaleString("ru-RU")} imageUrl={post.mediaType === "image" ? post.mediaUrl : null} videoUrl={post.mediaType === "video" ? post.mediaUrl : null} caption={post.content} likes={post.likeCount} likedByMe={post.likedByMe} mood={post.mood} canDelete={post.canDelete} onToggleLike={toggleLike} onDelete={deletePost} />
+                <PostCard
+                  key={post.id as string}
+                  id={post.id as string}
+                  authorDisplayName={post.authorDisplayName || post.authorUsername || post.authorEmail}
+                  authorUsername={post.authorUsername}
+                  timestamp={new Date(post.createdAt as string).toLocaleString("ru-RU")}
+                  imageUrl={post.mediaType === "image" ? post.mediaUrl : null}
+                  videoUrl={post.mediaType === "video" ? post.mediaUrl : null}
+                  media={post.media ? { contentUrl: post.media.contentUrl, mimeType: post.media.mimeType } : null}
+                  accessToken={session.accessToken}
+                  caption={post.content}
+                  likes={post.likeCount}
+                  likedByMe={post.likedByMe}
+                  mood={post.mood}
+                  canDelete={post.canDelete}
+                  onToggleLike={toggleLike}
+                  onDelete={deletePost}
+                  onOpenAuthor={() => void openUserProfile(post.authorAccountId as string)}
+                />
               ))}
             </section>
           ) : null}
@@ -1071,7 +1309,7 @@ function App() {
                   <input
                     value={exploreQuery}
                     onChange={(event) => setExploreQuery(event.target.value)}
-                    placeholder="Введите email или текст публикации"
+                    placeholder="Введите @username, имя или текст публикации"
                     className="w-full rounded-lg border bg-transparent px-3 py-2 outline-none"
                     style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)" }}
                   />
@@ -1090,7 +1328,13 @@ function App() {
                   {exploreUsers.length === 0 ? <InlineInfo text="Введите запрос, чтобы найти пользователей." /> : null}
                   {exploreUsers.map((item) => (
                     <div key={item.accountId as string} className="rounded-xl border p-3 space-y-2" style={innerCardStyle}>
-                      <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>{item.email}</p>
+                      <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>
+                        {item.displayName || item.username || "Пользователь"}
+                      </p>
+                      <p style={{ color: "var(--base-grey-light)", fontSize: 12 }}>@{item.username}</p>
+                      <p style={{ color: "var(--base-grey-light)", fontSize: 12 }}>
+                        Статус дружбы: {renderFriendState(item.friendState)}
+                      </p>
                       <div className="flex gap-2">
                         <button type="button" className="px-3 py-1.5 rounded-lg border text-sm" style={outlineButtonStyle} onClick={() => void createDirect(item.accountId as string)}>
                           <MessageSquare className="w-4 h-4 inline mr-2" />
@@ -1100,6 +1344,11 @@ function App() {
                           <User className="w-4 h-4 inline mr-2" />
                           Профиль
                         </button>
+                        {item.friendState === "none" && item.canSendFriendRequest ? (
+                          <button type="button" className="px-3 py-1.5 rounded-lg border text-sm" style={outlineButtonStyle} onClick={() => void sendFriendRequest(item.accountId as string)}>
+                            Добавить
+                          </button>
+                        ) : null}
                       </div>
                     </div>
                   ))}
@@ -1112,10 +1361,13 @@ function App() {
                     <PostCard
                       key={post.id as string}
                       id={post.id as string}
-                      username={post.authorEmail}
+                      authorDisplayName={post.authorDisplayName || post.authorUsername || post.authorEmail}
+                      authorUsername={post.authorUsername}
                       timestamp={new Date(post.createdAt as string).toLocaleString("ru-RU")}
                       imageUrl={post.mediaType === "image" ? post.mediaUrl : null}
                       videoUrl={post.mediaType === "video" ? post.mediaUrl : null}
+                      media={post.media ? { contentUrl: post.media.contentUrl, mimeType: post.media.mimeType } : null}
+                      accessToken={session.accessToken}
                       caption={post.content}
                       likes={post.likeCount}
                       likedByMe={post.likedByMe}
@@ -1123,6 +1375,7 @@ function App() {
                       canDelete={post.canDelete}
                       onToggleLike={toggleLike}
                       onDelete={deletePost}
+                      onOpenAuthor={() => void openUserProfile(post.authorAccountId as string)}
                     />
                   ))}
                 </div>
@@ -1133,9 +1386,14 @@ function App() {
           {section === "notifications" ? (
             <section className="space-y-3">
               {notifications.length === 0 ? <InlineInfo text="Пока нет уведомлений." /> : notifications.map((item) => (
-                <div key={`${item.postId as string}_${item.actorAccountId as string}_${item.createdAt as string}`} className="rounded-xl border p-3" style={cardStyle}>
-                  <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>{item.actorEmail} поставил(а) лайк вашему посту</p>
-                  <p style={{ color: "var(--base-grey-light)", marginTop: 6 }}>{item.postPreview}</p>
+                <div key={`${item.id}_${item.createdAt as string}`} className="rounded-xl border p-3" style={cardStyle}>
+                  <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>
+                    {renderNotificationTitle(item)}
+                  </p>
+                  {item.preview ? <p style={{ color: "var(--base-grey-light)", marginTop: 6 }}>{item.preview}</p> : null}
+                  <p style={{ color: "var(--base-grey-light)", marginTop: 6, fontSize: 12 }}>
+                    {new Date(item.createdAt as string).toLocaleString("ru-RU")}
+                  </p>
                 </div>
               ))}
             </section>
@@ -1143,61 +1401,259 @@ function App() {
 
           {section === "profile" ? (
             <section className="space-y-4">
-              <div className="rounded-2xl border p-4 space-y-2" style={cardStyle}>
-                <div className="flex items-center justify-between">
-                  <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>
-                    {profileTarget ? "Профиль пользователя" : "Мой профиль"}
-                  </p>
-                  {profileTarget ? (
-                    <button type="button" className="px-3 py-1.5 rounded-lg border text-sm" style={outlineButtonStyle} onClick={clearProfileTarget}>
-                      Вернуться к моему профилю
-                    </button>
-                  ) : null}
-                </div>
-
-                {profileTarget ? (
-                  <>
-                    <p style={{ color: "var(--base-grey-light)" }}>Email: {profileTarget.email}</p>
-                    <p style={{ color: "var(--base-grey-light)" }}>Публикаций: {profileTarget.postCount}</p>
-                    <div className="flex gap-2">
-                      {profileTarget.existingDirectConversationId ? (
-                        <button
-                          type="button"
-                          className="px-3 py-1.5 rounded-lg border text-sm"
-                          style={outlineButtonStyle}
-                          onClick={() => void openConversation(profileTarget.existingDirectConversationId as string)}
-                        >
-                          Открыть диалог
-                        </button>
-                      ) : profileTarget.canStartDirectChat ? (
-                        <button type="button" className="px-3 py-1.5 rounded-lg border text-sm" style={outlineButtonStyle} onClick={() => void createDirect(profileTarget.accountId as string)}>
-                          <MessageSquare className="w-4 h-4 inline mr-2" />
-                          Написать
-                        </button>
+              <div className="rounded-2xl border overflow-hidden" style={cardStyle}>
+                <div
+                  className="h-28 border-b"
+                  style={{ borderColor: "var(--glass-border)", background: "linear-gradient(135deg,#2b2f3f,#1a1f29)" }}
+                />
+                <div className="p-4 space-y-3">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <p style={{ color: "var(--text-primary)", fontSize: 22, fontWeight: 700 }}>
+                        {(profileTarget ?? myProfile)?.displayName || "Профиль"}
+                      </p>
+                      <p style={{ color: "var(--base-grey-light)" }}>
+                        @{(profileTarget ?? myProfile)?.username || "username"}
+                      </p>
+                      {(profileTarget ?? myProfile)?.statusText ? (
+                        <p style={{ color: "var(--base-grey-light)", marginTop: 8 }}>
+                          {(profileTarget ?? myProfile)?.statusText}
+                        </p>
                       ) : null}
                     </div>
-                  </>
-                ) : (
-                  <>
-                    <p style={{ color: "var(--base-grey-light)" }}>Email: {session.email}</p>
-                    <p style={{ color: "var(--base-grey-light)" }}>ID аккаунта: {session.accountId}</p>
-                  </>
-                )}
+                    <div className="flex gap-2 flex-wrap justify-end">
+                      {profileTarget ? (
+                        <>
+                          <button
+                            type="button"
+                            className="px-3 py-1.5 rounded-lg border text-sm"
+                            style={outlineButtonStyle}
+                            onClick={clearProfileTarget}
+                          >
+                            Мой профиль
+                          </button>
+                          {profileTarget.existingDirectConversationId ? (
+                            <button
+                              type="button"
+                              className="px-3 py-1.5 rounded-lg border text-sm"
+                              style={outlineButtonStyle}
+                              onClick={() => void openConversation(profileTarget.existingDirectConversationId as string)}
+                            >
+                              Открыть чат
+                            </button>
+                          ) : profileTarget.canStartDirectChat ? (
+                            <button
+                              type="button"
+                              className="px-3 py-1.5 rounded-lg border text-sm"
+                              style={outlineButtonStyle}
+                              onClick={() => void createDirect(profileTarget.accountId as string)}
+                            >
+                              <MessageSquare className="w-4 h-4 inline mr-2" />
+                              Написать
+                            </button>
+                          ) : null}
+                          {profileTarget.friendState === "none" && profileTarget.canSendFriendRequest ? (
+                            <button
+                              type="button"
+                              className="px-3 py-1.5 rounded-lg border text-sm"
+                              style={outlineButtonStyle}
+                              onClick={() => void sendFriendRequest(profileTarget.accountId as string)}
+                            >
+                              Добавить в друзья
+                            </button>
+                          ) : null}
+                          {profileTarget.friendState === "incoming_request" ? (
+                            <button
+                              type="button"
+                              className="px-3 py-1.5 rounded-lg border text-sm"
+                              style={outlineButtonStyle}
+                              onClick={() => {
+                                const req = incomingRequests.find((item) => (item.actor.accountId as string) === (profileTarget.accountId as string));
+                                if (req) {
+                                  void processFriendRequest(req.id as string, "accept", profileTarget.accountId as string);
+                                }
+                              }}
+                            >
+                              Принять заявку
+                            </button>
+                          ) : null}
+                          {profileTarget.friendState === "outgoing_request" ? (
+                            <button
+                              type="button"
+                              className="px-3 py-1.5 rounded-lg border text-sm"
+                              style={outlineButtonStyle}
+                              onClick={() => {
+                                const req = outgoingRequests.find((item) => (item.target.accountId as string) === (profileTarget.accountId as string));
+                                if (req) {
+                                  void processFriendRequest(req.id as string, "cancel", profileTarget.accountId as string);
+                                }
+                              }}
+                            >
+                              Отменить заявку
+                            </button>
+                          ) : null}
+                          {profileTarget.friendState === "friends" ? (
+                            <button
+                              type="button"
+                              className="px-3 py-1.5 rounded-lg border text-sm"
+                              style={outlineButtonStyle}
+                              onClick={() => void removeFriend(profileTarget.accountId as string)}
+                            >
+                              Удалить из друзей
+                            </button>
+                          ) : null}
+                        </>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  {(profileTarget ?? myProfile)?.bio ? (
+                    <p style={{ color: "var(--text-primary)" }}>{(profileTarget ?? myProfile)?.bio}</p>
+                  ) : (
+                    <p style={{ color: "var(--base-grey-light)" }}>
+                      {(profileTarget ?? myProfile) ? "Пока нет описания профиля." : "Профиль загружается..."}
+                    </p>
+                  )}
+
+                  <div className="flex flex-wrap gap-3 text-sm">
+                    <span style={{ color: "var(--base-grey-light)" }}>Публикации: {(profileTarget ?? myProfile)?.postCount ?? 0}</span>
+                    <span style={{ color: "var(--base-grey-light)" }}>Фото: {(profileTarget ?? myProfile)?.photoCount ?? 0}</span>
+                    <span style={{ color: "var(--base-grey-light)" }}>Друзья: {(profileTarget ?? myProfile)?.friendCount ?? 0}</span>
+                  </div>
+                </div>
               </div>
 
               {!profileTarget ? (
+                <>
+                  <div className="rounded-2xl border p-4 space-y-3" style={cardStyle}>
+                    <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>Редактирование профиля</p>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <input value={profileEdit.displayName} onChange={(event) => setProfileEdit((prev) => ({ ...prev, displayName: event.target.value }))} placeholder="Отображаемое имя" className="w-full rounded-lg border bg-transparent px-3 py-2 outline-none" style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)" }} />
+                      <input value={profileEdit.username} onChange={(event) => setProfileEdit((prev) => ({ ...prev, username: event.target.value }))} placeholder="@username" className="w-full rounded-lg border bg-transparent px-3 py-2 outline-none" style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)" }} />
+                      <input value={profileEdit.statusText} onChange={(event) => setProfileEdit((prev) => ({ ...prev, statusText: event.target.value }))} placeholder="Статус" className="w-full rounded-lg border bg-transparent px-3 py-2 outline-none" style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)" }} />
+                      <input value={profileEdit.location} onChange={(event) => setProfileEdit((prev) => ({ ...prev, location: event.target.value }))} placeholder="Локация" className="w-full rounded-lg border bg-transparent px-3 py-2 outline-none" style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)" }} />
+                      <input value={profileEdit.websiteUrl} onChange={(event) => setProfileEdit((prev) => ({ ...prev, websiteUrl: event.target.value }))} placeholder="Сайт" className="w-full rounded-lg border bg-transparent px-3 py-2 outline-none" style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)" }} />
+                    </div>
+                    <textarea value={profileEdit.bio} onChange={(event) => setProfileEdit((prev) => ({ ...prev, bio: event.target.value }))} placeholder="О себе" className="w-full rounded-lg border bg-transparent px-3 py-2 outline-none resize-none" style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)", minHeight: 90 }} />
+                    <div className="flex gap-2 flex-wrap">
+                      <button type="button" className="px-3 py-2 rounded-lg border" style={outlineButtonStyle} onClick={() => void saveProfile()}>
+                        Сохранить профиль
+                      </button>
+                      <label className="px-3 py-2 rounded-lg border cursor-pointer" style={outlineButtonStyle}>
+                        Загрузить аватар
+                        <input type="file" className="hidden" accept="image/*" onChange={(event) => {
+                          const file = event.target.files?.[0];
+                          if (file) void uploadProfileMedia(file, "avatar");
+                          event.currentTarget.value = "";
+                        }} />
+                      </label>
+                      <label className="px-3 py-2 rounded-lg border cursor-pointer" style={outlineButtonStyle}>
+                        Загрузить обложку
+                        <input type="file" className="hidden" accept="image/*" onChange={(event) => {
+                          const file = event.target.files?.[0];
+                          if (file) void uploadProfileMedia(file, "banner");
+                          event.currentTarget.value = "";
+                        }} />
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border p-4 space-y-3" style={cardStyle}>
+                    <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>Истории</p>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <input value={storyCaption} onChange={(event) => setStoryCaption(event.target.value)} placeholder="Подпись к истории" className="flex-1 min-w-[220px] rounded-lg border bg-transparent px-3 py-2 outline-none" style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)" }} />
+                      <label className="px-3 py-2 rounded-lg border cursor-pointer" style={outlineButtonStyle}>
+                        Добавить историю
+                        <input type="file" className="hidden" accept="image/*,video/*" onChange={(event) => {
+                          const file = event.target.files?.[0];
+                          if (file) void createStory(file);
+                          event.currentTarget.value = "";
+                        }} />
+                      </label>
+                    </div>
+                    {stories.length === 0 ? <InlineInfo text="Историй пока нет." /> : (
+                      <div className="space-y-2">
+                        {stories.slice(0, 8).map((story) => (
+                          <div key={story.id as string} className="rounded-lg border px-3 py-2" style={innerCardStyle}>
+                            <p style={{ color: "var(--text-primary)" }}>{story.ownerName || story.ownerUsername}</p>
+                            <p style={{ color: "var(--base-grey-light)", fontSize: 12 }}>
+                              До {new Date(story.expiresAt as string).toLocaleString("ru-RU")}
+                            </p>
+                            {story.caption ? <p style={{ color: "var(--base-grey-light)", marginTop: 6 }}>{story.caption}</p> : null}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="rounded-2xl border p-4 space-y-3" style={cardStyle}>
+                    <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>Друзья и заявки</p>
+                    <div className="grid gap-4 md:grid-cols-3">
+                      <div>
+                        <p style={{ color: "var(--base-grey-light)", fontSize: 12, marginBottom: 8 }}>Друзья</p>
+                        <div className="space-y-2">
+                          {friends.length === 0 ? <InlineInfo text="Список друзей пуст." /> : friends.map((friend) => (
+                            <div key={friend.accountId as string} className="rounded-lg border p-2" style={innerCardStyle}>
+                              <p style={{ color: "var(--text-primary)" }}>{friend.displayName || friend.username}</p>
+                              <p style={{ color: "var(--base-grey-light)", fontSize: 12 }}>@{friend.username}</p>
+                              <div className="mt-2 flex gap-2">
+                                <button type="button" className="px-2 py-1 rounded-lg border text-xs" style={outlineButtonStyle} onClick={() => void createDirect(friend.accountId as string)}>Написать</button>
+                                <button type="button" className="px-2 py-1 rounded-lg border text-xs" style={outlineButtonStyle} onClick={() => void openUserProfile(friend.accountId as string)}>Профиль</button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                      <div>
+                        <p style={{ color: "var(--base-grey-light)", fontSize: 12, marginBottom: 8 }}>Входящие</p>
+                        <div className="space-y-2">
+                          {incomingRequests.length === 0 ? <InlineInfo text="Нет входящих заявок." /> : incomingRequests.map((request) => (
+                            <div key={request.id as string} className="rounded-lg border p-2" style={innerCardStyle}>
+                              <p style={{ color: "var(--text-primary)" }}>{request.actor.displayName || request.actor.username}</p>
+                              <div className="mt-2 flex gap-2">
+                                <button type="button" className="px-2 py-1 rounded-lg border text-xs" style={outlineButtonStyle} onClick={() => void processFriendRequest(request.id as string, "accept")}>Принять</button>
+                                <button type="button" className="px-2 py-1 rounded-lg border text-xs" style={outlineButtonStyle} onClick={() => void processFriendRequest(request.id as string, "reject")}>Отклонить</button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                      <div>
+                        <p style={{ color: "var(--base-grey-light)", fontSize: 12, marginBottom: 8 }}>Исходящие</p>
+                        <div className="space-y-2">
+                          {outgoingRequests.length === 0 ? <InlineInfo text="Нет исходящих заявок." /> : outgoingRequests.map((request) => (
+                            <div key={request.id as string} className="rounded-lg border p-2" style={innerCardStyle}>
+                              <p style={{ color: "var(--text-primary)" }}>{request.target.displayName || request.target.username}</p>
+                              <div className="mt-2 flex gap-2">
+                                <button type="button" className="px-2 py-1 rounded-lg border text-xs" style={outlineButtonStyle} onClick={() => void processFriendRequest(request.id as string, "cancel")}>Отменить</button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              ) : null}
+
+              {(!profileTarget || profileTarget.canViewPosts) ? (
                 <div className="rounded-2xl border p-4 space-y-3" style={cardStyle}>
-                  <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>Мои публикации</p>
+                  <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>
+                    {profileTarget ? "Публикации пользователя" : "Мои публикации"}
+                  </p>
                   {profileLoading ? <InlineInfo text="Загрузка публикаций..." /> : null}
-                  {!profileLoading && profilePosts.length === 0 ? <InlineInfo text="У вас пока нет публикаций." /> : null}
+                  {!profileLoading && profilePosts.length === 0 ? <InlineInfo text="Публикаций пока нет." /> : null}
                   {profilePosts.map((post) => (
                     <PostCard
                       key={post.id as string}
                       id={post.id as string}
-                      username={post.authorEmail}
+                      authorDisplayName={post.authorDisplayName || post.authorUsername || post.authorEmail}
+                      authorUsername={post.authorUsername}
                       timestamp={new Date(post.createdAt as string).toLocaleString("ru-RU")}
                       imageUrl={post.mediaType === "image" ? post.mediaUrl : null}
                       videoUrl={post.mediaType === "video" ? post.mediaUrl : null}
+                      media={post.media ? { contentUrl: post.media.contentUrl, mimeType: post.media.mimeType } : null}
+                      accessToken={session.accessToken}
                       caption={post.content}
                       likes={post.likeCount}
                       likedByMe={post.likedByMe}
@@ -1205,10 +1661,13 @@ function App() {
                       canDelete={post.canDelete}
                       onToggleLike={toggleLike}
                       onDelete={deletePost}
+                      onOpenAuthor={() => void openUserProfile(post.authorAccountId as string)}
                     />
                   ))}
                 </div>
-              ) : null}
+              ) : (
+                <InlineInfo text="Публикации этого профиля скрыты настройками приватности." />
+              )}
             </section>
           ) : null}
 
@@ -1221,6 +1680,7 @@ function App() {
                   ["sessions", "Сессии"],
                   ["devices", "Устройства"],
                   ["security", "Безопасность"],
+                  ["privacy", "Приватность"],
                   ["app", "Приложение"],
                   ["connection", "Подключение"],
                 ] as Array<[SettingsSection, string]>).map(([value, label]) => (
@@ -1322,6 +1782,57 @@ function App() {
                 </div>
               ) : null}
 
+              {settingsSection === "privacy" ? (
+                <div className="rounded-xl border p-3 space-y-3" style={innerCardStyle}>
+                  <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>Приватность профиля</p>
+                  {!privacy ? <InlineInfo text="Настройки приватности загружаются..." /> : (
+                    <>
+                      <p style={{ color: "var(--base-grey-light)", fontSize: 12 }}>
+                        Профиль: {renderVisibilityScope(privacy.profileVisibility)} · Публикации: {renderVisibilityScope(privacy.postsVisibility)} · Фото: {renderVisibilityScope(privacy.photosVisibility)}
+                      </p>
+                      <div className="grid gap-2 md:grid-cols-2">
+                        <select value={privacy.postsVisibility} onChange={(event) => setPrivacy((prev) => (prev ? { ...prev, postsVisibility: event.target.value as never } : prev))} className="w-full rounded-lg border bg-transparent px-3 py-2 outline-none" style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)" }}>
+                          <option value="public">Публикации: всем</option>
+                          <option value="friends">Публикации: друзьям</option>
+                          <option value="only_me">Публикации: только мне</option>
+                        </select>
+                        <select value={privacy.dmPolicy} onChange={(event) => setPrivacy((prev) => (prev ? { ...prev, dmPolicy: event.target.value as never } : prev))} className="w-full rounded-lg border bg-transparent px-3 py-2 outline-none" style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)" }}>
+                          <option value="friends">ЛС: только друзья</option>
+                          <option value="everyone">ЛС: все</option>
+                          <option value="nobody">ЛС: никто</option>
+                        </select>
+                        <select value={privacy.friendRequestsPolicy} onChange={(event) => setPrivacy((prev) => (prev ? { ...prev, friendRequestsPolicy: event.target.value as never } : prev))} className="w-full rounded-lg border bg-transparent px-3 py-2 outline-none" style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)" }}>
+                          <option value="anyone">Заявки: от всех</option>
+                          <option value="friends_of_friends">Заявки: друзья друзей</option>
+                          <option value="nobody">Заявки: никто</option>
+                        </select>
+                      </div>
+                      <button
+                        type="button"
+                        className="px-3 py-2 rounded-lg border"
+                        style={outlineButtonStyle}
+                        onClick={async () => {
+                          if (!api || !session || !privacy) return;
+                          try {
+                            const updated = await api.updatePrivacy(session.accessToken, {
+                              postsVisibility: privacy.postsVisibility,
+                              dmPolicy: privacy.dmPolicy,
+                              friendRequestsPolicy: privacy.friendRequestsPolicy,
+                            });
+                            setPrivacy(updated.privacy);
+                            setSettingsMessage("Настройки приватности сохранены.");
+                          } catch (error) {
+                            setSettingsMessage(toUserError(error));
+                          }
+                        }}
+                      >
+                        Сохранить приватность
+                      </button>
+                    </>
+                  )}
+                </div>
+              ) : null}
+
               {settingsSection === "app" ? (
                 <div className="rounded-xl border p-3 space-y-2" style={innerCardStyle}>
                   <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>Приложение</p>
@@ -1353,13 +1864,13 @@ function App() {
   );
 }
 
-function ConnectScreen({ onConnect, error }: { onConnect: (input: string) => Promise<void>; error: string }) {
-  const [value, setValue] = React.useState("");
+function AutoConnectScreen({ onRetry, error }: { onRetry: () => Promise<void>; error: string }) {
   return (
-    <StandaloneCard title="Подключение к серверу" subtitle="Введите домен или IP. Конфигурация подтянется автоматически.">
-      <input value={value} onChange={(e) => setValue(e.target.value)} placeholder="chat.example.com или 89.169.35.49:8080" className="w-full rounded-lg border bg-transparent px-3 py-2 outline-none" style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)" }} />
+    <StandaloneCard title="Подключение к серверу" subtitle="Пытаемся подключиться автоматически к текущему домену сайта.">
       {error ? <InlineInfo tone="error" text={error} /> : null}
-      <button type="button" className="w-full rounded-lg border px-4 py-2" style={outlineButtonStyle} onClick={() => void onConnect(value)}>Подключиться</button>
+      <button type="button" className="w-full rounded-lg border px-4 py-2" style={outlineButtonStyle} onClick={() => void onRetry()}>
+        Повторить подключение
+      </button>
     </StandaloneCard>
   );
 }
@@ -1501,6 +2012,30 @@ function sectionTitle(section: SidebarSection): string {
 function sectionSubtitle(section: SidebarSection, server: string, transportState: RuntimeTransportState): string {
   if (section === "messages") return `Сервер: ${server} · ${transportState.status}`;
   return `Сервер: ${server}`;
+}
+
+function renderVisibilityScope(value: string): string {
+  if (value === "public") return "всем";
+  if (value === "friends") return "друзьям";
+  if (value === "only_me") return "только мне";
+  return value;
+}
+
+function renderFriendState(value: string): string {
+  if (value === "friends") return "друзья";
+  if (value === "incoming_request") return "входящая заявка";
+  if (value === "outgoing_request") return "исходящая заявка";
+  if (value === "blocked") return "заблокирован";
+  return "нет связи";
+}
+
+function renderNotificationTitle(item: NotificationsResponse["notifications"][number]): string {
+  const actor = item.actorName || item.actorUsername || "Пользователь";
+  if (item.type === "friend_request") return `${actor} отправил(а) заявку в друзья`;
+  if (item.type === "friend_accepted") return `${actor} принял(а) заявку в друзья`;
+  if (item.type === "story_published") return `${actor} опубликовал(а) историю`;
+  if (item.type === "social_like") return `${actor} поставил(а) лайк`;
+  return "Новое уведомление";
 }
 
 function resolveConversationTitle(summary: ConversationSummaryDTO | null): string {
@@ -1714,11 +2249,17 @@ async function loadProfilePosts(
   session: SessionState,
   setPosts: React.Dispatch<React.SetStateAction<CreateSocialPostResponse["post"][]>>,
   setLoading: React.Dispatch<React.SetStateAction<boolean>>,
+  accountId?: string,
 ) {
   setLoading(true);
   try {
-    const response = await api.listPosts(session.accessToken, { scope: "mine", limit: 30 });
-    setPosts(response.posts);
+    if (accountId && accountId !== session.accountId) {
+      const response = await api.listPosts(session.accessToken, { limit: 80, mediaType: "all" });
+      setPosts(response.posts.filter((item) => (item.authorAccountId as string) === accountId));
+    } else {
+      const response = await api.listPosts(session.accessToken, { scope: "mine", limit: 30 });
+      setPosts(response.posts);
+    }
   } catch {
     setPosts([]);
   } finally {
@@ -1811,13 +2352,58 @@ async function loadFeed(
   }
 }
 
-async function loadSocialNotifications(
+async function loadNotifications(
   api: WebApiClient,
   session: SessionState,
-  setNotifications: React.Dispatch<React.SetStateAction<SocialNotificationsResponse["notifications"]>>,
+  setNotifications: React.Dispatch<React.SetStateAction<NotificationsResponse["notifications"]>>,
 ) {
-  const response = await api.socialNotifications(session.accessToken, 30).catch(() => ({ notifications: [] }));
+  const response = await api.listNotifications(session.accessToken, 50).catch(() => ({ notifications: [], total: 0 }));
   setNotifications(response.notifications);
+}
+
+async function loadProfileState(
+  api: WebApiClient,
+  session: SessionState,
+  setMyProfile: React.Dispatch<React.SetStateAction<ProfileDTO | null>>,
+  setProfileEdit: React.Dispatch<
+    React.SetStateAction<{
+      displayName: string;
+      username: string;
+      bio: string;
+      statusText: string;
+      location: string;
+      websiteUrl: string;
+    }>
+  >,
+  setFriends: React.Dispatch<React.SetStateAction<FriendListItemDTO[]>>,
+  setIncomingRequests: React.Dispatch<React.SetStateAction<FriendRequestDTO[]>>,
+  setOutgoingRequests: React.Dispatch<React.SetStateAction<FriendRequestDTO[]>>,
+  setPrivacy: React.Dispatch<React.SetStateAction<PrivacyResponse["privacy"] | null>>,
+  setStories: React.Dispatch<React.SetStateAction<StoryDTO[]>>,
+) {
+  const [profile, friends, incoming, outgoing, privacy, stories] = await Promise.all([
+    api.getMyProfile(session.accessToken).catch(() => null),
+    api.listFriends(session.accessToken, 200).catch(() => ({ friends: [] })),
+    api.listFriendRequests(session.accessToken, "incoming", 200).catch(() => ({ requests: [] })),
+    api.listFriendRequests(session.accessToken, "outgoing", 200).catch(() => ({ requests: [] })),
+    api.getPrivacy(session.accessToken).catch(() => null),
+    api.listStoryFeed(session.accessToken, 60).catch(() => ({ stories: [] })),
+  ]);
+
+  setMyProfile(profile?.profile ?? null);
+  setProfileEdit({
+    displayName: profile?.profile.displayName ?? "",
+    username: profile?.profile.username ?? "",
+    bio: profile?.profile.bio ?? "",
+    statusText: profile?.profile.statusText ?? "",
+    location: profile?.profile.location ?? "",
+    websiteUrl: profile?.profile.websiteUrl ?? "",
+  });
+  setFriends(friends.friends ?? []);
+  setIncomingRequests(incoming.requests ?? []);
+  setOutgoingRequests(outgoing.requests ?? []);
+  setPrivacy(privacy?.privacy ?? null);
+  setStories(stories.stories ?? []);
 }
 
 async function loadSettingsData(
@@ -1849,6 +2435,16 @@ async function fetchServerConfig(origin: string): Promise<ServerBootstrapConfig>
   if (!response.ok) throw new Error("Сервер вернул некорректный ответ конфигурации.");
   const payload = await response.json().catch(() => null);
   return parseServerConfigPayload(payload);
+}
+
+function detectDefaultServerInput(): string {
+  if (typeof window === "undefined") {
+    return "http://localhost:8080";
+  }
+  if (!window.location.origin || window.location.origin === "null") {
+    return "http://localhost:8080";
+  }
+  return window.location.origin;
 }
 
 function loadSavedServer(): SavedServer | null {

@@ -6,7 +6,9 @@ import type {
   ConversationID,
   DeviceID,
   DeviceRecipientID,
+  FriendRequestID,
   ISO8601Timestamp,
+  MediaID,
   MessageID,
   PluginCommandID,
   PluginCapability,
@@ -22,6 +24,7 @@ import type {
   SessionPersistenceMode,
   SessionID,
   SyncCursorID,
+  StoryID,
   TransportLifecycleEvent,
   TransportLifecycleState,
   TransportEndpointID,
@@ -80,6 +83,12 @@ export type ReceiptType = "delivered" | "read";
 export type AttachmentKind = "image" | "file";
 export type TransportMode = "websocket" | "long_poll";
 export type SocialMediaType = "image" | "video";
+export type VisibilityScope = "public" | "friends" | "only_me";
+export type FriendRequestPolicy = "anyone" | "friends_of_friends" | "nobody";
+export type DirectMessagePolicy = "everyone" | "friends" | "nobody";
+export type FriendState = "none" | "incoming_request" | "outgoing_request" | "friends" | "blocked";
+export type FriendRequestStatus = "pending" | "accepted" | "rejected" | "cancelled";
+export type NotificationType = "social_like" | "friend_request" | "friend_accepted" | "story_published";
 
 export type SecurityEventType =
   | "account_registered"
@@ -567,7 +576,9 @@ export interface ListConversationSummariesResponse {
 
 export interface UserSearchItemDTO {
   accountId: AccountID;
-  email: string;
+  username: string;
+  displayName: string;
+  avatarMediaId: MediaID | null;
   createdAt: ISO8601Timestamp;
 }
 
@@ -579,20 +590,41 @@ export interface UserSearchResponse {
 
 export interface UserPublicProfileResponse {
   accountId: AccountID;
-  email: string;
+  username: string;
+  displayName: string;
+  avatarMediaId: MediaID | null;
+  bannerMediaId: MediaID | null;
+  bio: string;
+  statusText: string;
+  websiteUrl: string | null;
+  location: string | null;
+  birthDate: ISO8601Timestamp | null;
+  friendState: FriendState;
+  friendCount: number;
+  photoCount: number;
   createdAt: ISO8601Timestamp;
   postCount: number;
   canStartDirectChat: boolean;
   existingDirectConversationId: ConversationID | null;
+  canViewPosts: boolean;
+  canViewPhotos: boolean;
+  canViewStories: boolean;
+  canViewFriends: boolean;
+  canSendFriendRequest: boolean;
 }
 
 export interface SocialPostDTO {
   id: PostID;
   authorAccountId: AccountID;
   authorEmail: string;
+  authorDisplayName: string;
+  authorUsername: string;
+  authorAvatarId: MediaID | null;
   content: string;
   mediaType: SocialMediaType | null;
   mediaUrl: string | null;
+  mediaId: MediaID | null;
+  media: MediaDTO | null;
   mood: string | null;
   likeCount: number;
   likedByMe: boolean;
@@ -613,6 +645,7 @@ export interface CreateSocialPostRequest {
   content: string;
   mediaType?: SocialMediaType;
   mediaUrl?: string;
+  mediaId?: MediaID;
   mood?: string;
 }
 
@@ -631,6 +664,197 @@ export interface SocialPostLikeResponse {
 
 export interface SocialNotificationsResponse {
   notifications: SocialNotificationDTO[];
+}
+
+export interface ProfilePrivacySettingsDTO {
+  profileVisibility: VisibilityScope;
+  postsVisibility: VisibilityScope;
+  photosVisibility: VisibilityScope;
+  storiesVisibility: VisibilityScope;
+  friendsVisibility: VisibilityScope;
+  birthDateVisibility: VisibilityScope;
+  locationVisibility: VisibilityScope;
+  linksVisibility: VisibilityScope;
+  friendRequestsPolicy: FriendRequestPolicy;
+  dmPolicy: DirectMessagePolicy;
+  updatedAt: ISO8601Timestamp;
+}
+
+export interface ProfileDTO {
+  accountId: AccountID;
+  displayName: string;
+  username: string;
+  email?: string;
+  bio: string;
+  statusText: string;
+  birthDate: ISO8601Timestamp | null;
+  location: string | null;
+  websiteUrl: string | null;
+  avatarMediaId: MediaID | null;
+  bannerMediaId: MediaID | null;
+  friendState: FriendState;
+  postCount: number;
+  photoCount: number;
+  friendCount: number;
+  canStartDirectChat: boolean;
+  existingDirectConversationId: ConversationID | null;
+  canViewPosts: boolean;
+  canViewPhotos: boolean;
+  canViewStories: boolean;
+  canViewFriends: boolean;
+  canSendFriendRequest: boolean;
+  createdAt: ISO8601Timestamp;
+  privacy: ProfilePrivacySettingsDTO;
+}
+
+export interface ProfileUpdateRequest {
+  displayName?: string | null;
+  username?: string | null;
+  bio?: string | null;
+  statusText?: string | null;
+  birthDate?: string | null;
+  location?: string | null;
+  websiteUrl?: string | null;
+  avatarMediaId?: MediaID | null;
+  bannerMediaId?: MediaID | null;
+}
+
+export interface ProfileResponse {
+  profile: ProfileDTO;
+}
+
+export interface ProfileSearchResponse {
+  profiles: ProfileDTO[];
+  total: number;
+}
+
+export interface PrivacyUpdateRequest {
+  profileVisibility?: VisibilityScope;
+  postsVisibility?: VisibilityScope;
+  photosVisibility?: VisibilityScope;
+  storiesVisibility?: VisibilityScope;
+  friendsVisibility?: VisibilityScope;
+  birthDateVisibility?: VisibilityScope;
+  locationVisibility?: VisibilityScope;
+  linksVisibility?: VisibilityScope;
+  friendRequestsPolicy?: FriendRequestPolicy;
+  dmPolicy?: DirectMessagePolicy;
+}
+
+export interface PrivacyResponse {
+  privacy: ProfilePrivacySettingsDTO;
+}
+
+export interface FriendListItemDTO {
+  accountId: AccountID;
+  username: string;
+  displayName: string;
+  avatarMediaId: MediaID | null;
+  createdAt: ISO8601Timestamp;
+}
+
+export interface FriendRequestDTO {
+  id: FriendRequestID;
+  fromAccountId: AccountID;
+  toAccountId: AccountID;
+  status: FriendRequestStatus;
+  direction: "incoming" | "outgoing";
+  isOutgoing: boolean;
+  createdAt: ISO8601Timestamp;
+  updatedAt: ISO8601Timestamp;
+  actor: FriendListItemDTO;
+  target: FriendListItemDTO;
+}
+
+export interface FriendListResponse {
+  friends: FriendListItemDTO[];
+  total: number;
+}
+
+export interface FriendRequestsResponse {
+  requests: FriendRequestDTO[];
+  total: number;
+  direction: "incoming" | "outgoing";
+}
+
+export interface CreateFriendRequestBody {
+  targetAccountId: AccountID;
+}
+
+export interface FriendRequestActionResponse {
+  request: FriendRequestDTO;
+}
+
+export type MediaDomain = "profile" | "social" | "story";
+export type MediaKind = "avatar" | "banner" | "photo" | "video" | "story_image" | "story_video";
+export type MediaStatus = "active" | "processing" | "deleted";
+
+export interface MediaDTO {
+  id: MediaID;
+  ownerAccountId: AccountID;
+  domain: MediaDomain;
+  kind: MediaKind;
+  mimeType: string;
+  sizeBytes: number;
+  checksumSha256: string;
+  objectKey?: string;
+  visibility: VisibilityScope;
+  status: MediaStatus;
+  createdAt: ISO8601Timestamp;
+  expiresAt: ISO8601Timestamp | null;
+  contentUrl: string;
+}
+
+export interface MediaMetadataResponse {
+  media: MediaDTO;
+}
+
+export interface MediaUploadResponse {
+  media: MediaDTO;
+}
+
+export interface StoryDTO {
+  id: StoryID;
+  ownerAccountId: AccountID;
+  ownerName: string;
+  ownerUsername: string;
+  ownerAvatarId: MediaID | null;
+  caption: string;
+  visibility: VisibilityScope;
+  createdAt: ISO8601Timestamp;
+  expiresAt: ISO8601Timestamp;
+  media: MediaDTO | null;
+}
+
+export interface CreateStoryRequest {
+  mediaId: MediaID;
+  caption?: string;
+  visibility?: VisibilityScope;
+}
+
+export interface StoryResponse {
+  story: StoryDTO;
+}
+
+export interface StoryFeedResponse {
+  stories: StoryDTO[];
+  total: number;
+}
+
+export interface NotificationDTO {
+  id: string;
+  type: NotificationType;
+  actorAccountId: AccountID | null;
+  actorName: string | null;
+  actorUsername: string | null;
+  targetId: string | null;
+  preview: string | null;
+  createdAt: ISO8601Timestamp;
+}
+
+export interface NotificationsResponse {
+  notifications: NotificationDTO[];
+  total: number;
 }
 
 export interface ConversationDetailsResponse {
