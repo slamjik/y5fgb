@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/example/secure-messenger/apps/relay-server/internal/domain"
@@ -167,4 +168,43 @@ func (s *Store) GetAccountIdentity(ctx context.Context, accountID string) (domai
 	}
 
 	return identity, nil
+}
+
+func (s *Store) SearchAccountsByEmail(ctx context.Context, query string, limit int) ([]domain.UserSearchItem, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+
+	normalizedQuery := strings.TrimSpace(strings.ToLower(query))
+	if normalizedQuery == "" {
+		return []domain.UserSearchItem{}, nil
+	}
+
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, email, created_at
+		FROM accounts
+		WHERE email ILIKE $1
+		ORDER BY
+			CASE WHEN email ILIKE $2 THEN 0 ELSE 1 END,
+			created_at DESC
+		LIMIT $3
+	`, "%"+normalizedQuery+"%", normalizedQuery+"%", limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to search accounts by email: %w", err)
+	}
+	defer rows.Close()
+
+	result := make([]domain.UserSearchItem, 0, limit)
+	for rows.Next() {
+		var item domain.UserSearchItem
+		if err := rows.Scan(&item.AccountID, &item.Email, &item.CreatedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan user search row: %w", err)
+		}
+		result = append(result, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate user search rows: %w", err)
+	}
+
+	return result, nil
 }

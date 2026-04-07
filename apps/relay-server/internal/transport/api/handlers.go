@@ -17,6 +17,7 @@ import (
 	"github.com/example/secure-messenger/apps/relay-server/internal/service/recovery"
 	"github.com/example/secure-messenger/apps/relay-server/internal/service/securityevents"
 	"github.com/example/secure-messenger/apps/relay-server/internal/service/social"
+	"github.com/example/secure-messenger/apps/relay-server/internal/service/users"
 	"github.com/example/secure-messenger/apps/relay-server/internal/transport/middleware"
 )
 
@@ -28,6 +29,7 @@ type Handler struct {
 	eventService          *securityevents.Service
 	messagingService      *messaging.Service
 	socialService         *social.Service
+	userService           *users.Service
 	cfg                   config.Config
 	authRateLimiter       *middleware.IPRateLimiter
 	recoveryRateLimiter   *middleware.IPRateLimiter
@@ -51,6 +53,7 @@ func NewHandler(
 	eventService *securityevents.Service,
 	messagingService *messaging.Service,
 	socialService *social.Service,
+	userService *users.Service,
 	cfg config.Config,
 ) *Handler {
 	return &Handler{
@@ -61,6 +64,7 @@ func NewHandler(
 		eventService:          eventService,
 		messagingService:      messagingService,
 		socialService:         socialService,
+		userService:           userService,
 		cfg:                   cfg,
 		authRateLimiter:       middleware.NewIPRateLimiter(30, time.Minute, nil),
 		recoveryRateLimiter:   middleware.NewIPRateLimiter(10, time.Minute, nil),
@@ -107,7 +111,10 @@ func RegisterRoutes(mux *http.ServeMux, prefix string, handler *Handler, authSer
 	mux.Handle(base+"/conversations/direct", middleware.AuthRequired(authService, http.HandlerFunc(handler.handleCreateDirectConversation)))
 	mux.Handle(base+"/conversations/group", middleware.AuthRequired(authService, http.HandlerFunc(handler.handleCreateGroupConversation)))
 	mux.Handle(base+"/conversations", middleware.AuthRequired(authService, http.HandlerFunc(handler.handleListConversations)))
+	mux.Handle(base+"/conversations/summaries", middleware.AuthRequired(authService, http.HandlerFunc(handler.handleListConversationSummaries)))
 	mux.Handle(base+"/conversations/", middleware.AuthRequired(authService, http.HandlerFunc(handler.handleConversationSubroutes)))
+	mux.Handle(base+"/users/search", middleware.AuthRequired(authService, http.HandlerFunc(handler.handleUserSearch)))
+	mux.Handle(base+"/users/", middleware.AuthRequired(authService, http.HandlerFunc(handler.handleUserSubroutes)))
 	mux.Handle(base+"/messages/", middleware.AuthRequired(authService, http.HandlerFunc(handler.handleMessageSubroutes)))
 	mux.Handle(base+"/attachments/upload", middleware.AuthRequired(authService, http.HandlerFunc(handler.handleAttachmentUpload)))
 	mux.Handle(base+"/attachments/", middleware.AuthRequired(authService, http.HandlerFunc(handler.handleAttachmentSubroutes)))
@@ -181,8 +188,15 @@ func (h *Handler) handleWebRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := h.authService.RegisterWeb(r.Context(), auth.WebRegisterInput{
-		Email:              req.Email,
-		Password:           req.Password,
+		Email:    req.Email,
+		Password: req.Password,
+		Device: auth.DeviceInput{
+			DeviceID:             req.Device.DeviceID,
+			Name:                 req.Device.Name,
+			Platform:             req.Device.Platform,
+			PublicDeviceMaterial: req.Device.PublicDeviceMaterial,
+			Fingerprint:          req.Device.Fingerprint,
+		},
 		SessionPersistence: req.SessionPersistence,
 		UserAgent:          r.UserAgent(),
 		IPAddress:          r.RemoteAddr,
@@ -277,8 +291,15 @@ func (h *Handler) handleWebLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := h.authService.LoginWeb(r.Context(), auth.WebLoginInput{
-		Email:              req.Email,
-		Password:           req.Password,
+		Email:    req.Email,
+		Password: req.Password,
+		Device: auth.DeviceInput{
+			DeviceID:             req.Device.DeviceID,
+			Name:                 req.Device.Name,
+			Platform:             req.Device.Platform,
+			PublicDeviceMaterial: req.Device.PublicDeviceMaterial,
+			Fingerprint:          req.Device.Fingerprint,
+		},
 		SessionPersistence: req.SessionPersistence,
 		UserAgent:          r.UserAgent(),
 		IPAddress:          r.RemoteAddr,
@@ -358,9 +379,16 @@ func (h *Handler) handleWebTwoFALoginVerify(w http.ResponseWriter, r *http.Reque
 	}
 
 	result, err := h.authService.VerifyWebTwoFALogin(r.Context(), auth.VerifyWebTwoFALoginInput{
-		ChallengeID:        req.ChallengeID,
-		LoginToken:         req.LoginToken,
-		Code:               req.Code,
+		ChallengeID: req.ChallengeID,
+		LoginToken:  req.LoginToken,
+		Code:        req.Code,
+		Device: &auth.DeviceInput{
+			DeviceID:             req.Device.DeviceID,
+			Name:                 req.Device.Name,
+			Platform:             req.Device.Platform,
+			PublicDeviceMaterial: req.Device.PublicDeviceMaterial,
+			Fingerprint:          req.Device.Fingerprint,
+		},
 		SessionPersistence: req.SessionPersistence,
 		UserAgent:          r.UserAgent(),
 		IPAddress:          r.RemoteAddr,
@@ -975,6 +1003,122 @@ func (h *Handler) handleListConversations(w http.ResponseWriter, r *http.Request
 		items = append(items, mapConversation(conversation))
 	}
 	WriteJSON(w, http.StatusOK, map[string]any{"conversations": items})
+}
+
+func (h *Handler) handleListConversationSummaries(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "method not allowed"), http.StatusMethodNotAllowed)
+		return
+	}
+	principal, ok := middleware.PrincipalFromContext(r.Context())
+	if !ok {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeUnauthorized, "missing auth context"), http.StatusUnauthorized)
+		return
+	}
+
+	limit := 30
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil {
+			limit = parsed
+		}
+	}
+	offset := 0
+	if raw := strings.TrimSpace(r.URL.Query().Get("offset")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil {
+			offset = parsed
+		}
+	}
+
+	result, err := h.messagingService.ListConversationSummaries(r.Context(), principal, limit, offset)
+	if err != nil {
+		WriteServiceError(w, r, err, http.StatusBadRequest)
+		return
+	}
+
+	summaries := make([]conversationSummaryDTO, 0, len(result.Summaries))
+	for _, summary := range result.Summaries {
+		summaries = append(summaries, mapConversationSummary(summary))
+	}
+
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"summaries": summaries,
+		"total":     result.Total,
+		"offset":    result.Offset,
+		"limit":     result.Limit,
+	})
+}
+
+func (h *Handler) handleUserSearch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "method not allowed"), http.StatusMethodNotAllowed)
+		return
+	}
+	principal, ok := middleware.PrincipalFromContext(r.Context())
+	if !ok {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeUnauthorized, "missing auth context"), http.StatusUnauthorized)
+		return
+	}
+
+	query := strings.TrimSpace(r.URL.Query().Get("query"))
+	limit := 20
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil {
+			limit = parsed
+		}
+	}
+
+	items, err := h.userService.Search(r.Context(), principal, users.SearchInput{
+		Query: query,
+		Limit: limit,
+	})
+	if err != nil {
+		WriteServiceError(w, r, err, http.StatusBadRequest)
+		return
+	}
+
+	usersPayload := make([]userSearchItemDTO, 0, len(items))
+	for _, item := range items {
+		usersPayload = append(usersPayload, mapUserSearchItem(item))
+	}
+
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"users": usersPayload,
+		"total": len(usersPayload),
+		"limit": limit,
+	})
+}
+
+func (h *Handler) handleUserSubroutes(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "method not allowed"), http.StatusMethodNotAllowed)
+		return
+	}
+	principal, ok := middleware.PrincipalFromContext(r.Context())
+	if !ok {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeUnauthorized, "missing auth context"), http.StatusUnauthorized)
+		return
+	}
+
+	accountID, action, parseErr := parseUserRoute(r.URL.Path)
+	if parseErr != nil || action != "profile" {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeNotFound, "route not found"), http.StatusNotFound)
+		return
+	}
+
+	profile, err := h.userService.GetPublicProfile(r.Context(), principal, accountID)
+	if err != nil {
+		WriteServiceError(w, r, err, http.StatusBadRequest)
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"accountId":                    profile.AccountID,
+		"email":                        profile.Email,
+		"createdAt":                    profile.CreatedAt.UTC().Format(time.RFC3339),
+		"postCount":                    profile.PostCount,
+		"canStartDirectChat":           profile.CanStartDirectChat,
+		"existingDirectConversationId": profile.ExistingDirectConversation,
+	})
 }
 
 func (h *Handler) handleConversationSubroutes(w http.ResponseWriter, r *http.Request) {
@@ -1602,6 +1746,20 @@ func parseSocialPostRoute(path string) (string, string, error) {
 	}
 	if len(parts) == 1 {
 		return parts[0], "", nil
+	}
+	return parts[0], parts[1], nil
+}
+
+func parseUserRoute(path string) (string, string, error) {
+	anchor := "/users/"
+	index := strings.Index(path, anchor)
+	if index == -1 {
+		return "", "", fmt.Errorf("missing user route")
+	}
+	tail := strings.Trim(path[index+len(anchor):], "/")
+	parts := strings.Split(tail, "/")
+	if len(parts) < 2 {
+		return "", "", fmt.Errorf("invalid user route")
 	}
 	return parts[0], parts[1], nil
 }

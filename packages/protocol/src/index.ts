@@ -316,12 +316,26 @@ export interface AuthSessionResponse {
 export interface WebLoginRequest {
   email: string;
   password: string;
+  device: {
+    deviceId?: string;
+    name: string;
+    platform: string;
+    publicDeviceMaterial: string;
+    fingerprint?: string;
+  };
   sessionPersistence?: SessionPersistenceMode;
 }
 
 export interface WebRegisterRequest {
   email: string;
   password: string;
+  device: {
+    deviceId?: string;
+    name: string;
+    platform: string;
+    publicDeviceMaterial: string;
+    fingerprint?: string;
+  };
   sessionPersistence?: SessionPersistenceMode;
 }
 
@@ -329,6 +343,13 @@ export interface WebTwoFactorLoginVerifyRequest {
   challengeId: string;
   loginToken: string;
   code: string;
+  device?: {
+    deviceId?: string;
+    name?: string;
+    platform?: string;
+    publicDeviceMaterial?: string;
+    fingerprint?: string;
+  };
   sessionPersistence?: SessionPersistenceMode;
 }
 
@@ -514,6 +535,55 @@ export interface CreateConversationResponse {
 
 export interface ListConversationsResponse {
   conversations: ConversationDTO[];
+}
+
+export interface ConversationSummaryLastMessageDTO {
+  id: MessageID;
+  senderAccountId: AccountID;
+  senderDeviceId: DeviceID;
+  createdAt: ISO8601Timestamp;
+  serverSequence: number;
+  deliveryState: DeliveryState;
+}
+
+export interface ConversationSummaryDTO {
+  id: ConversationID;
+  type: ConversationType;
+  title: string | null;
+  updatedAt: ISO8601Timestamp;
+  lastServerSequence: number;
+  membersCount: number;
+  directPeerAccountId: AccountID | null;
+  directPeerEmail: string | null;
+  lastMessage: ConversationSummaryLastMessageDTO | null;
+}
+
+export interface ListConversationSummariesResponse {
+  summaries: ConversationSummaryDTO[];
+  total: number;
+  offset: number;
+  limit: number;
+}
+
+export interface UserSearchItemDTO {
+  accountId: AccountID;
+  email: string;
+  createdAt: ISO8601Timestamp;
+}
+
+export interface UserSearchResponse {
+  users: UserSearchItemDTO[];
+  total: number;
+  limit: number;
+}
+
+export interface UserPublicProfileResponse {
+  accountId: AccountID;
+  email: string;
+  createdAt: ISO8601Timestamp;
+  postCount: number;
+  canStartDirectChat: boolean;
+  existingDirectConversationId: ConversationID | null;
 }
 
 export interface SocialPostDTO {

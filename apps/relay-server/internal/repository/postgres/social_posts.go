@@ -287,6 +287,20 @@ func (s *Store) ListSocialNotifications(ctx context.Context, authorAccountID str
 	return items, nil
 }
 
+func (s *Store) CountSocialPostsByAuthor(ctx context.Context, authorAccountID string) (int64, error) {
+	var count int64
+	err := s.pool.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM social_posts
+		WHERE author_account_id = $1
+		  AND deleted_at IS NULL
+	`, authorAccountID).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count social posts by author: %w", err)
+	}
+	return count, nil
+}
+
 func mapSocialMediaType(value *string) *domain.SocialMediaType {
 	if value == nil {
 		return nil

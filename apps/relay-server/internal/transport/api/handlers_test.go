@@ -62,6 +62,19 @@ func TestParseSocialPostRoute(t *testing.T) {
 	}
 }
 
+func TestParseUserRoute(t *testing.T) {
+	accountID, action, err := parseUserRoute("/api/v1/users/44444444-4444-4444-4444-444444444444/profile")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if accountID != "44444444-4444-4444-4444-444444444444" {
+		t.Fatalf("unexpected account id: %s", accountID)
+	}
+	if action != "profile" {
+		t.Fatalf("unexpected action: %s", action)
+	}
+}
+
 func TestRequestSchemePrefersForwardedProto(t *testing.T) {
 	req := httptest.NewRequest("GET", "http://localhost/api/v1/config", nil)
 	req.Header.Set("X-Forwarded-Proto", "https")

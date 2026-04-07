@@ -51,6 +51,7 @@ type LoginInput struct {
 type WebLoginInput struct {
 	Email              string
 	Password           string
+	Device             DeviceInput
 	SessionPersistence string
 	UserAgent          string
 	IPAddress          string
@@ -59,6 +60,7 @@ type WebLoginInput struct {
 type WebRegisterInput struct {
 	Email              string
 	Password           string
+	Device             DeviceInput
 	SessionPersistence string
 	UserAgent          string
 	IPAddress          string
@@ -76,6 +78,7 @@ type VerifyWebTwoFALoginInput struct {
 	ChallengeID        string
 	LoginToken         string
 	Code               string
+	Device             *DeviceInput
 	SessionPersistence string
 	UserAgent          string
 	IPAddress          string
@@ -254,6 +257,21 @@ func (s *Service) RegisterWeb(ctx context.Context, input WebRegisterInput) (*Ses
 	if err := validation.Password(input.Password); err != nil {
 		return nil, service.NewErrorWithDetails(service.ErrorCodeValidation, "invalid registration data", map[string]any{"password": err.Error()})
 	}
+	if strings.TrimSpace(input.Device.PublicDeviceMaterial) == "" {
+		input.Device.PublicDeviceMaterial = fmt.Sprintf("web_device_%s", security.NewID())
+	}
+	if strings.TrimSpace(input.Device.Name) == "" {
+		input.Device.Name = "Web Browser"
+	}
+	if strings.TrimSpace(input.Device.Platform) == "" {
+		input.Device.Platform = string(domain.ClientPlatformWebBrowser)
+	}
+	if err := validation.DeviceName(input.Device.Name); err != nil {
+		return nil, service.NewErrorWithDetails(service.ErrorCodeValidation, "invalid registration data", map[string]any{"deviceName": err.Error()})
+	}
+	if err := validation.DeviceMaterial(input.Device.PublicDeviceMaterial); err != nil {
+		return nil, service.NewErrorWithDetails(service.ErrorCodeValidation, "invalid registration data", map[string]any{"publicDeviceMaterial": err.Error()})
+	}
 
 	email := strings.ToLower(strings.TrimSpace(input.Email))
 	passwordHash, err := security.HashPassword(input.Password)
@@ -261,13 +279,28 @@ func (s *Service) RegisterWeb(ctx context.Context, input WebRegisterInput) (*Ses
 		return nil, service.NewError(service.ErrorCodeInternal, "failed to hash password")
 	}
 
+	deviceFingerprint, _ := security.FingerprintFromMaterial(input.Device.PublicDeviceMaterial)
+	if input.Device.Fingerprint != "" && input.Device.Fingerprint != deviceFingerprint {
+		return nil, service.NewError(service.ErrorCodeFingerprintMismatch, "device fingerprint mismatch")
+	}
+
+	deviceID := strings.TrimSpace(input.Device.DeviceID)
+	if deviceID == "" {
+		deviceID = security.NewID()
+	}
+
+	deviceName := strings.TrimSpace(input.Device.Name)
+	if deviceName == "" {
+		deviceName = "Web Browser"
+	}
+	devicePlatform := strings.TrimSpace(input.Device.Platform)
+	if devicePlatform == "" {
+		devicePlatform = string(domain.ClientPlatformWebBrowser)
+	}
+
 	accountID := security.NewID()
 	accountIdentityMaterial := fmt.Sprintf("web_identity_%s", security.NewID())
 	accountFingerprint, _ := security.FingerprintFromMaterial(accountIdentityMaterial)
-
-	deviceMaterial := fmt.Sprintf("web_device_%s", security.NewID())
-	deviceFingerprint, _ := security.FingerprintFromMaterial(deviceMaterial)
-	deviceID := security.NewID()
 
 	account := domain.Account{
 		ID:           accountID,
@@ -285,9 +318,9 @@ func (s *Service) RegisterWeb(ctx context.Context, input WebRegisterInput) (*Ses
 	device := domain.Device{
 		ID:                   deviceID,
 		AccountID:            accountID,
-		Name:                 "Web Browser",
-		Platform:             string(domain.ClientPlatformWebBrowser),
-		PublicDeviceMaterial: deviceMaterial,
+		Name:                 deviceName,
+		Platform:             devicePlatform,
+		PublicDeviceMaterial: input.Device.PublicDeviceMaterial,
 		Fingerprint:          deviceFingerprint,
 		Status:               domain.DeviceStatusTrusted,
 		VerificationState:    domain.VerificationStateVerified,
@@ -302,8 +335,24 @@ func (s *Service) RegisterWeb(ctx context.Context, input WebRegisterInput) (*Ses
 		if errors.Is(err, postgres.ErrDuplicateAccountEmail) {
 			return nil, service.NewError(service.ErrorCodeAccountAlreadyExists, "account already exists")
 		}
+		if errors.Is(err, postgres.ErrDuplicateDeviceID) {
+			device.ID = security.NewID()
+			createdAccount, createdIdentity, createdDevice, err = s.repo.CreateAccountWithIdentityAndFirstDevice(ctx, postgres.CreateAccountParams{
+				Account:  account,
+				Identity: identity,
+				Device:   device,
+			})
+			if err == nil {
+				goto webRegistrationCreated
+			}
+			if errors.Is(err, postgres.ErrDuplicateAccountEmail) {
+				return nil, service.NewError(service.ErrorCodeAccountAlreadyExists, "account already exists")
+			}
+		}
 		return nil, service.NewError(service.ErrorCodeInternal, "failed to create account")
 	}
+
+webRegistrationCreated:
 
 	sessionOptions := s.resolveWebSessionIssueOptions(input.SessionPersistence)
 	session, tokens, err := s.issueSessionWithOptions(ctx, createdAccount.ID, createdDevice.ID, input.UserAgent, input.IPAddress, sessionOptions)
@@ -513,7 +562,6 @@ func (s *Service) LoginWeb(ctx context.Context, input WebLoginInput) (*LoginResu
 	if strings.TrimSpace(input.Password) == "" {
 		return nil, service.NewError(service.ErrorCodeValidation, "password is required")
 	}
-
 	email := strings.ToLower(strings.TrimSpace(input.Email))
 	account, err := s.repo.GetAccountByEmail(ctx, email)
 	if err != nil {
@@ -529,12 +577,90 @@ func (s *Service) LoginWeb(ctx context.Context, input WebLoginInput) (*LoginResu
 		return nil, service.NewError(service.ErrorCodeInvalidCredentials, "invalid credentials")
 	}
 
-	device, err := s.repo.GetLatestTrustedDeviceForAccount(ctx, account.ID)
-	if err != nil {
-		if errors.Is(err, postgres.ErrNotFound) {
-			return nil, service.NewError(service.ErrorCodeDeviceNotApproved, "account has no trusted device")
+	var device domain.Device
+	if strings.TrimSpace(input.Device.PublicDeviceMaterial) == "" {
+		device, err = s.repo.GetLatestTrustedDeviceForAccount(ctx, account.ID)
+		if err != nil {
+			if errors.Is(err, postgres.ErrNotFound) {
+				return nil, service.NewError(service.ErrorCodeDeviceNotApproved, "account has no trusted device")
+			}
+			return nil, service.NewError(service.ErrorCodeInternal, "failed to resolve trusted device")
 		}
-		return nil, service.NewError(service.ErrorCodeInternal, "failed to resolve trusted device")
+	} else {
+		if strings.TrimSpace(input.Device.Name) == "" {
+			input.Device.Name = "Web Browser"
+		}
+		if strings.TrimSpace(input.Device.Platform) == "" {
+			input.Device.Platform = string(domain.ClientPlatformWebBrowser)
+		}
+		if err := validation.DeviceName(input.Device.Name); err != nil {
+			return nil, service.NewError(service.ErrorCodeValidation, "invalid device payload")
+		}
+		if err := validation.DeviceMaterial(input.Device.PublicDeviceMaterial); err != nil {
+			return nil, service.NewError(service.ErrorCodeValidation, "invalid device payload")
+		}
+
+		fingerprint, _ := security.FingerprintFromMaterial(input.Device.PublicDeviceMaterial)
+		if input.Device.Fingerprint != "" && input.Device.Fingerprint != fingerprint {
+			return nil, service.NewError(service.ErrorCodeFingerprintMismatch, "device fingerprint mismatch")
+		}
+
+		if strings.TrimSpace(input.Device.DeviceID) != "" {
+			existingByID, existingErr := s.repo.GetDeviceByID(ctx, input.Device.DeviceID)
+			if existingErr == nil && existingByID.AccountID == account.ID && existingByID.Fingerprint != fingerprint {
+				deviceIDRef := existingByID.ID
+				s.events.Record(ctx, account.ID, &deviceIDRef, domain.SecurityEventIdentityChanged, domain.SecurityEventSeverityWarning, "warning", map[string]any{
+					"reason":   "device_fingerprint_mismatch",
+					"platform": string(domain.ClientPlatformWebBrowser),
+				})
+				return nil, service.NewError(service.ErrorCodeFingerprintMismatch, "device fingerprint mismatch")
+			}
+		}
+
+		device, err = s.repo.FindDeviceByAccountAndFingerprint(ctx, account.ID, fingerprint)
+		if err != nil {
+			if !errors.Is(err, postgres.ErrNotFound) {
+				return nil, service.NewError(service.ErrorCodeInternal, "failed to resolve web device")
+			}
+
+			deviceID := strings.TrimSpace(input.Device.DeviceID)
+			if deviceID == "" {
+				deviceID = security.NewID()
+			}
+
+			newDevice := domain.Device{
+				ID:                   deviceID,
+				AccountID:            account.ID,
+				Name:                 strings.TrimSpace(input.Device.Name),
+				Platform:             strings.TrimSpace(input.Device.Platform),
+				PublicDeviceMaterial: input.Device.PublicDeviceMaterial,
+				Fingerprint:          fingerprint,
+				Status:               domain.DeviceStatusTrusted,
+				VerificationState:    domain.VerificationStateVerified,
+			}
+
+			createdDevice, createErr := s.repo.CreateDevice(ctx, newDevice)
+			if createErr != nil {
+				if errors.Is(createErr, postgres.ErrDuplicateDeviceID) {
+					newDevice.ID = security.NewID()
+					createdDevice, createErr = s.repo.CreateDevice(ctx, newDevice)
+				}
+			}
+			if createErr != nil {
+				return nil, service.NewError(service.ErrorCodeInternal, "failed to create trusted web device")
+			}
+
+			device = createdDevice
+			deviceIDRef := device.ID
+			s.events.Record(ctx, account.ID, &deviceIDRef, domain.SecurityEventDeviceAdded, domain.SecurityEventSeverityInfo, "trusted", map[string]any{
+				"deviceStatus": device.Status,
+				"platform":     string(domain.ClientPlatformWebBrowser),
+			})
+		}
+	}
+
+	if device.Status != domain.DeviceStatusTrusted {
+		return nil, service.NewErrorWithDetails(service.ErrorCodeDeviceNotApproved, "device is not approved", map[string]any{"status": device.Status})
 	}
 
 	sessionOptions := s.resolveWebSessionIssueOptions(input.SessionPersistence)
@@ -691,6 +817,22 @@ func (s *Service) VerifyWebTwoFALogin(ctx context.Context, input VerifyWebTwoFAL
 		return nil, service.NewError(service.ErrorCodeInternal, "failed to verify challenge")
 	}
 
+	device, err := s.repo.GetDeviceByID(ctx, challenge.DeviceID)
+	if err != nil {
+		return nil, service.NewError(service.ErrorCodeUnauthorized, "invalid device for challenge")
+	}
+	if input.Device != nil {
+		if strings.TrimSpace(input.Device.DeviceID) != "" && strings.TrimSpace(input.Device.DeviceID) != device.ID {
+			return nil, service.NewError(service.ErrorCodeUnauthorized, "invalid device for challenge")
+		}
+		if strings.TrimSpace(input.Device.PublicDeviceMaterial) != "" {
+			inputFingerprint, _ := security.FingerprintFromMaterial(strings.TrimSpace(input.Device.PublicDeviceMaterial))
+			if device.Fingerprint != inputFingerprint {
+				return nil, service.NewError(service.ErrorCodeFingerprintMismatch, "device fingerprint mismatch")
+			}
+		}
+	}
+
 	sessionOptions := s.resolveWebSessionIssueOptions(input.SessionPersistence)
 	session, tokens, err := s.issueSessionWithOptions(ctx, challenge.AccountID, challenge.DeviceID, input.UserAgent, input.IPAddress, sessionOptions)
 	if err != nil {
@@ -703,10 +845,6 @@ func (s *Service) VerifyWebTwoFALogin(ctx context.Context, input VerifyWebTwoFAL
 		return nil, service.NewError(service.ErrorCodeInternal, "failed to fetch account")
 	}
 	identity, _ := s.repo.GetAccountIdentity(ctx, challenge.AccountID)
-	device, err := s.repo.GetDeviceByID(ctx, challenge.DeviceID)
-	if err != nil {
-		return nil, service.NewError(service.ErrorCodeUnauthorized, "invalid device for challenge")
-	}
 
 	deviceIDRef := challenge.DeviceID
 	s.events.Record(ctx, challenge.AccountID, &deviceIDRef, domain.SecurityEventLoginSuccess, domain.SecurityEventSeverityInfo, "trusted", map[string]any{

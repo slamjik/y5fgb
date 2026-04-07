@@ -132,6 +132,13 @@ type TransportProfile struct {
 	LongPollEnabled       bool
 }
 
+type ConversationSummaryListResult struct {
+	Summaries []domain.ConversationSummary
+	Total     int
+	Offset    int
+	Limit     int
+}
+
 func (s *Service) CreateDirectConversation(ctx context.Context, principal auth.AuthPrincipal, peerAccountID string, defaultTTLSeconds int) (ConversationWithMembers, error) {
 	if strings.TrimSpace(peerAccountID) == "" {
 		return ConversationWithMembers{}, service.NewError(service.ErrorCodeValidation, "peer account id is required")
@@ -269,6 +276,80 @@ func (s *Service) ListConversations(ctx context.Context, principal auth.AuthPrin
 	}
 
 	return result, nil
+}
+
+func (s *Service) ListConversationSummaries(ctx context.Context, principal auth.AuthPrincipal, limit int, offset int) (ConversationSummaryListResult, error) {
+	conversations, err := s.repo.ListConversationsByAccount(ctx, principal.AccountID)
+	if err != nil {
+		return ConversationSummaryListResult{}, service.NewError(service.ErrorCodeInternal, "failed to list conversation summaries")
+	}
+
+	total := len(conversations)
+	if limit <= 0 || limit > 100 {
+		limit = 30
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	if offset > total {
+		offset = total
+	}
+
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+	window := conversations[offset:end]
+
+	summaries := make([]domain.ConversationSummary, 0, len(window))
+	for _, conversation := range window {
+		members, memberErr := s.repo.ListConversationMembers(ctx, conversation.ID)
+		if memberErr != nil {
+			return ConversationSummaryListResult{}, service.NewError(service.ErrorCodeInternal, "failed to load conversation members")
+		}
+
+		summary := domain.ConversationSummary{
+			Conversation: conversation,
+			MembersCount: countActiveMembers(members),
+		}
+
+		if conversation.Type == domain.ConversationTypeDirect {
+			peerID := resolveDirectPeerAccountID(members, principal.AccountID)
+			if peerID != nil {
+				summary.DirectPeerAccountID = peerID
+				peerAccount, peerErr := s.repo.GetAccountByID(ctx, *peerID)
+				if peerErr == nil {
+					summary.DirectPeerEmail = &peerAccount.Email
+				}
+			}
+		}
+
+		rows, messagesErr := s.repo.ListConversationMessagesForDevice(ctx, conversation.ID, principal.DeviceID, 1, 0)
+		if messagesErr == nil && len(rows) > 0 {
+			lastRow := rows[len(rows)-1]
+			deliveryState := domain.DeliveryStateSent
+			if lastRow.Recipient != nil {
+				deliveryState = lastRow.Recipient.DeliveryState
+			}
+			summary.LastMessage = &domain.ConversationSummaryLastMessage{
+				ID:              lastRow.Envelope.ID,
+				SenderAccountID: lastRow.Envelope.SenderAccountID,
+				SenderDeviceID:  lastRow.Envelope.SenderDeviceID,
+				CreatedAt:       lastRow.Envelope.CreatedAt,
+				ServerSequence:  lastRow.Envelope.ServerSequence,
+				DeliveryState:   deliveryState,
+			}
+		}
+
+		summaries = append(summaries, summary)
+	}
+
+	return ConversationSummaryListResult{
+		Summaries: summaries,
+		Total:     total,
+		Offset:    offset,
+		Limit:     limit,
+	}, nil
 }
 
 func (s *Service) GetConversation(ctx context.Context, principal auth.AuthPrincipal, conversationID string) (ConversationWithMembers, error) {
@@ -999,6 +1080,30 @@ func findMember(members []ConversationMemberWithDevices, accountID string) (Conv
 		}
 	}
 	return ConversationMemberWithDevices{}, false
+}
+
+func countActiveMembers(members []domain.ConversationMember) int {
+	count := 0
+	for _, member := range members {
+		if member.IsActive {
+			count++
+		}
+	}
+	return count
+}
+
+func resolveDirectPeerAccountID(members []domain.ConversationMember, accountID string) *string {
+	for _, member := range members {
+		if !member.IsActive {
+			continue
+		}
+		if member.AccountID == accountID {
+			continue
+		}
+		peerID := member.AccountID
+		return &peerID
+	}
+	return nil
 }
 
 func isPathInsideBase(path string, baseDir string) bool {

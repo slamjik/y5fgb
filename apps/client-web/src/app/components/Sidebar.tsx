@@ -1,23 +1,24 @@
-import { Bell, Compass, Home, Mail, Settings, User } from "lucide-react";
+﻿import { Bell, Compass, MessageSquare, Newspaper, Settings, User } from "lucide-react";
 import * as React from "react";
 
-export type SidebarSection = "home" | "explore" | "notifications" | "messages" | "profile" | "settings";
+export type SidebarSection = "messages" | "feed" | "explore" | "notifications" | "profile" | "settings";
 
 interface SidebarProps {
   activeSection: SidebarSection;
   onChange: (section: SidebarSection) => void;
+  badges?: Partial<Record<SidebarSection, number>>;
 }
 
-export function Sidebar({ activeSection, onChange }: SidebarProps) {
+export function Sidebar({ activeSection, onChange, badges }: SidebarProps) {
   const navItems: Array<{
     id: SidebarSection;
     icon: React.ComponentType<{ className?: string }>;
     label: string;
   }> = [
-    { id: "home", icon: Home, label: "Главная" },
+    { id: "messages", icon: MessageSquare, label: "Сообщения" },
+    { id: "feed", icon: Newspaper, label: "Лента" },
     { id: "explore", icon: Compass, label: "Обзор" },
     { id: "notifications", icon: Bell, label: "Уведомления" },
-    { id: "messages", icon: Mail, label: "Сообщения" },
     { id: "profile", icon: User, label: "Профиль" },
     { id: "settings", icon: Settings, label: "Настройки" },
   ];
@@ -38,6 +39,7 @@ export function Sidebar({ activeSection, onChange }: SidebarProps) {
             icon={item.icon}
             label={item.label}
             active={activeSection === item.id}
+            badge={badges?.[item.id]}
             onClick={() => onChange(item.id)}
           />
         ))}
@@ -50,11 +52,13 @@ function NavItem({
   icon: Icon,
   label,
   active,
+  badge,
   onClick,
 }: {
   icon: React.ComponentType<{ className?: string }>;
   label: string;
   active: boolean;
+  badge?: number;
   onClick: () => void;
 }) {
   const [isHovered, setIsHovered] = React.useState(false);
@@ -72,7 +76,18 @@ function NavItem({
       onMouseLeave={() => setIsHovered(false)}
     >
       <Icon className="w-5 h-5" />
-      <span>{label}</span>
+      <span className="flex-1 text-left">{label}</span>
+      {typeof badge === "number" && badge > 0 ? (
+        <span
+          className="text-xs px-2 py-0.5 rounded-full"
+          style={{
+            backgroundColor: "var(--accent-brown)",
+            color: "var(--core-background)",
+          }}
+        >
+          {badge > 99 ? "99+" : badge}
+        </span>
+      ) : null}
     </button>
   );
 }

@@ -1,4 +1,4 @@
-import { Heart, MoreHorizontal, Trash2 } from "lucide-react";
+﻿import { Heart, MoreHorizontal, Trash2 } from "lucide-react";
 import * as React from "react";
 
 interface PostCardProps {
@@ -66,7 +66,7 @@ export function PostCard({
   };
 
   return (
-    <div
+    <article
       className="rounded-2xl p-5 border transition-all"
       style={{
         backgroundColor: "var(--glass-fill-base)",
@@ -74,7 +74,7 @@ export function PostCard({
         backdropFilter: "blur(20px)",
       }}
     >
-      <div className="flex items-center justify-between mb-4">
+      <header className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">
           <div
             className="w-10 h-10 rounded-full"
@@ -106,7 +106,7 @@ export function PostCard({
                 style={{
                   backgroundColor: "var(--glass-fill-hover)",
                   borderColor: "var(--glass-border)",
-                  minWidth: 140,
+                  minWidth: 150,
                 }}
               >
                 <button
@@ -123,17 +123,17 @@ export function PostCard({
             ) : null}
           </div>
         ) : null}
-      </div>
+      </header>
 
       {imageUrl ? (
         <MediaContainer>
-          <img src={imageUrl} alt="post" className="w-full h-80 object-cover rounded-lg" />
+          <img src={imageUrl} alt="Изображение поста" className="w-full h-80 object-cover rounded-lg" loading="lazy" />
         </MediaContainer>
       ) : null}
 
       {videoUrl ? (
         <MediaContainer>
-          <video controls className="w-full h-80 object-cover rounded-lg" src={videoUrl} />
+          <video controls className="w-full h-80 object-cover rounded-lg" src={videoUrl} preload="metadata" />
         </MediaContainer>
       ) : null}
 
@@ -158,7 +158,7 @@ export function PostCard({
           {likeCount}
         </span>
       </button>
-    </div>
+    </article>
   );
 }
 

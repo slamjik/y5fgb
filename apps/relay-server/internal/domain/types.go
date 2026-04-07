@@ -167,6 +167,23 @@ type Conversation struct {
 	UpdatedAt          time.Time
 }
 
+type ConversationSummaryLastMessage struct {
+	ID              string
+	SenderAccountID string
+	SenderDeviceID  string
+	CreatedAt       time.Time
+	ServerSequence  int64
+	DeliveryState   DeliveryState
+}
+
+type ConversationSummary struct {
+	Conversation        Conversation
+	MembersCount        int
+	DirectPeerAccountID *string
+	DirectPeerEmail     *string
+	LastMessage         *ConversationSummaryLastMessage
+}
+
 type ConversationMember struct {
 	ConversationID string
 	AccountID      string
@@ -293,6 +310,21 @@ type AccountIdentity struct {
 	TrustState             string
 	CreatedAt              time.Time
 	UpdatedAt              time.Time
+}
+
+type UserSearchItem struct {
+	AccountID string
+	Email     string
+	CreatedAt time.Time
+}
+
+type UserPublicProfile struct {
+	AccountID                  string
+	Email                      string
+	CreatedAt                  time.Time
+	PostCount                  int64
+	CanStartDirectChat         bool
+	ExistingDirectConversation *string
 }
 
 type Device struct {

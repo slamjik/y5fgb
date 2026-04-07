@@ -1,14 +1,22 @@
-import type {
+﻿import type {
+  AttachmentMetaDTO,
+  AttachmentUploadRequest,
   AuthSessionResponse,
   ConversationDTO,
+  ConversationSummaryDTO,
+  CreateGroupConversationRequest,
   CreateSocialPostRequest,
   CreateSocialPostResponse,
-  ListConversationsResponse,
-  ListSocialPostsResponse,
+  DeviceListResponse,
   LoginSuccessResponse,
   LoginTwoFactorRequiredResponse,
+  MessageDTO,
+  SecurityEventsResponse,
   SocialNotificationsResponse,
-  SocialPostLikeResponse,
+  SyncBatchDTO,
+  TwoFactorSetupStartResponse,
+  UserPublicProfileResponse,
+  UserSearchResponse,
 } from "@project/protocol";
 import {
   buildFallbackConfig,
@@ -22,14 +30,35 @@ import {
   createMemorySecretVault,
   createRuntimePlatformAdapter,
 } from "@project/platform-adapters";
+import {
+  AlertTriangle,
+  Download,
+  Loader2,
+  MessageSquare,
+  Paperclip,
+  Plus,
+  RefreshCcw,
+  Search,
+  Send,
+  Shield,
+  User,
+  Wifi,
+  WifiOff,
+  X,
+} from "lucide-react";
 import React from "react";
 
+import { webCryptoProvider, type RecipientPublicMaterial } from "../features/messaging/crypto";
+import { WebMessagingRuntime, type RuntimeTransportState } from "../features/messaging/runtime";
+import { ApiClientError, WebApiClient, type WebDevicePayload } from "../shared/api/client";
 import { CreatePost, type CreatePostPayload } from "./components/CreatePost";
 import { PostCard } from "./components/PostCard";
 import { Sidebar, type SidebarSection } from "./components/Sidebar";
 
 type SessionMode = "ephemeral" | "remembered";
 type AuthMode = "login" | "register";
+type ChatFilter = "all" | "direct" | "group" | "unread";
+type SettingsSection = "account" | "sessions" | "devices" | "security" | "app" | "connection";
 
 type SavedServer = {
   input: string;
@@ -41,513 +70,1286 @@ type SessionState = {
   refreshToken: string;
   accountId: string;
   email: string;
+  deviceId: string;
 };
 
-type ApiErrorPayload = {
-  error?: {
-    code?: string;
-    message?: string;
-  };
+type DeviceMaterial = {
+  name: string;
+  platform: string;
+  publicKey: string;
+  privateKey: string;
+  fingerprint: string;
 };
 
-const serverKey = "secure-messenger-web-server-v2";
-const refreshKey = "secure-messenger-web-refresh-token";
-const sessionModeKey = "secure-messenger-web-session-mode";
+type AttachmentSecret = {
+  attachmentId: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  symmetricKey: string;
+  nonce: string;
+  checksumSha256: string;
+  algorithm: string;
+};
 
-const vault = createMemorySecretVault();
-const stateStore = createIndexedDbStateStore();
-const runtime = createRuntimePlatformAdapter();
+type MessageAttachmentView = {
+  id: string;
+  kind: "image" | "file";
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  checksumSha256: string;
+  algorithm: string;
+  nonce: string;
+  symmetricKey: string | null;
+};
+
+type UploadDraft = {
+  id: string;
+  file: File;
+};
+
+type MessageView = {
+  id: string;
+  conversationId: string;
+  senderAccountId: string;
+  createdAt: string;
+  serverSequence: number;
+  text: string;
+  attachments: MessageAttachmentView[];
+  own: boolean;
+  deliveryState: string;
+  localStatus?: "sending" | "failed";
+  retryText?: string;
+};
+
+type MessageBucket = {
+  loading: boolean;
+  error: string;
+  items: MessageView[];
+};
+
+const serverStorageKey = "secure-messenger-web-server-v3";
+const refreshTokenStorageKey = "secure-messenger-web-refresh-token";
+const sessionModeStorageKey = "secure-messenger-web-session-mode";
+const syncCursorStorageKey = "secure-messenger-web-sync-cursor";
+
+const secretVault = createMemorySecretVault();
+const persistentStore = createIndexedDbStateStore();
+const runtimePlatform = createRuntimePlatformAdapter();
+
+const emptyTransportState: RuntimeTransportState = {
+  mode: "none",
+  status: "offline",
+  endpoint: null,
+  lastError: null,
+  lastCursor: 0,
+  updatedAt: new Date().toISOString(),
+};
 
 function App() {
   const [booting, setBooting] = React.useState(true);
   const [server, setServer] = React.useState<SavedServer | null>(null);
-  const [sessionMode, setSessionMode] = React.useState<SessionMode>("ephemeral");
   const [session, setSession] = React.useState<SessionState | null>(null);
   const [pending2fa, setPending2fa] = React.useState<LoginTwoFactorRequiredResponse | null>(null);
-  const [section, setSection] = React.useState<SidebarSection>("home");
+  const [sessionMode, setSessionMode] = React.useState<SessionMode>("ephemeral");
 
-  const [connectError, setConnectError] = React.useState("");
+  const [section, setSection] = React.useState<SidebarSection>("messages");
   const [globalError, setGlobalError] = React.useState("");
+  const [runtimeError, setRuntimeError] = React.useState("");
 
-  const [posts, setPosts] = React.useState<ListSocialPostsResponse["posts"]>([]);
+  const [transportState, setTransportState] = React.useState<RuntimeTransportState>(emptyTransportState);
+  const [summaries, setSummaries] = React.useState<ConversationSummaryDTO[]>([]);
+  const [summariesLoading, setSummariesLoading] = React.useState(false);
+  const [summariesError, setSummariesError] = React.useState("");
+  const [conversationSearch, setConversationSearch] = React.useState("");
+  const [conversationFilter, setConversationFilter] = React.useState<ChatFilter>("all");
+  const [activeConversationId, setActiveConversationId] = React.useState<string | null>(null);
+  const [conversationDetails, setConversationDetails] = React.useState<Record<string, ConversationDTO>>({});
+  const [messagesByConversation, setMessagesByConversation] = React.useState<Record<string, MessageBucket>>({});
+  const [drafts, setDrafts] = React.useState<Record<string, string>>({});
+  const [uploadsByConversation, setUploadsByConversation] = React.useState<Record<string, UploadDraft[]>>({});
+  const [unreadByConversation, setUnreadByConversation] = React.useState<Record<string, number>>({});
+  const [attachmentOps, setAttachmentOps] = React.useState<Record<string, { loading: boolean; error: string }>>({});
+
+  const [showNewChat, setShowNewChat] = React.useState(false);
+  const [userSearchQuery, setUserSearchQuery] = React.useState("");
+  const [userSearchResults, setUserSearchResults] = React.useState<UserSearchResponse["users"]>([]);
+  const [groupTitle, setGroupTitle] = React.useState("");
+  const [groupMembers, setGroupMembers] = React.useState<string[]>([]);
+  const [exploreQuery, setExploreQuery] = React.useState("");
+  const [exploreLoading, setExploreLoading] = React.useState(false);
+  const [exploreUsers, setExploreUsers] = React.useState<UserSearchResponse["users"]>([]);
+  const [explorePosts, setExplorePosts] = React.useState<CreateSocialPostResponse["post"][]>([]);
+  const [profileTarget, setProfileTarget] = React.useState<UserPublicProfileResponse | null>(null);
+  const [profilePosts, setProfilePosts] = React.useState<CreateSocialPostResponse["post"][]>([]);
+  const [profileLoading, setProfileLoading] = React.useState(false);
+  const [settingsSection, setSettingsSection] = React.useState<SettingsSection>("account");
+  const [twoFASetup, setTwoFASetup] = React.useState<TwoFactorSetupStartResponse | null>(null);
+  const [twoFAEnableCode, setTwoFAEnableCode] = React.useState("");
+  const [twoFADisableCode, setTwoFADisableCode] = React.useState("");
+  const [settingsMessage, setSettingsMessage] = React.useState("");
+
+  const [posts, setPosts] = React.useState<CreateSocialPostResponse["post"][]>([]);
   const [postsLoading, setPostsLoading] = React.useState(false);
   const [postsError, setPostsError] = React.useState("");
-  const [query, setQuery] = React.useState("");
-  const [mediaType, setMediaType] = React.useState<"all" | "image" | "video">("all");
-
   const [notifications, setNotifications] = React.useState<SocialNotificationsResponse["notifications"]>([]);
-  const [notificationsLoading, setNotificationsLoading] = React.useState(false);
-  const [notificationsError, setNotificationsError] = React.useState("");
 
-  const [conversations, setConversations] = React.useState<ConversationDTO[]>([]);
-  const [conversationsLoading, setConversationsLoading] = React.useState(false);
-  const [conversationsError, setConversationsError] = React.useState("");
+  const [sessionInfo, setSessionInfo] = React.useState<AuthSessionResponse | null>(null);
+  const [deviceList, setDeviceList] = React.useState<DeviceListResponse | null>(null);
+  const [securityEvents, setSecurityEvents] = React.useState<SecurityEventsResponse["events"]>([]);
+
+  const runtimeRef = React.useRef<WebMessagingRuntime | null>(null);
+  const deviceMaterialRef = React.useRef<DeviceMaterial | null>(null);
+  const messageScrollRef = React.useRef<HTMLDivElement | null>(null);
+  const attachmentInputRef = React.useRef<HTMLInputElement | null>(null);
+
+  const api = React.useMemo(() => (server ? new WebApiClient(server.config) : null), [server]);
+  const unreadTotal = React.useMemo(
+    () => Object.values(unreadByConversation).reduce((sum, value) => sum + value, 0),
+    [unreadByConversation],
+  );
+
+  const filteredSummaries = React.useMemo(() => {
+    const query = conversationSearch.trim().toLowerCase();
+    return summaries
+      .filter((item) => {
+        if (conversationFilter === "direct" && item.type !== "direct") return false;
+        if (conversationFilter === "group" && item.type !== "group") return false;
+        if (conversationFilter === "unread" && (unreadByConversation[item.id as string] ?? 0) <= 0) return false;
+        if (!query) return true;
+        const title = resolveConversationTitle(item).toLowerCase();
+        return title.includes(query) || (item.directPeerEmail ?? "").toLowerCase().includes(query);
+      })
+      .sort((a, b) => b.lastServerSequence - a.lastServerSequence);
+  }, [summaries, conversationSearch, conversationFilter, unreadByConversation]);
 
   React.useEffect(() => {
-    void (async () => {
-      const persistedMode = await stateStore.get(sessionModeKey);
-      const resolvedMode =
-        normalizeSessionMode(persistedMode) ?? (runtime.sessionPolicy.persistence as SessionMode);
-      setSessionMode(resolvedMode);
+    let cancelled = false;
+    const boot = async () => {
+      const storedMode = await safeStoreGet(sessionModeStorageKey);
+      const mode = normalizeSessionMode(storedMode) ?? (runtimePlatform.sessionPolicy.persistence as SessionMode);
+      if (cancelled) return;
+      setSessionMode(mode);
 
-      const savedServer = loadServer();
-      if (savedServer) {
-        setServer(savedServer);
-        const restored = await tryRestore(savedServer.config, resolvedMode);
-        if (restored) {
-          setSession(restored);
-        }
+      const saved = loadSavedServer();
+      if (!saved) {
+        setBooting(false);
+        return;
       }
+      setServer(saved);
 
-      setBooting(false);
-    })();
+      const restored = await restoreSession(saved.config, mode);
+      if (!cancelled && restored) {
+        setSession(restored);
+      }
+      if (!cancelled) {
+        setBooting(false);
+      }
+    };
+
+    void boot().catch((error) => {
+      if (!cancelled) {
+        setGlobalError(toUserError(error));
+        setBooting(false);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   React.useEffect(() => {
-    if (!session || !server) {
-      return;
-    }
+    if (!api || !session) return;
+    void loadSummaries(api, session, setSummaries, setSummariesLoading, setSummariesError, setActiveConversationId);
+    void loadSettingsData(api, session, setSessionInfo, setDeviceList, setSecurityEvents);
+  }, [api, session?.accessToken]);
 
-    if (section === "home") {
-      void loadPosts();
-      return;
-    }
-    if (section === "explore") {
-      void loadPosts(query, mediaType);
-      return;
-    }
-    if (section === "profile") {
-      void loadPosts("", "all", true);
-      return;
+  React.useEffect(() => {
+    if (!api || !session) return;
+    if (section === "feed") {
+      void loadFeed(api, session, setPosts, setPostsLoading, setPostsError);
     }
     if (section === "notifications") {
-      void loadNotifications();
-      return;
+      void loadSocialNotifications(api, session, setNotifications);
     }
-    if (section === "messages") {
-      void loadConversations();
+    if (section === "profile") {
+      void loadProfilePosts(api, session, setProfilePosts, setProfileLoading);
     }
-  }, [section, session, server, query, mediaType]);
+  }, [section, api, session?.accessToken]);
+
+  React.useEffect(() => {
+    if (!api || !session) return;
+
+    let disposed = false;
+    const startRuntime = async () => {
+      const cursorRaw = await safeStoreGet(syncCursorStorageKey);
+      const initialCursor = cursorRaw ? Math.max(0, Number(cursorRaw)) : 0;
+      const runtime = new WebMessagingRuntime(api, session.accessToken, {
+        onBatch: async (batch) => {
+          if (!disposed) {
+            await applySyncBatch(
+              batch,
+              session,
+              deviceMaterialRef.current,
+              activeConversationId,
+              setMessagesByConversation,
+              setUnreadByConversation,
+            );
+            await safeStoreSet(syncCursorStorageKey, String(batch.toCursor));
+          }
+        },
+        onTransport: (state) => {
+          if (!disposed) setTransportState(state);
+        },
+        onError: (message) => {
+          if (!disposed) setRuntimeError(message);
+        },
+      });
+      runtimeRef.current = runtime;
+      await runtime.start(Number.isFinite(initialCursor) ? initialCursor : 0);
+    };
+
+    void startRuntime().catch((error) => {
+      if (!disposed) {
+        setRuntimeError(toUserError(error));
+      }
+    });
+
+    return () => {
+      disposed = true;
+      runtimeRef.current?.stop();
+      runtimeRef.current = null;
+    };
+  }, [api, session?.accessToken, activeConversationId]);
+
+  React.useEffect(() => {
+    if (!activeConversationId) return;
+    setUnreadByConversation((current) => ({ ...current, [activeConversationId]: 0 }));
+    const bucket = messagesByConversation[activeConversationId];
+    if (!bucket || bucket.items.length === 0) return;
+    const el = messageScrollRef.current;
+    if (!el) return;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 140;
+    if (nearBottom) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [activeConversationId, messagesByConversation]);
+
+  const ensureDeviceMaterial = React.useCallback(async (): Promise<DeviceMaterial> => {
+    if (deviceMaterialRef.current) return deviceMaterialRef.current;
+    const pair = await webCryptoProvider.generateIdentityKeyPair();
+    const fingerprint = await webCryptoProvider.fingerprint(pair.publicKey);
+    const device: DeviceMaterial = {
+      name: browserDeviceName(),
+      platform: "web-browser",
+      publicKey: pair.publicKey,
+      privateKey: pair.privateKey,
+      fingerprint,
+    };
+    deviceMaterialRef.current = device;
+    return device;
+  }, []);
+
+  const applySession = React.useCallback(
+    async (response: LoginSuccessResponse, fallbackEmail?: string) => {
+      if (!api) return;
+      const sessionResponse = await api.webSession(response.tokens.accessToken).catch(() => null);
+      const next: SessionState = {
+        accessToken: response.tokens.accessToken,
+        refreshToken: response.tokens.refreshToken,
+        accountId: response.accountId as string,
+        email: sessionResponse?.email ?? fallbackEmail ?? "",
+        deviceId: response.device.id as string,
+      };
+
+      await secretVault.set(refreshTokenStorageKey, next.refreshToken);
+      if (sessionMode === "remembered") {
+        await safeStoreSet(refreshTokenStorageKey, next.refreshToken);
+      } else {
+        await safeStoreDelete(refreshTokenStorageKey);
+      }
+      await safeStoreSet(sessionModeStorageKey, sessionMode);
+
+      setSession(next);
+      setPending2fa(null);
+      setSection("messages");
+      setGlobalError("");
+      setRuntimeError("");
+    },
+    [api, sessionMode],
+  );
 
   const connectServer = async (input: string) => {
-    setConnectError("");
-    setGlobalError("");
-
     const normalized = normalizeServerInput(input);
-    const endpoint = buildServerConfigEndpoint(normalized.origin);
-    const config = await loadServerConfig(endpoint, normalized.origin);
-
-    const saved: SavedServer = { input: input.trim(), config };
-    localStorage.setItem(serverKey, JSON.stringify(saved));
-
-    await clearAuth();
-    setServer(saved);
+    const config = await fetchServerConfig(normalized.origin);
+    const next = { input: input.trim(), config };
+    localStorage.setItem(serverStorageKey, JSON.stringify(next));
+    await clearAuthState();
+    setServer(next);
     setSession(null);
     setPending2fa(null);
-    setSection("home");
+    setSection("messages");
   };
 
-  const authSubmit = async (mode: AuthMode, email: string, password: string) => {
-    if (!server) {
-      return;
-    }
-    setGlobalError("");
+  const submitAuth = async (mode: AuthMode, email: string, password: string) => {
+    if (!api) throw new Error("Сначала подключитесь к серверу.");
+    const device = await ensureDeviceMaterial();
+    const payload: WebDevicePayload = {
+      name: device.name,
+      platform: device.platform,
+      publicDeviceMaterial: device.publicKey,
+      fingerprint: device.fingerprint,
+    };
 
     if (mode === "register") {
-      const response = await api<LoginSuccessResponse>(server.config, "/auth/web/register", "POST", {
-        email,
-        password,
-        sessionPersistence: sessionMode,
-      });
-      await applySession(server.config, response, email);
+      const response = await api.registerWeb({ email, password, device: payload, sessionPersistence: sessionMode });
+      await applySession(response, email);
       return;
     }
 
-    const result = await submitWebLogin(server.config, email, password, sessionMode);
-    if ("challengeId" in result) {
-      setPending2fa(result);
+    const response = await api.loginWeb({ email, password, device: payload, sessionPersistence: sessionMode });
+    if ("challengeId" in response) {
+      setPending2fa(response);
       return;
     }
-    await applySession(server.config, result, email);
+    await applySession(response, email);
   };
 
-  const verify2fa = async (code: string) => {
-    if (!server || !pending2fa) {
-      return;
-    }
-    setGlobalError("");
-
-    const response = await api<LoginSuccessResponse>(server.config, "/auth/web/2fa/verify", "POST", {
+  const submit2fa = async (code: string) => {
+    if (!api || !pending2fa) throw new Error("Челлендж 2FA не найден.");
+    const device = await ensureDeviceMaterial();
+    const response = await api.verifyWeb2FA({
       challengeId: pending2fa.challengeId,
       loginToken: pending2fa.loginToken,
       code,
+      device: {
+        name: device.name,
+        platform: device.platform,
+        publicDeviceMaterial: device.publicKey,
+        fingerprint: device.fingerprint,
+      },
       sessionPersistence: sessionMode,
     });
-    await applySession(server.config, response);
+    await applySession(response);
   };
 
-  const applySession = async (
-    config: ServerBootstrapConfig,
-    response: LoginSuccessResponse,
-    fallbackEmail?: string,
-  ) => {
-    const email = await resolveSessionEmail(config, response.tokens.accessToken, fallbackEmail ?? response.accountId);
-    const nextSession: SessionState = {
-      accessToken: response.tokens.accessToken,
-      refreshToken: response.tokens.refreshToken,
-      accountId: response.accountId,
-      email,
-    };
-
-    await vault.set(refreshKey, nextSession.refreshToken);
-    if (sessionMode === "remembered") {
-      await stateStore.set(refreshKey, nextSession.refreshToken);
-    } else {
-      await stateStore.delete(refreshKey);
+  const logout = async (all: boolean) => {
+    if (!api || !session) return;
+    try {
+      if (all) await api.webLogoutAll(session.accessToken);
+      else await api.webLogout(session.accessToken, session.refreshToken);
+    } catch {
+      // noop
     }
-    await stateStore.set(sessionModeKey, sessionMode);
 
-    setSession(nextSession);
+    await clearAuthState();
+    runtimeRef.current?.stop();
+    runtimeRef.current = null;
+    deviceMaterialRef.current = null;
+    setSession(null);
     setPending2fa(null);
-    setGlobalError("");
+    setSummaries([]);
+    setConversationDetails({});
+    setMessagesByConversation({});
+    setDrafts({});
+    setUploadsByConversation({});
+    setUnreadByConversation({});
+    setAttachmentOps({});
+    setProfileTarget(null);
+    setProfilePosts([]);
+    setSection("messages");
   };
 
-  const authed = async <T,>(
-    path: string,
-    method: "GET" | "POST" | "DELETE" = "GET",
-    body?: unknown,
-  ): Promise<T> => {
-    if (!server || !session) {
-      throw new Error("Нужен вход в аккаунт.");
+  const openConversation = async (conversationId: string) => {
+    setActiveConversationId(conversationId);
+    setUnreadByConversation((current) => ({ ...current, [conversationId]: 0 }));
+    if (!api || !session) return;
+
+    if (!conversationDetails[conversationId]) {
+      const details = await api.getConversation(session.accessToken, conversationId);
+      setConversationDetails((prev) => ({ ...prev, [conversationId]: details.conversation }));
     }
-    return api<T>(server.config, path, method, body, session.accessToken);
+
+    if (!messagesByConversation[conversationId]) {
+      setMessagesByConversation((prev) => ({
+        ...prev,
+        [conversationId]: { loading: true, error: "", items: [] },
+      }));
+      try {
+        const history = await api.listConversationMessages(session.accessToken, conversationId, { limit: 60 });
+        const decoded = await Promise.all(
+          history.messages.map((message) => decodeMessage(message, session, deviceMaterialRef.current)),
+        );
+        setMessagesByConversation((prev) => ({
+          ...prev,
+          [conversationId]: {
+            loading: false,
+            error: "",
+            items: decoded.sort((a, b) => a.serverSequence - b.serverSequence),
+          },
+        }));
+      } catch (error) {
+        setMessagesByConversation((prev) => ({
+          ...prev,
+          [conversationId]: { loading: false, error: toUserError(error), items: [] },
+        }));
+      }
+    }
   };
 
-  const loadPosts = async (
-    search = "",
-    filter: "all" | "image" | "video" = "all",
-    mine = false,
-  ) => {
-    setPostsLoading(true);
-    setPostsError("");
+  const sendMessage = async (conversationId: string, retryText?: string) => {
+    if (!api || !session) return;
+    const text = (retryText ?? drafts[conversationId] ?? "").trim();
+    const uploads = uploadsByConversation[conversationId] ?? [];
+    if (!text && uploads.length === 0) return;
+
+    const optimisticId = `local_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    setMessagesByConversation((prev) => {
+      const bucket = prev[conversationId] ?? { loading: false, error: "", items: [] };
+      return {
+        ...prev,
+        [conversationId]: {
+          ...bucket,
+          items: [...bucket.items, {
+            id: optimisticId,
+            conversationId,
+            senderAccountId: session.accountId,
+            createdAt: new Date().toISOString(),
+            serverSequence: Number.MAX_SAFE_INTEGER,
+            text,
+            attachments: uploads.map((item) => ({
+              id: item.id,
+              kind: item.file.type.startsWith("image/") ? "image" : "file",
+              fileName: item.file.name,
+              mimeType: item.file.type || "application/octet-stream",
+              sizeBytes: item.file.size,
+              checksumSha256: "",
+              algorithm: "xchacha20poly1305_ietf",
+              nonce: "",
+              symmetricKey: null,
+            })),
+            own: true,
+            deliveryState: "pending",
+            localStatus: "sending",
+          }],
+        },
+      };
+    });
 
     try {
-      const params = new URLSearchParams({ limit: "30" });
-      if (search) {
-        params.set("query", search);
-      }
-      if (filter !== "all") {
-        params.set("mediaType", filter);
-      }
-      if (mine) {
-        params.set("scope", "mine");
-      }
+      const details = conversationDetails[conversationId] ?? (await api.getConversation(session.accessToken, conversationId)).conversation;
+      const recipients = collectRecipients(details.members);
+      if (recipients.length === 0) throw new Error("Нет доступных устройств получателей.");
+      const attachmentSecrets = await uploadEncryptedAttachments(api, session.accessToken, uploads);
+      const plaintextPayload = JSON.stringify({
+        text,
+        attachments: attachmentSecrets,
+        createdAt: new Date().toISOString(),
+        replyToMessageId: null,
+      });
+      const encrypted = await webCryptoProvider.encryptMessage(plaintextPayload, recipients);
+      const response = await api.sendMessage(session.accessToken, conversationId, {
+        clientMessageId: `web_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+        algorithm: encrypted.algorithm,
+        cryptoVersion: encrypted.cryptoVersion,
+        nonce: encrypted.nonce,
+        ciphertext: encrypted.ciphertext,
+        recipients: encrypted.recipients as never,
+        attachmentIds: attachmentSecrets.map((item) => item.attachmentId) as never,
+      });
 
-      const response = await authed<ListSocialPostsResponse>(`/social/posts?${params.toString()}`);
-      setPosts(response.posts);
+      const mapped = await decodeMessage(response.message, session, deviceMaterialRef.current);
+      setMessagesByConversation((prev) => {
+        const bucket = prev[conversationId] ?? { loading: false, error: "", items: [] };
+        return {
+          ...prev,
+          [conversationId]: {
+            ...bucket,
+            items: bucket.items
+              .filter((item) => item.id !== optimisticId)
+              .concat(mapped)
+              .sort((a, b) => a.serverSequence - b.serverSequence),
+          },
+        };
+      });
+
+      setDrafts((prev) => ({ ...prev, [conversationId]: "" }));
+      setUploadsByConversation((prev) => ({ ...prev, [conversationId]: [] }));
+      void loadSummaries(api, session, setSummaries, setSummariesLoading, setSummariesError, setActiveConversationId);
     } catch (error) {
-      setPosts([]);
-      setPostsError(extractError(error));
-    } finally {
-      setPostsLoading(false);
+      setMessagesByConversation((prev) => {
+        const bucket = prev[conversationId] ?? { loading: false, error: "", items: [] };
+        return {
+          ...prev,
+          [conversationId]: {
+            ...bucket,
+            items: bucket.items.map((item) =>
+              item.id === optimisticId
+                ? { ...item, localStatus: "failed", retryText: text, deliveryState: "failed", attachments: [] }
+                : item,
+            ),
+          },
+        };
+      });
     }
   };
 
-  const createPost = async (payload: CreatePostPayload) => {
-    const response = await authed<CreateSocialPostResponse>(
-      "/social/posts",
-      "POST",
-      payload as CreateSocialPostRequest,
-    );
-    setPosts((current) => [response.post, ...current]);
+  const addUpload = (conversationId: string, files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const items = Array.from(files).slice(0, 4).map((file) => ({
+      id: `upload_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+      file,
+    }));
+    setUploadsByConversation((prev) => ({
+      ...prev,
+      [conversationId]: [...(prev[conversationId] ?? []), ...items].slice(0, 4),
+    }));
+  };
+
+  const removeUpload = (conversationId: string, uploadId: string) => {
+    setUploadsByConversation((prev) => ({
+      ...prev,
+      [conversationId]: (prev[conversationId] ?? []).filter((item) => item.id !== uploadId),
+    }));
+  };
+
+  const downloadAttachment = async (attachment: MessageAttachmentView) => {
+    if (!api || !session) return;
+    if (!attachment.symmetricKey) {
+      setGlobalError("Для этого вложения не найден ключ расшифровки.");
+      return;
+    }
+
+    setAttachmentOps((prev) => ({ ...prev, [attachment.id]: { loading: true, error: "" } }));
+    try {
+      const response = await api.downloadAttachment(session.accessToken, attachment.id as never);
+      const ciphertextBytes = base64ToBytes(response.ciphertext);
+      if (attachment.checksumSha256) {
+        const checksum = await webCryptoProvider.hashBytesHex(ciphertextBytes);
+        if (checksum.toLowerCase() !== attachment.checksumSha256.toLowerCase()) {
+          throw new Error("Контрольная сумма вложения не совпала.");
+        }
+      }
+      const decrypted = await webCryptoProvider.decryptAttachment({
+        ciphertext: response.ciphertext,
+        nonce: attachment.nonce,
+        symmetricKey: attachment.symmetricKey,
+      });
+      const blobBytes = new Uint8Array(decrypted.byteLength);
+      blobBytes.set(decrypted);
+      const blob = new Blob([blobBytes.buffer], { type: attachment.mimeType });
+      const url = URL.createObjectURL(blob);
+      try {
+        const element = document.createElement("a");
+        element.href = url;
+        element.download = attachment.fileName;
+        document.body.appendChild(element);
+        element.click();
+        document.body.removeChild(element);
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+      setAttachmentOps((prev) => ({ ...prev, [attachment.id]: { loading: false, error: "" } }));
+    } catch (error) {
+      setAttachmentOps((prev) => ({
+        ...prev,
+        [attachment.id]: { loading: false, error: toUserError(error) },
+      }));
+    }
+  };
+
+  const searchUsers = async (query: string) => {
+    if (!api || !session) return;
+    setUserSearchQuery(query);
+    const trimmed = query.trim();
+    if (trimmed.length < 2) {
+      setUserSearchResults([]);
+      return;
+    }
+    const response = await api.searchUsers(session.accessToken, trimmed, 20);
+    setUserSearchResults(response.users);
+  };
+
+  const createDirect = async (accountId: string) => {
+    if (!api || !session) return;
+    const response = await api.createDirectConversation(session.accessToken, accountId as never);
+    const conversationId = response.conversation.id as string;
+    setShowNewChat(false);
+    await loadSummaries(api, session, setSummaries, setSummariesLoading, setSummariesError, setActiveConversationId);
+    await openConversation(conversationId);
+  };
+
+  const createGroup = async () => {
+    if (!api || !session) return;
+    const title = groupTitle.trim();
+    if (!title || groupMembers.length === 0) {
+      setGlobalError("Введите название группы и выберите участников.");
+      return;
+    }
+    const payload: CreateGroupConversationRequest = { title, memberAccountIds: groupMembers as never };
+    const response = await api.createGroupConversation(session.accessToken, payload);
+    const conversationId = response.conversation.id as string;
+    setGroupTitle("");
+    setGroupMembers([]);
+    setShowNewChat(false);
+    await loadSummaries(api, session, setSummaries, setSummariesLoading, setSummariesError, setActiveConversationId);
+    await openConversation(conversationId);
+  };
+
+  const runExploreSearch = async () => {
+    if (!api || !session) return;
+    const query = exploreQuery.trim();
+    if (query.length < 2) {
+      setExploreUsers([]);
+      setExplorePosts([]);
+      return;
+    }
+
+    setExploreLoading(true);
+    try {
+      const [usersResponse, postsResponse] = await Promise.all([
+        api.searchUsers(session.accessToken, query, 20),
+        api.listPosts(session.accessToken, { query, limit: 20, mediaType: "all" }),
+      ]);
+      setExploreUsers(usersResponse.users);
+      setExplorePosts(postsResponse.posts);
+    } catch (error) {
+      setGlobalError(toUserError(error));
+    } finally {
+      setExploreLoading(false);
+    }
+  };
+
+  const openUserProfile = async (accountId: string) => {
+    if (!api || !session) return;
+    try {
+      const profile = await api.getUserProfile(session.accessToken, accountId as never);
+      setProfileTarget(profile);
+      setSection("profile");
+    } catch (error) {
+      setGlobalError(toUserError(error));
+    }
+  };
+
+  const clearProfileTarget = () => {
+    setProfileTarget(null);
+  };
+
+  const publishPost = async (payload: CreatePostPayload) => {
+    if (!api || !session) throw new Error("Сессия не активна.");
+    const request: CreateSocialPostRequest = {
+      content: payload.content,
+      mediaType: payload.mediaType,
+      mediaUrl: payload.mediaUrl,
+      mood: payload.mood,
+    };
+    const created = await api.createPost(session.accessToken, request);
+    setPosts((prev) => [created.post, ...prev]);
   };
 
   const toggleLike = async (postId: string, likedByMe: boolean) => {
-    const method = likedByMe ? "DELETE" : "POST";
-    const response = await authed<SocialPostLikeResponse>(`/social/posts/${postId}/like`, method);
-    setPosts((current) =>
-      current.map((post) =>
-        post.id === postId
-          ? { ...post, likeCount: response.likeCount, likedByMe: response.likedByMe }
-          : post,
-      ),
-    );
+    if (!api || !session) return;
+    const response = await api.togglePostLike(session.accessToken, postId as never, likedByMe);
+    const patchLike = (post: CreateSocialPostResponse["post"]) =>
+      (post.id as string) === postId ? { ...post, likeCount: response.likeCount, likedByMe: response.likedByMe } : post;
+    setPosts((prev) => prev.map(patchLike));
+    setExplorePosts((prev) => prev.map(patchLike));
+    setProfilePosts((prev) => prev.map(patchLike));
   };
 
   const deletePost = async (postId: string) => {
-    await authed(`/social/posts/${postId}`, "DELETE");
-    setPosts((current) => current.filter((post) => post.id !== postId));
+    if (!api || !session) return;
+    await api.deletePost(session.accessToken, postId as never);
+    setPosts((prev) => prev.filter((post) => (post.id as string) !== postId));
+    setExplorePosts((prev) => prev.filter((post) => (post.id as string) !== postId));
+    setProfilePosts((prev) => prev.filter((post) => (post.id as string) !== postId));
   };
 
-  const loadNotifications = async () => {
-    setNotificationsLoading(true);
-    setNotificationsError("");
-
+  const startTwoFactorSetup = async () => {
+    if (!api || !session) return;
     try {
-      const response = await authed<SocialNotificationsResponse>("/social/notifications?limit=20");
-      setNotifications(response.notifications);
+      const setup = await api.startTwoFA(session.accessToken);
+      setTwoFASetup(setup);
+      setSettingsMessage("Секрет создан. Введите код из приложения-аутентификатора.");
     } catch (error) {
-      setNotifications([]);
-      setNotificationsError(extractError(error));
-    } finally {
-      setNotificationsLoading(false);
+      setSettingsMessage(toUserError(error));
     }
   };
 
-  const loadConversations = async () => {
-    setConversationsLoading(true);
-    setConversationsError("");
-
+  const confirmTwoFactorSetup = async () => {
+    if (!api || !session || !twoFAEnableCode.trim()) return;
     try {
-      const response = await authed<ListConversationsResponse>("/conversations");
-      setConversations(response.conversations);
+      await api.confirmTwoFA(session.accessToken, twoFAEnableCode.trim());
+      setTwoFAEnableCode("");
+      setTwoFASetup(null);
+      setSettingsMessage("2FA успешно включена.");
+      await loadSettingsData(api, session, setSessionInfo, setDeviceList, setSecurityEvents);
     } catch (error) {
-      setConversations([]);
-      setConversationsError(extractError(error));
-    } finally {
-      setConversationsLoading(false);
+      setSettingsMessage(toUserError(error));
     }
   };
 
-  const logout = async (all = false) => {
-    if (!server || !session) {
-      return;
+  const disableTwoFactor = async () => {
+    if (!api || !session || !twoFADisableCode.trim()) return;
+    try {
+      await api.disableTwoFA(session.accessToken, twoFADisableCode.trim());
+      setTwoFADisableCode("");
+      setTwoFASetup(null);
+      setSettingsMessage("2FA отключена.");
+      await loadSettingsData(api, session, setSessionInfo, setDeviceList, setSecurityEvents);
+    } catch (error) {
+      setSettingsMessage(toUserError(error));
     }
-
-    const path = all ? "/auth/web/logout-all" : "/auth/web/logout";
-    await api(
-      server.config,
-      path,
-      "POST",
-      all ? undefined : { refreshToken: session.refreshToken },
-      session.accessToken,
-    ).catch(() => undefined);
-
-    await clearAuth();
-    setSession(null);
-    setPending2fa(null);
-    setPosts([]);
-    setNotifications([]);
-    setConversations([]);
-    setGlobalError("");
   };
 
-  const updateSessionMode = async (mode: SessionMode) => {
-    setSessionMode(mode);
-    await stateStore.set(sessionModeKey, mode);
-
-    if (mode === "ephemeral") {
-      await stateStore.delete(refreshKey);
-      return;
+  const revokeDevice = async (deviceId: string) => {
+    if (!api || !session) return;
+    try {
+      await api.revokeDevice(session.accessToken, deviceId);
+      setSettingsMessage("Устройство отозвано.");
+      await loadSettingsData(api, session, setSessionInfo, setDeviceList, setSecurityEvents);
+    } catch (error) {
+      setSettingsMessage(toUserError(error));
     }
-    if (session) {
-      await stateStore.set(refreshKey, session.refreshToken);
+  };
+
+  const testConnection = async () => {
+    if (!api || !server) return;
+    try {
+      await fetch(buildServerConfigEndpoint(server.config.apiBaseUrl), { method: "GET" });
+      setSettingsMessage("Соединение с сервером успешно.");
+    } catch {
+      setSettingsMessage("Не удалось проверить соединение с сервером.");
     }
   };
 
   const resetServer = async () => {
-    await clearAuth();
+    await clearAuthState();
+    localStorage.removeItem(serverStorageKey);
+    runtimeRef.current?.stop();
+    runtimeRef.current = null;
+    setServer(null);
     setSession(null);
     setPending2fa(null);
-    setServer(null);
-    setSection("home");
-    setGlobalError("");
-    setConnectError("");
+    setUnreadByConversation({});
+    setMessagesByConversation({});
+    setSummaries([]);
+    setSection("messages");
   };
 
+  const activeBucket = activeConversationId ? messagesByConversation[activeConversationId] : undefined;
+
   if (booting) {
-    return <ShellCard title="Запуск..." subtitle="Проверяем состояние сессии." />;
+    return <StandaloneCard title="Запуск приложения" subtitle="Проверяем сервер и сессию..." />;
   }
 
   if (!server) {
-    return (
-      <ConnectView
-        onConnect={connectServer}
-        error={connectError}
-        setError={setConnectError}
-      />
-    );
+    return <ConnectScreen onConnect={connectServer} error={globalError} />;
   }
 
   if (!session) {
     return (
-      <AuthView
+      <AuthScreen
         server={server.input}
         mode={sessionMode}
-        setMode={setSessionMode}
         pending2fa={pending2fa}
-        globalError={globalError}
-        onSubmit={authSubmit}
-        onVerify2fa={verify2fa}
-        onChangeServer={() => void resetServer()}
+        error={globalError}
+        onModeChange={async (mode) => {
+          setSessionMode(mode);
+          await safeStoreSet(sessionModeStorageKey, mode);
+        }}
+        onSubmit={async (mode, email, password) => {
+          setGlobalError("");
+          try {
+            await submitAuth(mode, email, password);
+          } catch (error) {
+            setGlobalError(toUserError(error));
+          }
+        }}
+        onVerify={async (code) => {
+          setGlobalError("");
+          try {
+            await submit2fa(code);
+          } catch (error) {
+            setGlobalError(toUserError(error));
+          }
+        }}
+        onChangeServer={resetServer}
       />
     );
   }
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: "var(--core-background)" }}>
-      <div className="mx-auto max-w-[1280px] px-6 py-6 grid grid-cols-[280px_1fr] gap-6">
-        <Sidebar activeSection={section} onChange={setSection} />
+      <div className="mx-auto max-w-[1440px] px-5 py-5 grid grid-cols-[280px_1fr] gap-5">
+        <Sidebar
+          activeSection={section}
+          onChange={setSection}
+          badges={{ notifications: notifications.length, messages: unreadTotal }}
+        />
 
         <main className="space-y-4">
-          <h1 style={{ color: "var(--text-primary)", fontSize: 28, fontWeight: 600 }}>
-            {titleBySection[section]}
-          </h1>
+          <header className="flex items-center justify-between rounded-2xl border px-4 py-3" style={cardStyle}>
+            <div>
+              <h1 style={{ color: "var(--text-primary)", fontSize: 26, fontWeight: 600 }}>{sectionTitle(section)}</h1>
+              <p style={{ color: "var(--base-grey-light)", fontSize: 14 }}>{sectionSubtitle(section, server.input, transportState)}</p>
+            </div>
+            <StatusChip state={transportState.status} />
+          </header>
 
-          {globalError ? <Info text={globalError} tone="error" /> : null}
+          {runtimeError ? <InlineInfo tone="warning" text={runtimeError} /> : null}
+          {globalError ? <InlineInfo tone="error" text={globalError} /> : null}
 
-          {section === "home" ? <CreatePost onSubmit={createPost} /> : null}
+          {section === "messages" ? (
+            <section className="grid gap-4 grid-cols-[320px_1fr_280px] h-[calc(100vh-170px)] min-h-[620px]">
+              <aside className="rounded-2xl border p-4 overflow-hidden flex flex-col" style={cardStyle}>
+                <div className="flex items-center gap-2 mb-3">
+                  <Search className="w-4 h-4" style={{ color: "var(--base-grey-light)" }} />
+                  <input value={conversationSearch} onChange={(e) => setConversationSearch(e.target.value)} placeholder="Поиск по чатам" className="w-full bg-transparent outline-none" style={{ color: "var(--text-primary)" }} />
+                </div>
+                <div className="flex gap-2 mb-3 flex-wrap">
+                  {(["all", "direct", "group", "unread"] as ChatFilter[]).map((value) => (
+                    <button
+                      key={value}
+                      type="button"
+                      className="px-2 py-1 rounded-lg border text-xs"
+                      style={conversationFilter === value ? solidButtonStyle : outlineButtonStyle}
+                      onClick={() => setConversationFilter(value)}
+                    >
+                      {value === "all"
+                        ? "Все"
+                        : value === "direct"
+                          ? "Личные"
+                          : value === "group"
+                            ? "Группы"
+                            : "Непрочитанные"}
+                    </button>
+                  ))}
+                </div>
+                <button type="button" className="mb-3 px-3 py-2 rounded-lg border" style={outlineButtonStyle} onClick={() => setShowNewChat((v) => !v)}>
+                  <Plus className="w-4 h-4 inline mr-2" />Новый чат
+                </button>
+
+                {showNewChat ? (
+                  <div className="rounded-xl border p-3 mb-3 space-y-3" style={innerCardStyle}>
+                    <input value={userSearchQuery} onChange={(e) => void searchUsers(e.target.value)} placeholder="Поиск пользователя" className="w-full rounded-lg border bg-transparent px-3 py-2 outline-none" style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)" }} />
+                    <div className="space-y-2 max-h-40 overflow-auto">
+                      {userSearchResults.map((user) => {
+                        const accountId = user.accountId as string;
+                        const selected = groupMembers.includes(accountId);
+                        return (
+                          <div key={accountId} className="rounded-lg border p-2" style={innerCardStyle}>
+                            <p style={{ color: "var(--text-primary)", fontSize: 13 }}>{user.email}</p>
+                            <div className="flex gap-2 mt-2">
+                              <button type="button" className="px-2 py-1 rounded-lg border text-xs" style={outlineButtonStyle} onClick={() => void createDirect(accountId)}>Личный</button>
+                              <button type="button" className="px-2 py-1 rounded-lg border text-xs" style={selected ? solidButtonStyle : outlineButtonStyle} onClick={() => setGroupMembers((prev) => (prev.includes(accountId) ? prev.filter((id) => id !== accountId) : [...prev, accountId]))}>{selected ? "Выбран" : "В группу"}</button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <input value={groupTitle} onChange={(e) => setGroupTitle(e.target.value)} placeholder="Название группы" className="w-full rounded-lg border bg-transparent px-3 py-2 outline-none" style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)" }} />
+                    <button type="button" className="w-full rounded-lg border px-3 py-2" style={outlineButtonStyle} onClick={() => void createGroup()}>Создать группу</button>
+                  </div>
+                ) : null}
+
+                {summariesLoading ? <InlineInfo text="Загрузка чатов..." /> : null}
+                {summariesError ? <InlineInfo tone="error" text={summariesError} /> : null}
+                <div className="space-y-2 overflow-auto">
+                  {filteredSummaries.map((item) => {
+                    const id = item.id as string;
+                    const selected = activeConversationId === id;
+                    const unread = unreadByConversation[id] ?? 0;
+                    return (
+                      <button key={id} type="button" className="w-full text-left rounded-xl border p-3" style={selected ? selectedCardStyle : innerCardStyle} onClick={() => void openConversation(id)}>
+                        <div className="flex items-center justify-between gap-2">
+                          <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>{resolveConversationTitle(item)}</p>
+                          {unread > 0 ? (
+                            <span className="px-2 py-0.5 rounded-full text-xs" style={{ backgroundColor: "var(--accent-brown)", color: "var(--core-background)" }}>
+                              {unread > 99 ? "99+" : unread}
+                            </span>
+                          ) : null}
+                        </div>
+                        <p style={{ color: "var(--base-grey-light)", fontSize: 12 }}>
+                          {item.lastMessage ? new Date(item.lastMessage.createdAt as string).toLocaleString("ru-RU") : "Без сообщений"}
+                        </p>
+                      </button>
+                    );
+                  })}
+                </div>
+              </aside>
+
+              <section className="rounded-2xl border overflow-hidden flex flex-col" style={cardStyle}>
+                {!activeConversationId ? (
+                  <div className="h-full flex items-center justify-center"><InlineInfo text="Выберите чат слева" /></div>
+                ) : (
+                  <>
+                    <header className="px-4 py-3 border-b flex items-center justify-between" style={{ borderColor: "var(--glass-border)" }}>
+                      <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>{resolveConversationTitle(summaries.find((item) => (item.id as string) === activeConversationId) ?? null)}</p>
+                      <button type="button" className="px-3 py-1.5 rounded-lg border text-sm" style={outlineButtonStyle} onClick={() => api ? void loadSummaries(api, session, setSummaries, setSummariesLoading, setSummariesError, setActiveConversationId) : undefined}><RefreshCcw className="w-4 h-4 inline mr-2" />Обновить</button>
+                    </header>
+                    <div ref={messageScrollRef} className="flex-1 overflow-auto px-4 py-4 space-y-3">
+                      {activeBucket?.loading ? <InlineInfo text="Загрузка истории..." /> : null}
+                      {activeBucket?.error ? <InlineInfo tone="error" text={activeBucket.error} /> : null}
+                      {activeBucket && activeBucket.items.length === 0 ? <InlineInfo text="В чате пока нет сообщений." /> : null}
+                      {activeBucket?.items.map((message) => (
+                        <MessageRow
+                          key={message.id}
+                          message={message}
+                          onResend={message.localStatus === "failed" ? async () => sendMessage(activeConversationId, message.retryText) : undefined}
+                          onDownloadAttachment={downloadAttachment}
+                          attachmentOpState={attachmentOps}
+                        />
+                      ))}
+                    </div>
+                    <footer className="border-t p-4 space-y-2" style={{ borderColor: "var(--glass-border)" }}>
+                      <input
+                        ref={attachmentInputRef}
+                        type="file"
+                        className="hidden"
+                        multiple
+                        onChange={(event) => {
+                          addUpload(activeConversationId, event.target.files);
+                          event.currentTarget.value = "";
+                        }}
+                      />
+                      <textarea value={drafts[activeConversationId] ?? ""} onChange={(e) => setDrafts((prev) => ({ ...prev, [activeConversationId]: e.target.value }))} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void sendMessage(activeConversationId); } }} placeholder="Введите сообщение" className="w-full rounded-lg border bg-transparent px-3 py-2 outline-none resize-none" style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)", minHeight: 84 }} />
+                      {(uploadsByConversation[activeConversationId] ?? []).length > 0 ? (
+                        <div className="space-y-2">
+                          {(uploadsByConversation[activeConversationId] ?? []).map((upload) => (
+                            <div key={upload.id} className="flex items-center justify-between rounded-lg border px-3 py-2" style={innerCardStyle}>
+                              <div>
+                                <p style={{ color: "var(--text-primary)" }}>{upload.file.name}</p>
+                                <p style={{ color: "var(--base-grey-light)", fontSize: 12 }}>{formatBytes(upload.file.size)}</p>
+                              </div>
+                              <button type="button" className="p-1 rounded border" style={outlineButtonStyle} onClick={() => removeUpload(activeConversationId, upload.id)}>
+                                <X className="w-4 h-4" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                      <div className="flex items-center justify-between gap-2">
+                        <button
+                          type="button"
+                          className="px-3 py-2 rounded-lg border"
+                          style={outlineButtonStyle}
+                          onClick={() => attachmentInputRef.current?.click()}
+                        >
+                          <Paperclip className="w-4 h-4 inline mr-2" />
+                          Вложение
+                        </button>
+                        <button type="button" className="px-4 py-2 rounded-lg border" style={outlineButtonStyle} onClick={() => void sendMessage(activeConversationId)}><Send className="w-4 h-4 inline mr-2" />Отправить</button>
+                      </div>
+                    </footer>
+                  </>
+                )}
+              </section>
+
+              <aside className="rounded-2xl border p-4 space-y-3" style={cardStyle}>
+                <h3 style={{ color: "var(--text-primary)", fontWeight: 600 }}>Подключение</h3>
+                <TransportCard state={transportState} />
+                <div className="rounded-xl border p-3" style={innerCardStyle}><p style={{ color: "var(--base-grey-light)", fontSize: 12 }}>Сервер</p><p style={{ color: "var(--text-primary)", wordBreak: "break-all" }}>{server.input}</p></div>
+              </aside>
+            </section>
+          ) : null}
+
+          {section === "feed" ? (
+            <section className="space-y-4">
+              <CreatePost onSubmit={publishPost} />
+              {postsLoading ? <InlineInfo text="Загрузка ленты..." /> : null}
+              {postsError ? <InlineInfo tone="error" text={postsError} /> : null}
+              {posts.map((post) => (
+                <PostCard key={post.id as string} id={post.id as string} username={post.authorEmail} timestamp={new Date(post.createdAt as string).toLocaleString("ru-RU")} imageUrl={post.mediaType === "image" ? post.mediaUrl : null} videoUrl={post.mediaType === "video" ? post.mediaUrl : null} caption={post.content} likes={post.likeCount} likedByMe={post.likedByMe} mood={post.mood} canDelete={post.canDelete} onToggleLike={toggleLike} onDelete={deletePost} />
+              ))}
+            </section>
+          ) : null}
 
           {section === "explore" ? (
-            <div
-              className="rounded-2xl p-4 border flex gap-3 flex-wrap"
-              style={{
-                backgroundColor: "var(--glass-fill-base)",
-                borderColor: "var(--glass-border)",
-              }}
-            >
-              <input
-                className="flex-1 min-w-[220px] bg-transparent rounded-lg px-4 py-2 outline-none border"
-                style={{ borderColor: "var(--base-grey-light)", color: "var(--text-primary)" }}
-                placeholder="Поиск по тексту поста"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-              />
-              <select
-                className="bg-transparent rounded-lg px-4 py-2 outline-none border"
-                style={{ borderColor: "var(--base-grey-light)", color: "var(--text-primary)" }}
-                value={mediaType}
-                onChange={(event) => setMediaType(event.target.value as "all" | "image" | "video")}
-              >
-                <option value="all">Все</option>
-                <option value="image">Фото</option>
-                <option value="video">Видео</option>
-              </select>
-            </div>
-          ) : null}
-
-          {section === "profile" ? (
-            <Info text={session.email} sub={`ID аккаунта: ${session.accountId}`} />
-          ) : null}
-
-          {sectionFeedVisible(section) ? (
-            postsLoading ? (
-              <Info text="Загружаем ленту..." />
-            ) : postsError ? (
-              <Info text={postsError} tone="error" />
-            ) : posts.length === 0 ? (
-              <Info text="Пока нет постов." />
-            ) : (
-              <div className="space-y-4">
-                {posts.map((post) => (
-                  <PostCard
-                    key={post.id}
-                    id={post.id}
-                    username={post.authorEmail}
-                    timestamp={new Date(post.createdAt).toLocaleString("ru-RU")}
-                    imageUrl={post.mediaType === "image" ? post.mediaUrl : null}
-                    videoUrl={post.mediaType === "video" ? post.mediaUrl : null}
-                    caption={post.content}
-                    likes={post.likeCount}
-                    likedByMe={post.likedByMe}
-                    mood={post.mood}
-                    canDelete={post.canDelete}
-                    onToggleLike={toggleLike}
-                    onDelete={deletePost}
+            <section className="space-y-4">
+              <div className="rounded-2xl border p-4 space-y-3" style={cardStyle}>
+                <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>Поиск людей и публикаций</p>
+                <div className="flex gap-2">
+                  <input
+                    value={exploreQuery}
+                    onChange={(event) => setExploreQuery(event.target.value)}
+                    placeholder="Введите email или текст публикации"
+                    className="w-full rounded-lg border bg-transparent px-3 py-2 outline-none"
+                    style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)" }}
                   />
-                ))}
+                  <button type="button" className="px-3 py-2 rounded-lg border" style={outlineButtonStyle} onClick={() => void runExploreSearch()}>
+                    <Search className="w-4 h-4 inline mr-2" />
+                    Найти
+                  </button>
+                </div>
               </div>
-            )
+
+              {exploreLoading ? <InlineInfo text="Ищем результаты..." /> : null}
+
+              <div className="grid gap-4 lg:grid-cols-2">
+                <div className="rounded-2xl border p-4 space-y-3" style={cardStyle}>
+                  <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>Люди</p>
+                  {exploreUsers.length === 0 ? <InlineInfo text="Введите запрос, чтобы найти пользователей." /> : null}
+                  {exploreUsers.map((item) => (
+                    <div key={item.accountId as string} className="rounded-xl border p-3 space-y-2" style={innerCardStyle}>
+                      <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>{item.email}</p>
+                      <div className="flex gap-2">
+                        <button type="button" className="px-3 py-1.5 rounded-lg border text-sm" style={outlineButtonStyle} onClick={() => void createDirect(item.accountId as string)}>
+                          <MessageSquare className="w-4 h-4 inline mr-2" />
+                          Написать
+                        </button>
+                        <button type="button" className="px-3 py-1.5 rounded-lg border text-sm" style={outlineButtonStyle} onClick={() => void openUserProfile(item.accountId as string)}>
+                          <User className="w-4 h-4 inline mr-2" />
+                          Профиль
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="rounded-2xl border p-4 space-y-3" style={cardStyle}>
+                  <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>Публикации</p>
+                  {explorePosts.length === 0 ? <InlineInfo text="Нет публикаций по запросу." /> : null}
+                  {explorePosts.map((post) => (
+                    <PostCard
+                      key={post.id as string}
+                      id={post.id as string}
+                      username={post.authorEmail}
+                      timestamp={new Date(post.createdAt as string).toLocaleString("ru-RU")}
+                      imageUrl={post.mediaType === "image" ? post.mediaUrl : null}
+                      videoUrl={post.mediaType === "video" ? post.mediaUrl : null}
+                      caption={post.content}
+                      likes={post.likeCount}
+                      likedByMe={post.likedByMe}
+                      mood={post.mood}
+                      canDelete={post.canDelete}
+                      onToggleLike={toggleLike}
+                      onDelete={deletePost}
+                    />
+                  ))}
+                </div>
+              </div>
+            </section>
           ) : null}
 
           {section === "notifications" ? (
-            notificationsLoading ? (
-              <Info text="Загружаем уведомления..." />
-            ) : notificationsError ? (
-              <Info text={notificationsError} tone="error" />
-            ) : notifications.length === 0 ? (
-              <Info text="Пока нет уведомлений." />
-            ) : (
-              <div className="space-y-3">
-                {notifications.map((item) => (
-                  <Info
-                    key={`${item.postId}-${item.actorAccountId}-${item.createdAt}`}
-                    text={`${item.actorEmail} поставил(а) лайк вашему посту`}
-                    sub={item.postPreview}
-                  />
-                ))}
-              </div>
-            )
+            <section className="space-y-3">
+              {notifications.length === 0 ? <InlineInfo text="Пока нет уведомлений." /> : notifications.map((item) => (
+                <div key={`${item.postId as string}_${item.actorAccountId as string}_${item.createdAt as string}`} className="rounded-xl border p-3" style={cardStyle}>
+                  <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>{item.actorEmail} поставил(а) лайк вашему посту</p>
+                  <p style={{ color: "var(--base-grey-light)", marginTop: 6 }}>{item.postPreview}</p>
+                </div>
+              ))}
+            </section>
           ) : null}
 
-          {section === "messages" ? (
-            conversationsLoading ? (
-              <Info text="Загружаем список чатов..." />
-            ) : conversationsError ? (
-              <Info text={conversationsError} tone="error" />
-            ) : conversations.length === 0 ? (
-              <Info text="Пока нет чатов." />
-            ) : (
-              <div className="space-y-3">
-                {conversations.map((conversation) => (
-                  <Info
-                    key={conversation.id}
-                    text={conversation.title ?? "Чат без названия"}
-                    sub={`Участников: ${conversation.members.length}`}
-                  />
-                ))}
+          {section === "profile" ? (
+            <section className="space-y-4">
+              <div className="rounded-2xl border p-4 space-y-2" style={cardStyle}>
+                <div className="flex items-center justify-between">
+                  <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>
+                    {profileTarget ? "Профиль пользователя" : "Мой профиль"}
+                  </p>
+                  {profileTarget ? (
+                    <button type="button" className="px-3 py-1.5 rounded-lg border text-sm" style={outlineButtonStyle} onClick={clearProfileTarget}>
+                      Вернуться к моему профилю
+                    </button>
+                  ) : null}
+                </div>
+
+                {profileTarget ? (
+                  <>
+                    <p style={{ color: "var(--base-grey-light)" }}>Email: {profileTarget.email}</p>
+                    <p style={{ color: "var(--base-grey-light)" }}>Публикаций: {profileTarget.postCount}</p>
+                    <div className="flex gap-2">
+                      {profileTarget.existingDirectConversationId ? (
+                        <button
+                          type="button"
+                          className="px-3 py-1.5 rounded-lg border text-sm"
+                          style={outlineButtonStyle}
+                          onClick={() => void openConversation(profileTarget.existingDirectConversationId as string)}
+                        >
+                          Открыть диалог
+                        </button>
+                      ) : profileTarget.canStartDirectChat ? (
+                        <button type="button" className="px-3 py-1.5 rounded-lg border text-sm" style={outlineButtonStyle} onClick={() => void createDirect(profileTarget.accountId as string)}>
+                          <MessageSquare className="w-4 h-4 inline mr-2" />
+                          Написать
+                        </button>
+                      ) : null}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <p style={{ color: "var(--base-grey-light)" }}>Email: {session.email}</p>
+                    <p style={{ color: "var(--base-grey-light)" }}>ID аккаунта: {session.accountId}</p>
+                  </>
+                )}
               </div>
-            )
+
+              {!profileTarget ? (
+                <div className="rounded-2xl border p-4 space-y-3" style={cardStyle}>
+                  <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>Мои публикации</p>
+                  {profileLoading ? <InlineInfo text="Загрузка публикаций..." /> : null}
+                  {!profileLoading && profilePosts.length === 0 ? <InlineInfo text="У вас пока нет публикаций." /> : null}
+                  {profilePosts.map((post) => (
+                    <PostCard
+                      key={post.id as string}
+                      id={post.id as string}
+                      username={post.authorEmail}
+                      timestamp={new Date(post.createdAt as string).toLocaleString("ru-RU")}
+                      imageUrl={post.mediaType === "image" ? post.mediaUrl : null}
+                      videoUrl={post.mediaType === "video" ? post.mediaUrl : null}
+                      caption={post.content}
+                      likes={post.likeCount}
+                      likedByMe={post.likedByMe}
+                      mood={post.mood}
+                      canDelete={post.canDelete}
+                      onToggleLike={toggleLike}
+                      onDelete={deletePost}
+                    />
+                  ))}
+                </div>
+              ) : null}
+            </section>
           ) : null}
 
           {section === "settings" ? (
-            <div
-              className="rounded-2xl p-5 border space-y-3"
-              style={{
-                backgroundColor: "var(--glass-fill-base)",
-                borderColor: "var(--glass-border)",
-              }}
-            >
-              <p style={{ color: "var(--base-grey-light)" }}>Сервер: {server.input}</p>
-              <p style={{ color: "var(--base-grey-light)" }}>
-                Режим сессии: {sessionMode === "ephemeral" ? "Только текущая вкладка" : "Запомнить на устройстве"}
-              </p>
-              <select
-                className="w-full bg-transparent rounded-lg px-4 py-2 outline-none border"
-                style={{ borderColor: "var(--base-grey-light)", color: "var(--text-primary)" }}
-                value={sessionMode}
-                onChange={(event) => void updateSessionMode(event.target.value as SessionMode)}
-              >
-                <option value="ephemeral">Только текущая вкладка</option>
-                <option value="remembered">Запомнить на устройстве</option>
-              </select>
+            <section className="rounded-2xl border p-4 space-y-4" style={cardStyle}>
+              <h3 style={{ color: "var(--text-primary)", fontWeight: 600 }}>Настройки</h3>
               <div className="flex gap-2 flex-wrap">
-                <button
-                  type="button"
-                  className="px-4 py-2 rounded-lg border"
-                  style={{ borderColor: "var(--accent-brown)", color: "var(--accent-brown)" }}
-                  onClick={() => void logout(false)}
-                >
-                  Выйти
-                </button>
-                <button
-                  type="button"
-                  className="px-4 py-2 rounded-lg border"
-                  style={{ borderColor: "var(--accent-brown)", color: "var(--accent-brown)" }}
-                  onClick={() => void logout(true)}
-                >
-                  Выйти везде
-                </button>
-                <button
-                  type="button"
-                  className="px-4 py-2 rounded-lg border"
-                  style={{ borderColor: "var(--accent-brown)", color: "var(--accent-brown)" }}
-                  onClick={() => void resetServer()}
-                >
-                  Сменить сервер
-                </button>
+                {([
+                  ["account", "Аккаунт"],
+                  ["sessions", "Сессии"],
+                  ["devices", "Устройства"],
+                  ["security", "Безопасность"],
+                  ["app", "Приложение"],
+                  ["connection", "Подключение"],
+                ] as Array<[SettingsSection, string]>).map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    className="px-3 py-1.5 rounded-lg border text-sm"
+                    style={settingsSection === value ? solidButtonStyle : outlineButtonStyle}
+                    onClick={() => setSettingsSection(value)}
+                  >
+                    {label}
+                  </button>
+                ))}
               </div>
-            </div>
+
+              {settingsMessage ? <InlineInfo text={settingsMessage} /> : null}
+
+              {settingsSection === "account" ? (
+                <div className="rounded-xl border p-3 space-y-3" style={innerCardStyle}>
+                  <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>Аккаунт</p>
+                  <p style={{ color: "var(--base-grey-light)" }}>Email: {session.email}</p>
+                  <p style={{ color: "var(--base-grey-light)" }}>
+                    Режим сессии: {sessionMode === "remembered" ? "Запомнить" : "Только вкладка"}
+                  </p>
+                  <div className="flex gap-2 flex-wrap">
+                    <button type="button" className="px-4 py-2 rounded-lg border" style={outlineButtonStyle} onClick={() => void logout(false)}>Выйти</button>
+                    <button type="button" className="px-4 py-2 rounded-lg border" style={outlineButtonStyle} onClick={() => void logout(true)}>Выйти везде</button>
+                  </div>
+                </div>
+              ) : null}
+
+              {settingsSection === "sessions" ? (
+                <div className="rounded-xl border p-3 space-y-2" style={innerCardStyle}>
+                  <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>Текущая сессия</p>
+                  <p style={{ color: "var(--base-grey-light)" }}>Платформа: {sessionInfo?.session.clientPlatform ?? "web-browser"}</p>
+                  <p style={{ color: "var(--base-grey-light)" }}>Класс: {sessionInfo?.session.sessionClass ?? "browser"}</p>
+                  <p style={{ color: "var(--base-grey-light)" }}>Постоянная: {sessionInfo?.session.persistent ? "Да" : "Нет"}</p>
+                  <p style={{ color: "var(--base-grey-light)" }}>Создана: {sessionInfo?.session.createdAt ? new Date(sessionInfo.session.createdAt as string).toLocaleString("ru-RU") : "-"}</p>
+                </div>
+              ) : null}
+
+              {settingsSection === "devices" ? (
+                <div className="rounded-xl border p-3 space-y-2" style={innerCardStyle}>
+                  <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>Устройства</p>
+                  {(deviceList?.devices ?? []).map((device) => {
+                    const id = device.id as string;
+                    const isCurrent = deviceList?.currentDeviceId === device.id;
+                    return (
+                      <div key={id} className="rounded-lg border px-3 py-2 flex items-center justify-between" style={innerCardStyle}>
+                        <div>
+                          <p style={{ color: "var(--text-primary)" }}>{device.name}</p>
+                          <p style={{ color: "var(--base-grey-light)", fontSize: 12 }}>{device.platform} · {device.status}</p>
+                        </div>
+                        {!isCurrent ? (
+                          <button type="button" className="px-3 py-1.5 rounded-lg border text-sm" style={outlineButtonStyle} onClick={() => void revokeDevice(id)}>
+                            Отозвать
+                          </button>
+                        ) : (
+                          <span className="text-xs px-2 py-1 rounded" style={{ backgroundColor: "var(--accent-brown)", color: "var(--core-background)" }}>Текущее</span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : null}
+
+              {settingsSection === "security" ? (
+                <div className="rounded-xl border p-3 space-y-3" style={innerCardStyle}>
+                  <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>Двухфакторная защита и события</p>
+                  <div className="flex gap-2 flex-wrap">
+                    <button type="button" className="px-3 py-2 rounded-lg border" style={outlineButtonStyle} onClick={() => void startTwoFactorSetup()}>
+                      <Shield className="w-4 h-4 inline mr-2" />
+                      Начать настройку 2FA
+                    </button>
+                  </div>
+                  {twoFASetup ? (
+                    <div className="space-y-2 rounded-lg border p-3" style={innerCardStyle}>
+                      <p style={{ color: "var(--base-grey-light)", fontSize: 12, wordBreak: "break-all" }}>Секрет: {twoFASetup.secret}</p>
+                      <p style={{ color: "var(--base-grey-light)", fontSize: 12, wordBreak: "break-all" }}>URI: {twoFASetup.provisioningUri}</p>
+                      <input value={twoFAEnableCode} onChange={(event) => setTwoFAEnableCode(event.target.value)} placeholder="Код из приложения" className="w-full rounded-lg border bg-transparent px-3 py-2 outline-none" style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)" }} />
+                      <button type="button" className="px-3 py-2 rounded-lg border" style={outlineButtonStyle} onClick={() => void confirmTwoFactorSetup()}>
+                        Подтвердить 2FA
+                      </button>
+                    </div>
+                  ) : null}
+                  <div className="space-y-2">
+                    <input value={twoFADisableCode} onChange={(event) => setTwoFADisableCode(event.target.value)} placeholder="Код для отключения 2FA" className="w-full rounded-lg border bg-transparent px-3 py-2 outline-none" style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)" }} />
+                    <button type="button" className="px-3 py-2 rounded-lg border" style={outlineButtonStyle} onClick={() => void disableTwoFactor()}>
+                      Отключить 2FA
+                    </button>
+                  </div>
+                  <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>События безопасности</p>
+                  {securityEvents.slice(0, 10).map((event) => (
+                    <div key={event.id as string} className="rounded-lg border px-3 py-2" style={innerCardStyle}>
+                      <p style={{ color: "var(--text-primary)" }}>{event.eventType}</p>
+                      <p style={{ color: "var(--base-grey-light)", fontSize: 12 }}>{new Date(event.createdAt as string).toLocaleString("ru-RU")}</p>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+
+              {settingsSection === "app" ? (
+                <div className="rounded-xl border p-3 space-y-2" style={innerCardStyle}>
+                  <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>Приложение</p>
+                  <p style={{ color: "var(--base-grey-light)" }}>Тема: Тёмная</p>
+                  <p style={{ color: "var(--base-grey-light)" }}>Язык: Русский</p>
+                  <p style={{ color: "var(--base-grey-light)" }}>Уведомления: включены</p>
+                </div>
+              ) : null}
+
+              {settingsSection === "connection" ? (
+                <div className="rounded-xl border p-3 space-y-3" style={innerCardStyle}>
+                  <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>Сервер и подключение</p>
+                  <p style={{ color: "var(--base-grey-light)" }}>Текущий сервер: {server.input}</p>
+                  <div className="flex gap-2 flex-wrap">
+                    <button type="button" className="px-3 py-2 rounded-lg border" style={outlineButtonStyle} onClick={() => void testConnection()}>
+                      Проверить соединение
+                    </button>
+                    <button type="button" className="px-3 py-2 rounded-lg border" style={outlineButtonStyle} onClick={() => void resetServer()}>
+                      Сменить сервер
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </section>
           ) : null}
         </main>
       </div>
@@ -555,353 +1357,507 @@ function App() {
   );
 }
 
-const titleBySection: Record<SidebarSection, string> = {
-  home: "Лента",
-  explore: "Обзор",
-  notifications: "Уведомления",
-  messages: "Сообщения",
-  profile: "Профиль",
-  settings: "Настройки",
-};
-
-function ConnectView({
-  onConnect,
-  error,
-  setError,
-}: {
-  onConnect: (value: string) => Promise<void>;
-  error: string;
-  setError: (value: string) => void;
-}) {
+function ConnectScreen({ onConnect, error }: { onConnect: (input: string) => Promise<void>; error: string }) {
   const [value, setValue] = React.useState("");
-
   return (
-    <ShellCard
-      title="Подключение к серверу"
-      subtitle="Введите домен или IP адрес вашего сервера."
-    >
-      <input
-        className="w-full bg-transparent rounded-lg px-4 py-3 outline-none border"
-        style={{ borderColor: "var(--base-grey-light)", color: "var(--text-primary)" }}
-        placeholder="chat.example.com или 89.169.35.49:8080"
-        value={value}
-        onChange={(event) => setValue(event.target.value)}
-      />
-      {error ? <p style={{ color: "#fca5a5" }}>{error}</p> : null}
-      <button
-        type="button"
-        className="w-full px-4 py-2 rounded-lg border"
-        style={{ borderColor: "var(--accent-brown)", color: "var(--accent-brown)" }}
-        onClick={() => void onConnect(value).catch((connectErr) => setError(extractError(connectErr)))}
-      >
-        Подключиться
-      </button>
-    </ShellCard>
+    <StandaloneCard title="Подключение к серверу" subtitle="Введите домен или IP. Конфигурация подтянется автоматически.">
+      <input value={value} onChange={(e) => setValue(e.target.value)} placeholder="chat.example.com или 89.169.35.49:8080" className="w-full rounded-lg border bg-transparent px-3 py-2 outline-none" style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)" }} />
+      {error ? <InlineInfo tone="error" text={error} /> : null}
+      <button type="button" className="w-full rounded-lg border px-4 py-2" style={outlineButtonStyle} onClick={() => void onConnect(value)}>Подключиться</button>
+    </StandaloneCard>
   );
 }
 
-function AuthView({
-  server,
-  mode,
-  setMode,
-  pending2fa,
-  globalError,
-  onSubmit,
-  onVerify2fa,
-  onChangeServer,
-}: {
+function AuthScreen(props: {
   server: string;
   mode: SessionMode;
-  setMode: (mode: SessionMode) => void;
   pending2fa: LoginTwoFactorRequiredResponse | null;
-  globalError: string;
+  error: string;
+  onModeChange: (mode: SessionMode) => Promise<void>;
   onSubmit: (mode: AuthMode, email: string, password: string) => Promise<void>;
-  onVerify2fa: (code: string) => Promise<void>;
-  onChangeServer: () => void;
+  onVerify: (code: string) => Promise<void>;
+  onChangeServer: () => Promise<void> | void;
 }) {
   const [authMode, setAuthMode] = React.useState<AuthMode>("login");
   const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
   const [code, setCode] = React.useState("");
-  const [error, setError] = React.useState("");
 
   return (
-    <ShellCard title="Вход в веб-версию" subtitle={`Сервер: ${server}`}>
-      {pending2fa ? (
+    <StandaloneCard title="Вход в веб-версию" subtitle={`Сервер: ${props.server}`}>
+      {props.pending2fa ? (
         <>
-          <input
-            className="w-full bg-transparent rounded-lg px-4 py-3 outline-none border"
-            style={{ borderColor: "var(--base-grey-light)", color: "var(--text-primary)" }}
-            placeholder="Код 2FA"
-            value={code}
-            onChange={(event) => setCode(event.target.value)}
-          />
-          <button
-            type="button"
-            className="w-full px-4 py-2 rounded-lg border"
-            style={{ borderColor: "var(--accent-brown)", color: "var(--accent-brown)" }}
-            onClick={() => void onVerify2fa(code).catch((verifyErr) => setError(extractError(verifyErr)))}
-          >
-            Подтвердить
-          </button>
+          <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="Код 2FA" className="w-full rounded-lg border bg-transparent px-3 py-2 outline-none" style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)" }} />
+          <button type="button" className="w-full rounded-lg border px-4 py-2" style={outlineButtonStyle} onClick={() => void props.onVerify(code)}>Подтвердить</button>
         </>
       ) : (
         <>
           <div className="flex gap-2">
-            <button
-              type="button"
-              className="px-3 py-1.5 rounded-lg border"
-              style={{
-                borderColor: "var(--accent-brown)",
-                color: authMode === "login" ? "var(--core-background)" : "var(--accent-brown)",
-                backgroundColor: authMode === "login" ? "var(--accent-brown)" : "transparent",
-              }}
-              onClick={() => setAuthMode("login")}
-            >
-              Вход
-            </button>
-            <button
-              type="button"
-              className="px-3 py-1.5 rounded-lg border"
-              style={{
-                borderColor: "var(--accent-brown)",
-                color: authMode === "register" ? "var(--core-background)" : "var(--accent-brown)",
-                backgroundColor: authMode === "register" ? "var(--accent-brown)" : "transparent",
-              }}
-              onClick={() => setAuthMode("register")}
-            >
-              Регистрация
-            </button>
+            <button type="button" className="px-3 py-1.5 rounded-lg border" style={authMode === "login" ? solidButtonStyle : outlineButtonStyle} onClick={() => setAuthMode("login")}>Вход</button>
+            <button type="button" className="px-3 py-1.5 rounded-lg border" style={authMode === "register" ? solidButtonStyle : outlineButtonStyle} onClick={() => setAuthMode("register")}>Регистрация</button>
           </div>
-
-          <input
-            className="w-full bg-transparent rounded-lg px-4 py-3 outline-none border"
-            style={{ borderColor: "var(--base-grey-light)", color: "var(--text-primary)" }}
-            placeholder="Email"
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-          />
-          <input
-            type="password"
-            className="w-full bg-transparent rounded-lg px-4 py-3 outline-none border"
-            style={{ borderColor: "var(--base-grey-light)", color: "var(--text-primary)" }}
-            placeholder="Пароль"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-          />
-          <select
-            className="w-full bg-transparent rounded-lg px-4 py-2 outline-none border"
-            style={{ borderColor: "var(--base-grey-light)", color: "var(--text-primary)" }}
-            value={mode}
-            onChange={(event) => setMode(event.target.value as SessionMode)}
-          >
-            <option value="ephemeral">Только текущая вкладка</option>
-            <option value="remembered">Запомнить на устройстве</option>
-          </select>
-          <button
-            type="button"
-            className="w-full px-4 py-2 rounded-lg border"
-            style={{ borderColor: "var(--accent-brown)", color: "var(--accent-brown)" }}
-            onClick={() => void onSubmit(authMode, email, password).catch((submitErr) => setError(extractError(submitErr)))}
-          >
-            {authMode === "login" ? "Войти" : "Создать аккаунт"}
-          </button>
+          <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email" className="w-full rounded-lg border bg-transparent px-3 py-2 outline-none" style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)" }} />
+          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Пароль" className="w-full rounded-lg border bg-transparent px-3 py-2 outline-none" style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)" }} />
+          <select value={props.mode} onChange={(e) => void props.onModeChange(e.target.value as SessionMode)} className="w-full rounded-lg border bg-transparent px-3 py-2 outline-none" style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)" }}><option value="ephemeral">Только текущая вкладка</option><option value="remembered">Запомнить на устройстве</option></select>
+          <button type="button" className="w-full rounded-lg border px-4 py-2" style={outlineButtonStyle} onClick={() => void props.onSubmit(authMode, email, password)}>{authMode === "login" ? "Войти" : "Создать аккаунт"}</button>
         </>
       )}
-
-      <button
-        type="button"
-        className="text-sm underline"
-        style={{ color: "var(--base-grey-light)" }}
-        onClick={onChangeServer}
-      >
-        Сменить сервер
-      </button>
-
-      {error ? <p style={{ color: "#fca5a5" }}>{error}</p> : null}
-      {globalError ? <p style={{ color: "#fca5a5" }}>{globalError}</p> : null}
-    </ShellCard>
+      <button type="button" className="text-sm underline" style={{ color: "var(--base-grey-light)" }} onClick={() => void props.onChangeServer()}>Сменить сервер</button>
+      {props.error ? <InlineInfo tone="error" text={props.error} /> : null}
+    </StandaloneCard>
   );
 }
 
-function ShellCard({
-  title,
-  subtitle,
-  children,
+function StandaloneCard({ title, subtitle, children }: { title: string; subtitle: string; children?: React.ReactNode }) {
+  return (
+    <div className="min-h-screen flex items-center justify-center px-4" style={{ backgroundColor: "var(--core-background)" }}>
+      <div className="w-full max-w-[480px] rounded-2xl border p-6 space-y-3" style={cardStyle}><h1 style={{ color: "var(--text-primary)", fontSize: 28, fontWeight: 600 }}>{title}</h1><p style={{ color: "var(--base-grey-light)" }}>{subtitle}</p>{children}</div>
+    </div>
+  );
+}
+
+function MessageRow({
+  message,
+  onResend,
+  onDownloadAttachment,
+  attachmentOpState,
 }: {
-  title: string;
-  subtitle: string;
-  children?: React.ReactNode;
+  message: MessageView;
+  onResend?: () => Promise<void>;
+  onDownloadAttachment: (attachment: MessageAttachmentView) => Promise<void>;
+  attachmentOpState: Record<string, { loading: boolean; error: string }>;
 }) {
   return (
-    <div className="min-h-screen flex items-center justify-center px-6" style={{ backgroundColor: "var(--core-background)" }}>
-      <div
-        className="w-full max-w-[460px] rounded-2xl p-6 border space-y-3"
-        style={{ backgroundColor: "var(--glass-fill-base)", borderColor: "var(--glass-border)" }}
-      >
-        <h1 style={{ color: "var(--text-primary)", fontSize: 28, fontWeight: 600 }}>{title}</h1>
-        <p style={{ color: "var(--base-grey-light)" }}>{subtitle}</p>
-        {children}
+    <div className={`flex ${message.own ? "justify-end" : "justify-start"}`}>
+      <div className="max-w-[78%] rounded-2xl border px-3 py-2 space-y-1" style={message.own ? { ...selectedCardStyle, borderColor: "var(--accent-brown)" } : innerCardStyle}>
+        <p style={{ color: "var(--text-primary)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{linkifyText(message.text)}</p>
+        {message.attachments.length > 0 ? (
+          <div className="space-y-2">
+            {message.attachments.map((attachment) => {
+              const op = attachmentOpState[attachment.id];
+              return (
+                <div key={attachment.id} className="rounded-lg border px-3 py-2 space-y-2" style={innerCardStyle}>
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <p style={{ color: "var(--text-primary)" }}>{attachment.fileName}</p>
+                      <p style={{ color: "var(--base-grey-light)", fontSize: 12 }}>
+                        {attachment.kind === "image" ? "Изображение" : "Файл"} · {formatBytes(attachment.sizeBytes)}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="px-2 py-1 rounded-lg border text-xs"
+                      style={outlineButtonStyle}
+                      onClick={() => void onDownloadAttachment(attachment)}
+                      disabled={op?.loading}
+                    >
+                      <Download className="w-4 h-4 inline mr-1" />
+                      {op?.loading ? "Скачиваем..." : "Скачать"}
+                    </button>
+                  </div>
+                  {op?.error ? <p style={{ color: "#fca5a5", fontSize: 12 }}>{op.error}</p> : null}
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
+        <div className="flex items-center justify-between">
+          <p style={{ color: "var(--base-grey-light)", fontSize: 11 }}>{message.localStatus === "sending" ? "Отправляем..." : message.localStatus === "failed" ? "Ошибка отправки" : message.deliveryState}</p>
+          {message.localStatus === "failed" && onResend ? <button type="button" className="px-2 py-1 rounded-lg border text-xs" style={outlineButtonStyle} onClick={() => void onResend()}>Повторить</button> : null}
+        </div>
       </div>
     </div>
   );
 }
 
-function Info({
-  text,
-  sub,
-  tone = "default",
-}: {
-  text: string;
-  sub?: string;
-  tone?: "default" | "error";
-}) {
+function InlineInfo({ text, tone = "default" }: { text: string; tone?: "default" | "error" | "warning" }) {
+  const color = tone === "error" ? "#fca5a5" : tone === "warning" ? "#fde68a" : "var(--text-primary)";
+  return <div className="rounded-xl border px-3 py-2" style={innerCardStyle}><p style={{ color }}>{text}</p></div>;
+}
+
+function StatusChip({ state }: { state: RuntimeTransportState["status"] }) {
+  const descriptor = state === "connected" ? { label: "Онлайн", icon: Wifi, color: "#86efac" } : state === "degraded" ? { label: "Ограниченно", icon: AlertTriangle, color: "#fde68a" } : state === "connecting" || state === "reconnecting" ? { label: "Подключение", icon: Loader2, color: "#93c5fd" } : { label: "Офлайн", icon: WifiOff, color: "#fca5a5" };
+  const Icon = descriptor.icon;
+  return <span className="inline-flex items-center gap-2 rounded-lg border px-3 py-1 text-sm" style={innerCardStyle}><Icon className={`w-4 h-4 ${state === "connecting" || state === "reconnecting" ? "animate-spin" : ""}`} style={{ color: descriptor.color }} /><span style={{ color: descriptor.color }}>{descriptor.label}</span></span>;
+}
+
+function TransportCard({ state }: { state: RuntimeTransportState }) {
   return (
-    <div
-      className="rounded-2xl p-4 border"
-      style={{ backgroundColor: "var(--glass-fill-base)", borderColor: "var(--glass-border)" }}
-    >
-      <p style={{ color: tone === "error" ? "#fca5a5" : "var(--text-primary)" }}>{text}</p>
-      {sub ? (
-        <p className="text-sm mt-1" style={{ color: "var(--base-grey-light)" }}>
-          {sub}
-        </p>
-      ) : null}
+    <div className="rounded-xl border p-3 space-y-1" style={innerCardStyle}>
+      <p style={{ color: "var(--base-grey-light)", fontSize: 12 }}>Режим: {state.mode}</p>
+      <p style={{ color: "var(--base-grey-light)", fontSize: 12 }}>Статус: {state.status}</p>
+      <p style={{ color: "var(--base-grey-light)", fontSize: 12 }}>Курсор: {state.lastCursor}</p>
+      {state.endpoint ? <p style={{ color: "var(--base-grey-light)", fontSize: 12, wordBreak: "break-all" }}>Endpoint: {state.endpoint}</p> : null}
+      {state.lastError ? <p style={{ color: "#fca5a5", fontSize: 12 }}>{state.lastError}</p> : null}
     </div>
   );
 }
 
-async function submitWebLogin(
-  config: ServerBootstrapConfig,
-  email: string,
-  password: string,
-  mode: SessionMode,
-): Promise<LoginSuccessResponse | LoginTwoFactorRequiredResponse> {
-  const { response, payload } = await requestJSON(config, "/auth/web/login", "POST", {
-    email,
-    password,
-    sessionPersistence: mode,
-  });
+function sectionTitle(section: SidebarSection): string {
+  if (section === "messages") return "Сообщения";
+  if (section === "feed") return "Лента";
+  if (section === "explore") return "Обзор";
+  if (section === "notifications") return "Уведомления";
+  if (section === "profile") return "Профиль";
+  return "Настройки";
+}
 
-  if (response.ok) {
-    return payload as LoginSuccessResponse;
+function sectionSubtitle(section: SidebarSection, server: string, transportState: RuntimeTransportState): string {
+  if (section === "messages") return `Сервер: ${server} · ${transportState.status}`;
+  return `Сервер: ${server}`;
+}
+
+function resolveConversationTitle(summary: ConversationSummaryDTO | null): string {
+  if (!summary) return "Чат";
+  if (summary.title && summary.title.trim()) return summary.title;
+  if (summary.type === "direct") return summary.directPeerEmail || summary.directPeerAccountId || "Личный чат";
+  return "Группа";
+}
+
+async function decodeMessage(message: MessageDTO, session: SessionState, device: DeviceMaterial | null): Promise<MessageView> {
+  const recipient = message.envelope.recipients.find((item) => (item.recipientDeviceId as string) === session.deviceId);
+  let text = "Зашифрованное сообщение";
+  let attachmentSecrets: AttachmentSecret[] = [];
+  if (recipient && device?.privateKey) {
+    try {
+      const decrypted = await webCryptoProvider.decryptMessage({
+        ciphertext: message.envelope.ciphertext,
+        nonce: message.envelope.nonce,
+        wrappedKey: recipient.wrappedKey,
+        recipientPublicKey: device.publicKey,
+        recipientPrivateKey: device.privateKey,
+      });
+      const parsed = parsePlaintextPayload(decrypted);
+      text = parsed.text || "";
+      attachmentSecrets = parsed.attachments;
+    } catch {
+      text = "Не удалось расшифровать сообщение";
+    }
   }
 
-  if (response.status === 401 && isTwoFactorChallengePayload(payload)) {
+  const attachments = mapMessageAttachments(message.envelope.attachments, attachmentSecrets);
+
+  return {
+    id: message.envelope.id as string,
+    conversationId: message.envelope.conversationId as string,
+    senderAccountId: message.envelope.senderAccountId as string,
+    createdAt: message.envelope.createdAt as string,
+    serverSequence: message.envelope.serverSequence,
+    text,
+    attachments,
+    own: (message.envelope.senderAccountId as string) === session.accountId,
+    deliveryState: message.deliveryState,
+  };
+}
+
+function collectRecipients(members: ConversationDTO["members"]): RecipientPublicMaterial[] {
+  const result: RecipientPublicMaterial[] = [];
+  for (const member of members) {
+    if (!member.isActive) continue;
+    for (const device of member.trustedDevices) {
+      result.push({ recipientDeviceId: device.id as string, publicKey: device.publicDeviceMaterial });
+    }
+  }
+  return result;
+}
+
+async function applySyncBatch(
+  batch: SyncBatchDTO,
+  session: SessionState,
+  device: DeviceMaterial | null,
+  activeConversationId: string | null,
+  setMessages: React.Dispatch<React.SetStateAction<Record<string, MessageBucket>>>,
+  setUnread: React.Dispatch<React.SetStateAction<Record<string, number>>>,
+) {
+  const mapped: MessageView[] = [];
+  for (const event of batch.events) {
+    if (event.type === "message" && event.message) {
+      mapped.push(await decodeMessage(event.message, session, device));
+    }
+  }
+
+  if (mapped.length === 0) return;
+
+  setMessages((current) => {
+    const next = { ...current };
+    for (const item of mapped) {
+      const bucket = next[item.conversationId] ?? { loading: false, error: "", items: [] };
+      const filtered = bucket.items.filter((existing) => existing.id !== item.id);
+      next[item.conversationId] = {
+        ...bucket,
+        items: filtered.concat(item).sort((a, b) => a.serverSequence - b.serverSequence),
+      };
+    }
+    if (activeConversationId && next[activeConversationId]) {
+      next[activeConversationId].error = "";
+    }
+    return next;
+  });
+
+  setUnread((current) => {
+    const next = { ...current };
+    for (const item of mapped) {
+      if (item.own) {
+        continue;
+      }
+      if (activeConversationId && item.conversationId === activeConversationId) {
+        next[item.conversationId] = 0;
+        continue;
+      }
+      next[item.conversationId] = (next[item.conversationId] ?? 0) + 1;
+    }
+    return next;
+  });
+}
+
+function parsePlaintextPayload(plaintext: string): { text: string; attachments: AttachmentSecret[] } {
+  try {
+    const parsed = JSON.parse(plaintext) as { text?: unknown; attachments?: unknown };
+    const text = typeof parsed.text === "string" ? parsed.text : "";
+    const attachments = Array.isArray(parsed.attachments)
+      ? parsed.attachments
+          .map((item) => normalizeAttachmentSecret(item))
+          .filter((item): item is AttachmentSecret => item !== null)
+      : [];
+    return { text, attachments };
+  } catch {
+    return { text: plaintext, attachments: [] };
+  }
+}
+
+function normalizeAttachmentSecret(value: unknown): AttachmentSecret | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const source = value as Record<string, unknown>;
+  const attachmentId = String(source.attachmentId ?? "").trim();
+  const fileName = String(source.fileName ?? "").trim();
+  const mimeType = String(source.mimeType ?? "").trim();
+  const nonce = String(source.nonce ?? "").trim();
+  const symmetricKey = String(source.symmetricKey ?? "").trim();
+  const checksumSha256 = String(source.checksumSha256 ?? "").trim();
+  const algorithm = String(source.algorithm ?? "xchacha20poly1305_ietf").trim();
+  const sizeBytesRaw = Number(source.sizeBytes ?? 0);
+  if (!attachmentId || !fileName || !mimeType || !nonce || !symmetricKey) {
+    return null;
+  }
+  return {
+    attachmentId,
+    fileName,
+    mimeType,
+    sizeBytes: Number.isFinite(sizeBytesRaw) ? Math.max(0, Math.floor(sizeBytesRaw)) : 0,
+    symmetricKey,
+    nonce,
+    checksumSha256,
+    algorithm,
+  };
+}
+
+function mapMessageAttachments(
+  attachments: AttachmentMetaDTO[] | undefined,
+  secrets: AttachmentSecret[],
+): MessageAttachmentView[] {
+  if (!attachments || attachments.length === 0) {
+    return [];
+  }
+  const secretByID = new Map(secrets.map((item) => [item.attachmentId, item]));
+  return attachments.map((attachment) => {
+    const id = attachment.id as string;
+    const secret = secretByID.get(id);
     return {
-      challengeId: payload.challengeId,
-      loginToken: payload.loginToken,
-      expiresAt: payload.expiresAt,
+      id,
+      kind: attachment.kind,
+      fileName: attachment.fileName,
+      mimeType: attachment.mimeType,
+      sizeBytes: attachment.sizeBytes,
+      checksumSha256: attachment.checksumSha256,
+      algorithm: attachment.encryption.algorithm,
+      nonce: secret?.nonce ?? attachment.encryption.nonce,
+      symmetricKey: secret?.symmetricKey ?? null,
     };
-  }
-
-  throw new Error(extractApiMessage(payload) ?? "Не удалось выполнить вход.");
-}
-
-async function api<T>(
-  config: ServerBootstrapConfig,
-  path: string,
-  method: "GET" | "POST" | "DELETE",
-  body?: unknown,
-  accessToken?: string,
-): Promise<T> {
-  const { response, payload } = await requestJSON(config, path, method, body, accessToken);
-  if (!response.ok) {
-    throw new Error(extractApiMessage(payload) ?? "Ошибка запроса");
-  }
-  return payload as T;
-}
-
-async function requestJSON(
-  config: ServerBootstrapConfig,
-  path: string,
-  method: "GET" | "POST" | "DELETE",
-  body?: unknown,
-  accessToken?: string,
-): Promise<{ response: Response; payload: unknown }> {
-  const response = await fetch(`${config.apiBaseUrl}${config.apiPrefix}${path}`, {
-    method,
-    headers: {
-      Accept: "application/json",
-      ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
-      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-    },
-    body: body === undefined ? undefined : JSON.stringify(body),
   });
-
-  const payload = await response.json().catch(() => ({}));
-  return { response, payload };
 }
 
-async function loadServerConfig(endpoint: string, origin: string): Promise<ServerBootstrapConfig> {
+async function uploadEncryptedAttachments(
+  api: WebApiClient,
+  accessToken: string,
+  uploads: UploadDraft[],
+): Promise<AttachmentSecret[]> {
+  const result: AttachmentSecret[] = [];
+  for (const item of uploads) {
+    const bytes = new Uint8Array(await item.file.arrayBuffer());
+    const encrypted = await webCryptoProvider.encryptAttachment(bytes);
+    const ciphertextBytes = base64ToBytes(encrypted.ciphertext);
+    const payload: AttachmentUploadRequest = {
+      kind: item.file.type.startsWith("image/") ? "image" : "file",
+      fileName: item.file.name,
+      mimeType: item.file.type || "application/octet-stream",
+      sizeBytes: ciphertextBytes.byteLength,
+      checksumSha256: encrypted.checksumSha256,
+      algorithm: encrypted.algorithm,
+      nonce: encrypted.nonce,
+      ciphertext: encrypted.ciphertext,
+    };
+    const response = await api.uploadAttachment(accessToken, payload);
+    result.push({
+      attachmentId: response.attachment.id as string,
+      fileName: response.attachment.fileName,
+      mimeType: response.attachment.mimeType,
+      sizeBytes: response.attachment.sizeBytes,
+      symmetricKey: encrypted.symmetricKey,
+      nonce: encrypted.nonce,
+      checksumSha256: encrypted.checksumSha256,
+      algorithm: encrypted.algorithm,
+    });
+  }
+  return result;
+}
+
+async function loadProfilePosts(
+  api: WebApiClient,
+  session: SessionState,
+  setPosts: React.Dispatch<React.SetStateAction<CreateSocialPostResponse["post"][]>>,
+  setLoading: React.Dispatch<React.SetStateAction<boolean>>,
+) {
+  setLoading(true);
+  try {
+    const response = await api.listPosts(session.accessToken, { scope: "mine", limit: 30 });
+    setPosts(response.posts);
+  } catch {
+    setPosts([]);
+  } finally {
+    setLoading(false);
+  }
+}
+
+function formatBytes(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return "0 Б";
+  if (value < 1024) return `${value} Б`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} КБ`;
+  return `${(value / (1024 * 1024)).toFixed(1)} МБ`;
+}
+
+function base64ToBytes(value: string): Uint8Array {
+  const binary = atob(value);
+  const result = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    result[index] = binary.charCodeAt(index);
+  }
+  return result;
+}
+
+function linkifyText(text: string): React.ReactNode {
+  const normalized = text || "";
+  const regex = /(https?:\/\/[^\s]+)/gi;
+  const parts = normalized.split(regex);
+  if (parts.length === 1) {
+    return normalized;
+  }
+  return parts.map((part, index) => {
+    if (!/^https?:\/\/[^\s]+$/i.test(part)) {
+      return <React.Fragment key={`${part}-${index}`}>{part}</React.Fragment>;
+    }
+    return (
+      <a
+        key={`${part}-${index}`}
+        href={part}
+        target="_blank"
+        rel="noreferrer noopener"
+        style={{ color: "var(--accent-brown)", textDecoration: "underline" }}
+      >
+        {part}
+      </a>
+    );
+  });
+}
+
+async function loadSummaries(
+  api: WebApiClient,
+  session: SessionState,
+  setSummaries: React.Dispatch<React.SetStateAction<ConversationSummaryDTO[]>>,
+  setLoading: React.Dispatch<React.SetStateAction<boolean>>,
+  setError: React.Dispatch<React.SetStateAction<string>>,
+  setActiveConversation: React.Dispatch<React.SetStateAction<string | null>>,
+) {
+  setLoading(true);
+  setError("");
+  try {
+    const response = await api.listConversationSummaries(session.accessToken, { limit: 100, offset: 0 });
+    setSummaries(response.summaries);
+    if (response.summaries.length > 0) {
+      setActiveConversation((current) => current ?? (response.summaries[0].id as string));
+    }
+  } catch (error) {
+    setSummaries([]);
+    setError(toUserError(error));
+  } finally {
+    setLoading(false);
+  }
+}
+
+async function loadFeed(
+  api: WebApiClient,
+  session: SessionState,
+  setPosts: React.Dispatch<React.SetStateAction<CreateSocialPostResponse["post"][]>>,
+  setLoading: React.Dispatch<React.SetStateAction<boolean>>,
+  setError: React.Dispatch<React.SetStateAction<string>>,
+) {
+  setLoading(true);
+  setError("");
+  try {
+    const response = await api.listPosts(session.accessToken, { limit: 30, mediaType: "all" });
+    setPosts(response.posts);
+  } catch (error) {
+    setPosts([]);
+    setError(toUserError(error));
+  } finally {
+    setLoading(false);
+  }
+}
+
+async function loadSocialNotifications(
+  api: WebApiClient,
+  session: SessionState,
+  setNotifications: React.Dispatch<React.SetStateAction<SocialNotificationsResponse["notifications"]>>,
+) {
+  const response = await api.socialNotifications(session.accessToken, 30).catch(() => ({ notifications: [] }));
+  setNotifications(response.notifications);
+}
+
+async function loadSettingsData(
+  api: WebApiClient,
+  session: SessionState,
+  setSessionInfo: React.Dispatch<React.SetStateAction<AuthSessionResponse | null>>,
+  setDeviceList: React.Dispatch<React.SetStateAction<DeviceListResponse | null>>,
+  setSecurityEvents: React.Dispatch<React.SetStateAction<SecurityEventsResponse["events"]>>,
+) {
+  const [sessionInfo, deviceList, security] = await Promise.all([
+    api.webSession(session.accessToken).catch(() => null),
+    api.listDevices(session.accessToken).catch(() => null),
+    api.listSecurityEvents(session.accessToken, 20).catch(() => ({ events: [] })),
+  ]);
+  setSessionInfo(sessionInfo);
+  setDeviceList(deviceList);
+  setSecurityEvents(security.events);
+}
+
+async function fetchServerConfig(origin: string): Promise<ServerBootstrapConfig> {
+  const endpoint = buildServerConfigEndpoint(origin);
   let response: Response;
   try {
     response = await fetch(endpoint, { method: "GET" });
   } catch {
     throw new Error("Не удалось подключиться к серверу.");
   }
-
-  if (response.status === 404) {
-    return buildFallbackConfig(origin);
-  }
-  if (!response.ok) {
-    throw new Error("Сервер вернул некорректный ответ при загрузке конфигурации.");
-  }
-
+  if (response.status === 404) return buildFallbackConfig(origin);
+  if (!response.ok) throw new Error("Сервер вернул некорректный ответ конфигурации.");
   const payload = await response.json().catch(() => null);
   return parseServerConfigPayload(payload);
 }
 
-async function resolveSessionEmail(
-  config: ServerBootstrapConfig,
-  accessToken: string,
-  fallbackEmail: string,
-): Promise<string> {
-  try {
-    const response = await api<AuthSessionResponse>(config, "/auth/web/session", "GET", undefined, accessToken);
-    return response.email || fallbackEmail;
-  } catch {
-    return fallbackEmail;
-  }
-}
-
-async function tryRestore(config: ServerBootstrapConfig, mode: SessionMode): Promise<SessionState | null> {
-  try {
-    let refreshToken = await vault.get(refreshKey);
-    if (!refreshToken && mode === "remembered") {
-      refreshToken = await stateStore.get(refreshKey);
-    }
-    if (!refreshToken) {
-      return null;
-    }
-
-    const response = await api<LoginSuccessResponse>(config, "/auth/web/refresh", "POST", { refreshToken });
-    const email = await resolveSessionEmail(config, response.tokens.accessToken, response.accountId);
-
-    await vault.set(refreshKey, response.tokens.refreshToken);
-    if (mode === "remembered") {
-      await stateStore.set(refreshKey, response.tokens.refreshToken);
-    } else {
-      await stateStore.delete(refreshKey);
-    }
-
-    return {
-      accessToken: response.tokens.accessToken,
-      refreshToken: response.tokens.refreshToken,
-      accountId: response.accountId,
-      email,
-    };
-  } catch {
-    await clearAuth();
-    return null;
-  }
-}
-
-function loadServer(): SavedServer | null {
-  const raw = localStorage.getItem(serverKey);
-  if (!raw) {
-    return null;
-  }
+function loadSavedServer(): SavedServer | null {
+  const raw = localStorage.getItem(serverStorageKey);
+  if (!raw) return null;
   try {
     return JSON.parse(raw) as SavedServer;
   } catch {
@@ -909,98 +1865,112 @@ function loadServer(): SavedServer | null {
   }
 }
 
-async function clearAuth() {
-  await vault.delete(refreshKey);
-  await stateStore.delete(refreshKey);
+async function restoreSession(config: ServerBootstrapConfig, mode: SessionMode): Promise<SessionState | null> {
+  let refreshToken = await secretVault.get(refreshTokenStorageKey);
+  if (!refreshToken && mode === "remembered") refreshToken = await safeStoreGet(refreshTokenStorageKey);
+  if (!refreshToken) return null;
+
+  const api = new WebApiClient(config);
+  try {
+    const refreshed = await api.refreshWeb(refreshToken);
+    const profile = await api.webSession(refreshed.tokens.accessToken);
+    await secretVault.set(refreshTokenStorageKey, refreshed.tokens.refreshToken);
+    if (mode === "remembered") await safeStoreSet(refreshTokenStorageKey, refreshed.tokens.refreshToken);
+    return {
+      accessToken: refreshed.tokens.accessToken,
+      refreshToken: refreshed.tokens.refreshToken,
+      accountId: refreshed.accountId as string,
+      email: profile.email,
+      deviceId: refreshed.device.id as string,
+    };
+  } catch {
+    await clearAuthState();
+    return null;
+  }
+}
+
+async function clearAuthState() {
+  await secretVault.delete(refreshTokenStorageKey);
+  await safeStoreDelete(refreshTokenStorageKey);
+  await safeStoreDelete(syncCursorStorageKey);
+}
+
+function browserDeviceName(): string {
+  if (typeof navigator === "undefined") return "Web Browser";
+  const userAgent = navigator.userAgent.toLowerCase();
+  if (userAgent.includes("firefox")) return "Firefox Browser";
+  if (userAgent.includes("edg")) return "Edge Browser";
+  if (userAgent.includes("chrome")) return "Chrome Browser";
+  if (userAgent.includes("safari")) return "Safari Browser";
+  return "Web Browser";
 }
 
 function normalizeSessionMode(value: string | null): SessionMode | null {
-  if (value === "ephemeral" || value === "remembered") {
-    return value;
-  }
+  if (value === "ephemeral" || value === "remembered") return value;
   return null;
 }
 
-function sectionFeedVisible(section: SidebarSection): boolean {
-  return section === "home" || section === "explore" || section === "profile";
-}
-
-function isTwoFactorChallengePayload(
-  payload: unknown,
-): payload is LoginTwoFactorRequiredResponse & ApiErrorPayload {
-  if (!payload || typeof payload !== "object") {
-    return false;
-  }
-  const data = payload as Record<string, unknown>;
-  return (
-    typeof data.challengeId === "string" &&
-    typeof data.loginToken === "string" &&
-    typeof data.expiresAt === "string" &&
-    typeof (data.error as Record<string, unknown> | undefined)?.code === "string"
-  );
-}
-
-function extractApiMessage(payload: unknown): string | null {
-  if (!payload || typeof payload !== "object") {
+async function safeStoreGet(key: string): Promise<string | null> {
+  try {
+    return await persistentStore.get(key);
+  } catch {
     return null;
   }
-  const source = payload as ApiErrorPayload;
-  const message = source.error?.message;
-  return typeof message === "string" && message.trim() ? message : null;
 }
 
-function extractError(error: unknown): string {
-  if (!(error instanceof Error)) {
-    return "Произошла ошибка";
+async function safeStoreSet(key: string, value: string): Promise<void> {
+  try {
+    await persistentStore.set(key, value);
+  } catch {
+    // noop
   }
-
-  const message = error.message;
-  if (
-    message.includes("server input is empty") ||
-    message.includes("server input is not a valid url") ||
-    message.includes("server hostname is required")
-  ) {
-    return "Проверьте адрес сервера и повторите попытку.";
-  }
-  if (
-    message.includes("server config response has") ||
-    message.includes("api_base") ||
-    message.includes("ws_url") ||
-    message.includes("api_prefix")
-  ) {
-    return "Сервер вернул некорректную конфигурацию.";
-  }
-  if (
-    message.includes("invalid email or password") ||
-    message.includes("invalid credentials")
-  ) {
-    return "Неверный email или пароль.";
-  }
-  if (message.includes("account already exists")) {
-    return "Аккаунт с таким email уже существует.";
-  }
-  if (message.includes("two-factor verification is required")) {
-    return "Нужен код двухфакторной аутентификации.";
-  }
-  if (message.includes("post content is required")) {
-    return "Введите текст поста.";
-  }
-  if (message.includes("post content is too long")) {
-    return "Текст поста слишком длинный.";
-  }
-  if (message.includes("media url is invalid") || message.includes("media url must use http/https")) {
-    return "Проверьте ссылку на медиа. Нужен корректный URL http/https.";
-  }
-  if (message.includes("cannot delete social post authored by another account")) {
-    return "Можно удалить только свой пост.";
-  }
-  if (message.includes("social post not found")) {
-    return "Пост не найден.";
-  }
-  if (message.includes("unauthorized")) {
-    return "Сессия истекла. Войдите снова.";
-  }
-  return message;
 }
+
+async function safeStoreDelete(key: string): Promise<void> {
+  try {
+    await persistentStore.delete(key);
+  } catch {
+    // noop
+  }
+}
+
+function toUserError(error: unknown): string {
+  if (error instanceof ApiClientError) {
+    if (error.code === "invalid_credentials") return "Неверный email или пароль.";
+    if (error.code === "two_fa_required") return "Нужен код двухфакторной аутентификации.";
+    if (error.code === "account_already_exists") return "Аккаунт уже существует.";
+    return error.message || "Ошибка запроса.";
+  }
+  if (error instanceof Error) return error.message || "Произошла ошибка.";
+  return "Произошла ошибка.";
+}
+
+const cardStyle: React.CSSProperties = {
+  backgroundColor: "var(--glass-fill-base)",
+  borderColor: "var(--glass-border)",
+  backdropFilter: "blur(20px)",
+};
+
+const innerCardStyle: React.CSSProperties = {
+  backgroundColor: "rgba(20, 20, 20, 0.52)",
+  borderColor: "var(--glass-border)",
+};
+
+const selectedCardStyle: React.CSSProperties = {
+  backgroundColor: "rgba(60, 70, 92, 0.42)",
+  borderColor: "var(--accent-brown)",
+};
+
+const outlineButtonStyle: React.CSSProperties = {
+  borderColor: "var(--accent-brown)",
+  color: "var(--accent-brown)",
+};
+
+const solidButtonStyle: React.CSSProperties = {
+  borderColor: "var(--accent-brown)",
+  backgroundColor: "var(--accent-brown)",
+  color: "var(--core-background)",
+};
 
 export default App;
+

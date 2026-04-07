@@ -1,4 +1,4 @@
-import { Image, Smile, Video } from "lucide-react";
+﻿import { Image, Smile, Video } from "lucide-react";
 import * as React from "react";
 
 export type ComposerMediaType = "image" | "video";
@@ -15,7 +15,7 @@ interface CreatePostProps {
   disabled?: boolean;
 }
 
-const moodOptions = ["😊 Радость", "🔥 Вдохновение", "🌙 Спокойствие", "💡 Идея", "🎯 Фокус"];
+const moodOptions = ["Радость", "Вдохновение", "Спокойствие", "Идея", "Фокус"];
 
 export function CreatePost({ onSubmit, disabled = false }: CreatePostProps) {
   const [postText, setPostText] = React.useState("");
@@ -66,19 +66,13 @@ export function CreatePost({ onSubmit, disabled = false }: CreatePostProps) {
       <textarea
         value={postText}
         onChange={(event) => setPostText(event.target.value)}
-        placeholder="Поделитесь новостями..."
+        placeholder="Поделитесь новостью..."
         className="w-full bg-transparent rounded-lg px-4 py-3 resize-none outline-none transition-colors border"
         style={{
           borderColor: "var(--base-grey-light)",
           color: "var(--text-primary)",
         }}
         rows={3}
-        onFocus={(event) => {
-          event.target.style.borderColor = "var(--accent-brown)";
-        }}
-        onBlur={(event) => {
-          event.target.style.borderColor = "var(--base-grey-light)";
-        }}
       />
 
       <div className="flex flex-wrap gap-3 mt-4">

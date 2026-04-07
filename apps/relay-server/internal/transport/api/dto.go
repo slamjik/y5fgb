@@ -36,14 +36,28 @@ type loginRequest struct {
 }
 
 type webLoginRequest struct {
-	Email              string `json:"email"`
-	Password           string `json:"password"`
+	Email    string `json:"email"`
+	Password string `json:"password"`
+	Device   struct {
+		DeviceID             string `json:"deviceId,omitempty"`
+		Name                 string `json:"name"`
+		Platform             string `json:"platform"`
+		PublicDeviceMaterial string `json:"publicDeviceMaterial"`
+		Fingerprint          string `json:"fingerprint,omitempty"`
+	} `json:"device"`
 	SessionPersistence string `json:"sessionPersistence,omitempty"`
 }
 
 type webRegisterRequest struct {
-	Email              string `json:"email"`
-	Password           string `json:"password"`
+	Email    string `json:"email"`
+	Password string `json:"password"`
+	Device   struct {
+		DeviceID             string `json:"deviceId,omitempty"`
+		Name                 string `json:"name"`
+		Platform             string `json:"platform"`
+		PublicDeviceMaterial string `json:"publicDeviceMaterial"`
+		Fingerprint          string `json:"fingerprint,omitempty"`
+	} `json:"device"`
 	SessionPersistence string `json:"sessionPersistence,omitempty"`
 }
 
@@ -54,9 +68,16 @@ type twoFALoginVerifyRequest struct {
 }
 
 type webTwoFALoginVerifyRequest struct {
-	ChallengeID        string `json:"challengeId"`
-	LoginToken         string `json:"loginToken"`
-	Code               string `json:"code"`
+	ChallengeID string `json:"challengeId"`
+	LoginToken  string `json:"loginToken"`
+	Code        string `json:"code"`
+	Device      struct {
+		DeviceID             string `json:"deviceId,omitempty"`
+		Name                 string `json:"name,omitempty"`
+		Platform             string `json:"platform,omitempty"`
+		PublicDeviceMaterial string `json:"publicDeviceMaterial,omitempty"`
+		Fingerprint          string `json:"fingerprint,omitempty"`
+	} `json:"device"`
 	SessionPersistence string `json:"sessionPersistence,omitempty"`
 }
 
@@ -263,6 +284,33 @@ type conversationDTO struct {
 	DisappearingPolicy disappearingPolicyDTO   `json:"disappearingPolicy"`
 	Members            []conversationMemberDTO `json:"members"`
 	LastServerSequence int64                   `json:"lastServerSequence"`
+}
+
+type conversationSummaryLastMessageDTO struct {
+	ID              string `json:"id"`
+	SenderAccountID string `json:"senderAccountId"`
+	SenderDeviceID  string `json:"senderDeviceId"`
+	CreatedAt       string `json:"createdAt"`
+	ServerSequence  int64  `json:"serverSequence"`
+	DeliveryState   string `json:"deliveryState"`
+}
+
+type conversationSummaryDTO struct {
+	ID                  string                             `json:"id"`
+	Type                string                             `json:"type"`
+	Title               *string                            `json:"title"`
+	UpdatedAt           string                             `json:"updatedAt"`
+	LastServerSequence  int64                              `json:"lastServerSequence"`
+	MembersCount        int                                `json:"membersCount"`
+	DirectPeerAccountID *string                            `json:"directPeerAccountId"`
+	DirectPeerEmail     *string                            `json:"directPeerEmail"`
+	LastMessage         *conversationSummaryLastMessageDTO `json:"lastMessage"`
+}
+
+type userSearchItemDTO struct {
+	AccountID string `json:"accountId"`
+	Email     string `json:"email"`
+	CreatedAt string `json:"createdAt"`
 }
 
 type disappearingPolicyDTO struct {
@@ -558,6 +606,39 @@ func mapConversation(payload messaging.ConversationWithMembers) conversationDTO 
 		},
 		Members:            members,
 		LastServerSequence: payload.Conversation.LastServerSequence,
+	}
+}
+
+func mapConversationSummary(payload domain.ConversationSummary) conversationSummaryDTO {
+	var lastMessage *conversationSummaryLastMessageDTO
+	if payload.LastMessage != nil {
+		lastMessage = &conversationSummaryLastMessageDTO{
+			ID:              payload.LastMessage.ID,
+			SenderAccountID: payload.LastMessage.SenderAccountID,
+			SenderDeviceID:  payload.LastMessage.SenderDeviceID,
+			CreatedAt:       payload.LastMessage.CreatedAt.UTC().Format(time.RFC3339),
+			ServerSequence:  payload.LastMessage.ServerSequence,
+			DeliveryState:   string(payload.LastMessage.DeliveryState),
+		}
+	}
+	return conversationSummaryDTO{
+		ID:                  payload.Conversation.ID,
+		Type:                string(payload.Conversation.Type),
+		Title:               payload.Conversation.Title,
+		UpdatedAt:           payload.Conversation.UpdatedAt.UTC().Format(time.RFC3339),
+		LastServerSequence:  payload.Conversation.LastServerSequence,
+		MembersCount:        payload.MembersCount,
+		DirectPeerAccountID: payload.DirectPeerAccountID,
+		DirectPeerEmail:     payload.DirectPeerEmail,
+		LastMessage:         lastMessage,
+	}
+}
+
+func mapUserSearchItem(item domain.UserSearchItem) userSearchItemDTO {
+	return userSearchItemDTO{
+		AccountID: item.AccountID,
+		Email:     item.Email,
+		CreatedAt: item.CreatedAt.UTC().Format(time.RFC3339),
 	}
 }
 
