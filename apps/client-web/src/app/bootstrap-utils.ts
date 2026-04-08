@@ -11,12 +11,14 @@ import {
 } from "@project/platform-adapters";
 
 import { ApiClientError, WebApiClient } from "../shared/api/client";
-import type { SavedServer, SessionMode, SessionState } from "./types";
+import type { DeviceMaterial, SavedServer, SessionMode, SessionState } from "./types";
 
 export const serverStorageKey = "secure-messenger-web-server-v3";
 export const refreshTokenStorageKey = "secure-messenger-web-refresh-token";
 export const sessionModeStorageKey = "secure-messenger-web-session-mode";
 export const syncCursorStorageKey = "secure-messenger-web-sync-cursor";
+const deviceMaterialStorageKey = "secure-messenger-web-device-material-v1";
+const deviceMaterialSessionKey = "secure-messenger-web-device-material-session-v1";
 
 const safeStoreTimeoutMs = 1500;
 const serverConfigFetchTimeoutMs = 8000;
@@ -24,6 +26,14 @@ const serverConfigFetchTimeoutMs = 8000;
 export const secretVault = createMemorySecretVault();
 export const persistentStore = createIndexedDbStateStore();
 export const runtimePlatform = createRuntimePlatformAdapter();
+
+type StoredDeviceMaterial = {
+  publicKey: string;
+  privateKey: string;
+  name: string;
+  platform: string;
+  deviceId?: string;
+};
 
 export async function fetchServerConfig(origin: string): Promise<ServerBootstrapConfig> {
   const endpoint = buildServerConfigEndpoint(origin);
@@ -91,6 +101,44 @@ export async function clearAuthState() {
   await secretVault.delete(refreshTokenStorageKey);
   await safeStoreDelete(refreshTokenStorageKey);
   await safeStoreDelete(syncCursorStorageKey);
+}
+
+export async function loadPersistedDeviceMaterial(expectedDeviceId?: string): Promise<DeviceMaterial | null> {
+  const fromSession = parseStoredDeviceMaterial(readSessionStorage(deviceMaterialSessionKey), expectedDeviceId);
+  if (fromSession) {
+    return fromSession;
+  }
+  const fromPersistent = parseStoredDeviceMaterial(await safeStoreGet(deviceMaterialStorageKey), expectedDeviceId);
+  if (fromPersistent) {
+    return fromPersistent;
+  }
+  return null;
+}
+
+export async function savePersistedDeviceMaterial(
+  device: DeviceMaterial,
+  mode: SessionMode,
+  deviceId?: string,
+): Promise<void> {
+  const payload: StoredDeviceMaterial = {
+    publicKey: device.publicKey,
+    privateKey: device.privateKey,
+    name: device.name,
+    platform: device.platform,
+    ...(deviceId ? { deviceId } : {}),
+  };
+  const serialized = JSON.stringify(payload);
+  writeSessionStorage(deviceMaterialSessionKey, serialized);
+  if (mode === "remembered") {
+    await safeStoreSet(deviceMaterialStorageKey, serialized);
+  } else {
+    await safeStoreDelete(deviceMaterialStorageKey);
+  }
+}
+
+export async function clearPersistedDeviceMaterial(): Promise<void> {
+  removeSessionStorage(deviceMaterialSessionKey);
+  await safeStoreDelete(deviceMaterialStorageKey);
 }
 
 export function browserDeviceName(): string {
@@ -174,3 +222,56 @@ export function toUserError(error: unknown): string {
   return "Произошла ошибка.";
 }
 
+function parseStoredDeviceMaterial(raw: string | null, expectedDeviceId?: string): DeviceMaterial | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<StoredDeviceMaterial>;
+    if (
+      !parsed ||
+      typeof parsed.publicKey !== "string" ||
+      typeof parsed.privateKey !== "string" ||
+      typeof parsed.name !== "string" ||
+      typeof parsed.platform !== "string"
+    ) {
+      return null;
+    }
+    if (expectedDeviceId && parsed.deviceId && parsed.deviceId !== expectedDeviceId) {
+      return null;
+    }
+    return {
+      publicKey: parsed.publicKey,
+      privateKey: parsed.privateKey,
+      name: parsed.name,
+      platform: parsed.platform,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function readSessionStorage(key: string): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.sessionStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeSessionStorage(key: string, value: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(key, value);
+  } catch {
+    // noop
+  }
+}
+
+function removeSessionStorage(key: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.removeItem(key);
+  } catch {
+    // noop
+  }
+}

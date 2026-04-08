@@ -48,13 +48,16 @@ import { cardStyle, innerCardStyle, outlineButtonStyle } from "./styles";
 import {
   browserDeviceName,
   clearAuthState,
+  clearPersistedDeviceMaterial,
   detectDefaultServerInput,
   fetchServerConfig,
+  loadPersistedDeviceMaterial,
   loadSavedServer,
   normalizeSessionMode,
   refreshTokenStorageKey,
   restoreSession,
   runtimePlatform,
+  savePersistedDeviceMaterial,
   safeStoreDelete,
   safeStoreGet,
   safeStoreSet,
@@ -299,6 +302,7 @@ function App() {
 
     let disposed = false;
     const startRuntime = async () => {
+      await ensureDeviceMaterial(session.deviceId);
       const cursorRaw = await safeStoreGet(syncCursorStorageKey);
       const initialCursor = cursorRaw ? Math.max(0, Number(cursorRaw)) : 0;
       const runtime = new WebMessagingRuntime(api, session.accessToken, {
@@ -337,7 +341,7 @@ function App() {
       runtimeRef.current?.stop();
       runtimeRef.current = null;
     };
-  }, [api, session?.accessToken, activeConversationId]);
+  }, [api, session?.accessToken, session?.deviceId, activeConversationId, ensureDeviceMaterial]);
 
   React.useEffect(() => {
     if (!activeConversationId) return;
@@ -352,8 +356,16 @@ function App() {
     }
   }, [activeConversationId, messagesByConversation]);
 
-  const ensureDeviceMaterial = React.useCallback(async (): Promise<DeviceMaterial> => {
+  async function ensureDeviceMaterial(expectedDeviceId?: string): Promise<DeviceMaterial> {
     if (deviceMaterialRef.current) return deviceMaterialRef.current;
+    const restored = await loadPersistedDeviceMaterial(expectedDeviceId);
+    if (restored) {
+      deviceMaterialRef.current = restored;
+      return restored;
+    }
+    if (expectedDeviceId) {
+      throw new Error("Локальный ключ устройства не найден. Выйдите и войдите снова.");
+    }
     const pair = await webCryptoProvider.generateIdentityKeyPair();
     const device: DeviceMaterial = {
       name: browserDeviceName(),
@@ -362,12 +374,14 @@ function App() {
       privateKey: pair.privateKey,
     };
     deviceMaterialRef.current = device;
+    await savePersistedDeviceMaterial(device, sessionMode, expectedDeviceId);
     return device;
-  }, []);
+  }
 
-  const resetDeviceMaterial = React.useCallback(() => {
+  async function resetDeviceMaterial(): Promise<void> {
     deviceMaterialRef.current = null;
-  }, []);
+    await clearPersistedDeviceMaterial();
+  }
 
   const clearSignedInState = React.useCallback(() => {
     runtimeRef.current?.stop();
@@ -393,6 +407,21 @@ function App() {
     setSection("messages");
   }, []);
 
+  React.useEffect(() => {
+    if (!session) return;
+    let cancelled = false;
+    void ensureDeviceMaterial(session.deviceId).then((device) => {
+      if (!cancelled) {
+        deviceMaterialRef.current = device;
+      }
+    }).catch(() => {
+      // noop
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.deviceId, ensureDeviceMaterial]);
+
   const applySession = React.useCallback(
     async (response: LoginSuccessResponse, fallbackEmail?: string) => {
       if (!api) return;
@@ -412,6 +441,9 @@ function App() {
         await safeStoreDelete(refreshTokenStorageKey);
       }
       await safeStoreSet(sessionModeStorageKey, sessionMode);
+      if (deviceMaterialRef.current) {
+        await savePersistedDeviceMaterial(deviceMaterialRef.current, sessionMode, next.deviceId);
+      }
 
       setSession(next);
       setPending2fa(null);
@@ -439,6 +471,9 @@ function App() {
       await secretVault.set(refreshTokenStorageKey, next.refreshToken);
       if (sessionMode === "remembered") {
         await safeStoreSet(refreshTokenStorageKey, next.refreshToken);
+      }
+      if (deviceMaterialRef.current) {
+        await savePersistedDeviceMaterial(deviceMaterialRef.current, sessionMode, next.deviceId);
       }
       setSession(next);
       return true;
@@ -493,7 +528,7 @@ function App() {
       await execute();
     } catch (error) {
       if (error instanceof ApiClientError && error.code === "fingerprint_mismatch") {
-        resetDeviceMaterial();
+        await resetDeviceMaterial();
         setPending2fa(null);
         await execute();
         return;
@@ -504,11 +539,16 @@ function App() {
 
   const submit2fa = async (code: string) => {
     if (!api || !pending2fa) throw new Error("Челлендж 2FA не найден.");
+    const device = await ensureDeviceMaterial();
     const response = await api.verifyWeb2FA({
       challengeId: pending2fa.challengeId,
       loginToken: pending2fa.loginToken,
       code,
-      device: undefined,
+      device: {
+        name: device.name,
+        platform: device.platform,
+        publicDeviceMaterial: device.publicKey,
+      },
       sessionPersistence: sessionMode,
     });
     await applySession(response);
@@ -543,9 +583,10 @@ function App() {
         [conversationId]: { loading: true, error: "", items: [] },
       }));
       try {
+        const device = await ensureDeviceMaterial(session.deviceId);
         const history = await api.listConversationMessages(session.accessToken, conversationId, { limit: 60 });
         const decoded = await Promise.all(
-          history.messages.map((message) => decodeMessage(message, session, deviceMaterialRef.current)),
+          history.messages.map((message) => decodeMessage(message, session, device)),
         );
         setMessagesByConversation((prev) => ({
           ...prev,
@@ -1137,9 +1178,11 @@ function App() {
 
   const resetServer = async () => {
     await clearAuthState();
+    await clearPersistedDeviceMaterial();
     localStorage.removeItem(serverStorageKey);
     runtimeRef.current?.stop();
     runtimeRef.current = null;
+    deviceMaterialRef.current = null;
     setServer(null);
     setSession(null);
     setPending2fa(null);
