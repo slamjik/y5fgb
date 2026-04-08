@@ -62,7 +62,7 @@ type ApiErrorPayload = {
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 12000;
 const LONG_POLL_GRACE_MS = 8000;
-const ATTACHMENT_TIMEOUT_MS = 120000;
+const LARGE_TRANSFER_TIMEOUT_MS = 300000;
 
 export class ApiClientError extends Error {
   readonly code: string;
@@ -273,7 +273,7 @@ export class WebApiClient {
   }
 
   async uploadAttachment(accessToken: string, body: AttachmentUploadRequest): Promise<AttachmentUploadResponse> {
-    return this.request<AttachmentUploadResponse>("/attachments/upload", "POST", body, accessToken, ATTACHMENT_TIMEOUT_MS);
+    return this.request<AttachmentUploadResponse>("/attachments/upload", "POST", body, accessToken, LARGE_TRANSFER_TIMEOUT_MS);
   }
 
   async downloadAttachment(accessToken: string, attachmentId: string): Promise<AttachmentDownloadResponse> {
@@ -282,7 +282,7 @@ export class WebApiClient {
       "GET",
       undefined,
       accessToken,
-      ATTACHMENT_TIMEOUT_MS,
+      LARGE_TRANSFER_TIMEOUT_MS,
     );
   }
 
@@ -453,7 +453,7 @@ export class WebApiClient {
     if (input.visibility) {
       form.set("visibility", input.visibility);
     }
-    return this.requestForm<MediaUploadResponse>("/media/upload", "POST", form, accessToken, ATTACHMENT_TIMEOUT_MS);
+    return this.requestForm<MediaUploadResponse>("/media/upload", "POST", form, accessToken, LARGE_TRANSFER_TIMEOUT_MS);
   }
 
   async getMedia(accessToken: string, mediaId: string): Promise<MediaMetadataResponse> {

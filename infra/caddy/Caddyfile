@@ -27,9 +27,9 @@
     reverse_proxy @api relay-server:8080 {
         transport http {
             dial_timeout 10s
-            response_header_timeout 90s
-            read_timeout 90s
-            write_timeout 90s
+            response_header_timeout 300s
+            read_timeout 300s
+            write_timeout 300s
         }
     }
 

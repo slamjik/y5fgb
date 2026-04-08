@@ -13,8 +13,8 @@ const (
 	defaultHTTPHost              = "0.0.0.0"
 	defaultHTTPPort              = 8080
 	defaultLogLevel              = "info"
-	defaultReadTimeoutSec        = 10
-	defaultWriteTimeoutSec       = 10
+	defaultReadTimeoutSec        = 120
+	defaultWriteTimeoutSec       = 120
 	defaultIdleTimeoutSec        = 60
 	defaultShutdownSec           = 10
 	defaultAccessTokenTTLMin     = 15
