@@ -21,6 +21,8 @@
     "test:server": "cd apps/relay-server && go test ./...",
     "test:plugins:unit": "node ./scripts/plugin-unit-checks.mjs",
     "test:smoke:v4": "node ./scripts/smoke-v4.mjs",
+    "test:e2e:smoke": "playwright test --config playwright.config.ts",
+    "test:e2e:smoke:headed": "playwright test --config playwright.config.ts --headed",
     "test:release:rc": "node ./scripts/release-sanity.mjs",
     "db:migrate:up": "cd apps/relay-server && go run ./cmd/migrate -mode up",
     "db:migrate:down": "cd apps/relay-server && go run ./cmd/migrate -mode down",
@@ -41,5 +43,8 @@
     "install:server:ps1": "powershell -ExecutionPolicy Bypass -File ./scripts/install.ps1",
     "deploy:prod:sh": "bash ./scripts/deploy-prod.sh",
     "deploy:prod:ps1": "powershell -ExecutionPolicy Bypass -File ./scripts/deploy-prod.ps1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.59.1"
   }
 }

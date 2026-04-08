@@ -88,9 +88,24 @@ export async function loadNotifications(
   api: WebApiClient,
   session: SessionState,
   setNotifications: React.Dispatch<React.SetStateAction<NotificationsResponse["notifications"]>>,
+  setUnreadTotal: React.Dispatch<React.SetStateAction<number>>,
+  setLoading: React.Dispatch<React.SetStateAction<boolean>>,
+  setError: React.Dispatch<React.SetStateAction<string>>,
+  toUserError: (error: unknown) => string,
 ) {
-  const response = await api.listNotifications(session.accessToken, 50).catch(() => ({ notifications: [], total: 0 }));
-  setNotifications(response.notifications);
+  setLoading(true);
+  setError("");
+  try {
+    const response = await api.listNotifications(session.accessToken, 50);
+    setNotifications(response.notifications);
+    setUnreadTotal(response.unreadTotal ?? 0);
+  } catch (error) {
+    setNotifications([]);
+    setUnreadTotal(0);
+    setError(toUserError(error));
+  } finally {
+    setLoading(false);
+  }
 }
 
 export async function loadProfileState(

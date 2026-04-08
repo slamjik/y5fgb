@@ -190,3 +190,33 @@
     line-height: 1.5;
   }
 }
+
+:root {
+  --motion-fast: 140ms;
+  --motion-medium: 220ms;
+  --motion-spring: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes app-section-fade {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.app-section-transition {
+  animation: app-section-fade var(--motion-medium) var(--motion-spring);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

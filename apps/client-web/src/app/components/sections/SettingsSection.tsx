@@ -1,4 +1,4 @@
-import type {
+﻿import type {
   AuthSessionResponse,
   DeviceListResponse,
   PrivacyResponse,
@@ -8,10 +8,10 @@ import type {
 import { Shield } from "lucide-react";
 import * as React from "react";
 
-import type { SessionMode, SettingsSection as SettingsSectionKey } from "../../types";
 import { cardStyle, innerCardStyle, outlineButtonStyle, solidButtonStyle } from "../../styles";
-import { InlineInfo } from "../common/StatusInfo";
+import type { SessionMode, SettingsSection as SettingsSectionKey } from "../../types";
 import { renderVisibilityScope } from "../../view-utils";
+import { InlineInfo } from "../common/StatusInfo";
 
 type SettingsSectionProps = {
   settingsSection: SettingsSectionKey;
@@ -37,6 +37,9 @@ type SettingsSectionProps = {
   onSavePrivacy: () => void;
   serverInput: string;
   onTestConnection: () => void;
+  browserNotificationsEnabled: boolean;
+  browserNotificationsPermission: NotificationPermission;
+  onBrowserNotificationsChange: (enabled: boolean) => void;
   onResetServer: () => void;
 };
 
@@ -64,6 +67,9 @@ export function SettingsSection({
   onSavePrivacy,
   serverInput,
   onTestConnection,
+  browserNotificationsEnabled,
+  browserNotificationsPermission,
+  onBrowserNotificationsChange,
   onResetServer,
 }: SettingsSectionProps) {
   return (
@@ -101,10 +107,22 @@ export function SettingsSection({
             Режим сессии: {sessionMode === "remembered" ? "Запомнить" : "Только вкладка"}
           </p>
           <div className="flex gap-2 flex-wrap">
-            <button type="button" className="px-4 py-2 rounded-lg border" style={outlineButtonStyle} onClick={() => onLogout(false)}>
+            <button
+              type="button"
+              data-testid="settings-logout"
+              className="px-4 py-2 rounded-lg border"
+              style={outlineButtonStyle}
+              onClick={() => onLogout(false)}
+            >
               Выйти
             </button>
-            <button type="button" className="px-4 py-2 rounded-lg border" style={outlineButtonStyle} onClick={() => onLogout(true)}>
+            <button
+              type="button"
+              data-testid="settings-logout-all"
+              className="px-4 py-2 rounded-lg border"
+              style={outlineButtonStyle}
+              onClick={() => onLogout(true)}
+            >
               Выйти везде
             </button>
           </div>
@@ -118,8 +136,7 @@ export function SettingsSection({
           <p style={{ color: "var(--base-grey-light)" }}>Класс: {sessionInfo?.session.sessionClass ?? "browser"}</p>
           <p style={{ color: "var(--base-grey-light)" }}>Постоянная: {sessionInfo?.session.persistent ? "Да" : "Нет"}</p>
           <p style={{ color: "var(--base-grey-light)" }}>
-            Создана:{" "}
-            {sessionInfo?.session.createdAt ? new Date(sessionInfo.session.createdAt as string).toLocaleString("ru-RU") : "-"}
+            Создана: {sessionInfo?.session.createdAt ? new Date(sessionInfo.session.createdAt as string).toLocaleString("ru-RU") : "-"}
           </p>
         </div>
       ) : null}
@@ -139,19 +156,11 @@ export function SettingsSection({
                   </p>
                 </div>
                 {!isCurrent ? (
-                  <button
-                    type="button"
-                    className="px-3 py-1.5 rounded-lg border text-sm"
-                    style={outlineButtonStyle}
-                    onClick={() => onRevokeDevice(id)}
-                  >
+                  <button type="button" className="px-3 py-1.5 rounded-lg border text-sm" style={outlineButtonStyle} onClick={() => onRevokeDevice(id)}>
                     Отозвать
                   </button>
                 ) : (
-                  <span
-                    className="text-xs px-2 py-1 rounded"
-                    style={{ backgroundColor: "var(--accent-brown)", color: "var(--core-background)" }}
-                  >
+                  <span className="text-xs px-2 py-1 rounded" style={{ backgroundColor: "var(--accent-brown)", color: "var(--core-background)" }}>
                     Текущее
                   </span>
                 )}
@@ -163,13 +172,11 @@ export function SettingsSection({
 
       {settingsSection === "security" ? (
         <div className="rounded-xl border p-3 space-y-3" style={innerCardStyle}>
-          <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>Двухфакторная защита и события</p>
-          <div className="flex gap-2 flex-wrap">
-            <button type="button" className="px-3 py-2 rounded-lg border" style={outlineButtonStyle} onClick={onStartTwoFactorSetup}>
-              <Shield className="w-4 h-4 inline mr-2" />
-              Начать настройку 2FA
-            </button>
-          </div>
+          <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>2FA и события безопасности</p>
+          <button type="button" className="px-3 py-2 rounded-lg border" style={outlineButtonStyle} onClick={onStartTwoFactorSetup}>
+            <Shield className="w-4 h-4 inline mr-2" />
+            Начать настройку 2FA
+          </button>
           {twoFASetup ? (
             <div className="space-y-2 rounded-lg border p-3" style={innerCardStyle}>
               <p style={{ color: "var(--base-grey-light)", fontSize: 12, wordBreak: "break-all" }}>Секрет: {twoFASetup.secret}</p>
@@ -200,7 +207,7 @@ export function SettingsSection({
               Отключить 2FA
             </button>
           </div>
-          <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>События безопасности</p>
+          <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>События</p>
           {securityEvents.slice(0, 10).map((event) => (
             <div key={event.id as string} className="rounded-lg border px-3 py-2" style={innerCardStyle}>
               <p style={{ color: "var(--text-primary)" }}>{event.eventType}</p>
@@ -220,8 +227,7 @@ export function SettingsSection({
           ) : (
             <>
               <p style={{ color: "var(--base-grey-light)", fontSize: 12 }}>
-                Профиль: {renderVisibilityScope(privacy.profileVisibility)} · Публикации:{" "}
-                {renderVisibilityScope(privacy.postsVisibility)} · Фото: {renderVisibilityScope(privacy.photosVisibility)}
+                Профиль: {renderVisibilityScope(privacy.profileVisibility)} · Публикации: {renderVisibilityScope(privacy.postsVisibility)} · Фото: {renderVisibilityScope(privacy.photosVisibility)}
               </p>
               <div className="grid gap-2 md:grid-cols-2">
                 <select
@@ -266,9 +272,21 @@ export function SettingsSection({
       {settingsSection === "app" ? (
         <div className="rounded-xl border p-3 space-y-2" style={innerCardStyle}>
           <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>Приложение</p>
-          <p style={{ color: "var(--base-grey-light)" }}>Тема: Тёмная</p>
+          <p style={{ color: "var(--base-grey-light)" }}>Тема: Темная</p>
           <p style={{ color: "var(--base-grey-light)" }}>Язык: Русский</p>
-          <p style={{ color: "var(--base-grey-light)" }}>Уведомления: включены</p>
+          <p style={{ color: "var(--base-grey-light)" }}>In-app уведомления: включены</p>
+          <p style={{ color: "var(--base-grey-light)" }}>
+            Browser notifications: {browserNotificationsEnabled ? "включены" : "выключены"} ({browserNotificationsPermission})
+          </p>
+          <button
+            type="button"
+            data-testid="settings-browser-notifications-toggle"
+            className="px-3 py-2 rounded-lg border"
+            style={outlineButtonStyle}
+            onClick={() => onBrowserNotificationsChange(!browserNotificationsEnabled)}
+          >
+            {browserNotificationsEnabled ? "Отключить browser notifications" : "Включить browser notifications"}
+          </button>
         </div>
       ) : null}
 

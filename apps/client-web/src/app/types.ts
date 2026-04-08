@@ -73,7 +73,10 @@ export type MessageView = {
 
 export type MessageBucket = {
   loading: boolean;
+  loadingMore?: boolean;
   error: string;
+  hasMore?: boolean;
+  nextCursor?: number;
   items: MessageView[];
 };
 

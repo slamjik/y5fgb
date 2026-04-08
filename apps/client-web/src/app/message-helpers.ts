@@ -84,7 +84,7 @@ export async function applySyncBatch(
   activeConversationId: string | null,
   setMessages: React.Dispatch<React.SetStateAction<Record<string, MessageBucket>>>,
   setUnread: React.Dispatch<React.SetStateAction<Record<string, number>>>,
-) {
+): Promise<MessageView[]> {
   const mapped: MessageView[] = [];
   for (const event of batch.events) {
     if (event.type === "message" && event.message) {
@@ -92,7 +92,7 @@ export async function applySyncBatch(
     }
   }
 
-  if (mapped.length === 0) return;
+  if (mapped.length === 0) return [];
 
   setMessages((current) => {
     const next = { ...current };
@@ -123,6 +123,8 @@ export async function applySyncBatch(
     }
     return next;
   });
+
+  return mapped;
 }
 
 export function parsePlaintextPayload(plaintext: string): { text: string; attachments: AttachmentSecret[] } {

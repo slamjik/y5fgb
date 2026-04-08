@@ -41,6 +41,7 @@ export function AuthScreen(props: {
       {props.pending2fa ? (
         <>
           <input
+            data-testid="auth-2fa-code-input"
             value={code}
             onChange={(e) => setCode(e.target.value)}
             placeholder="Код 2FA"
@@ -49,6 +50,7 @@ export function AuthScreen(props: {
           />
           <button
             type="button"
+            data-testid="auth-2fa-submit"
             className="w-full rounded-lg border px-4 py-2"
             style={outlineButtonStyle}
             onClick={() => void props.onVerify(code)}
@@ -61,6 +63,7 @@ export function AuthScreen(props: {
           <div className="flex gap-2">
             <button
               type="button"
+              data-testid="auth-mode-login"
               className="px-3 py-1.5 rounded-lg border"
               style={authMode === "login" ? solidButtonStyle : outlineButtonStyle}
               onClick={() => setAuthMode("login")}
@@ -69,6 +72,7 @@ export function AuthScreen(props: {
             </button>
             <button
               type="button"
+              data-testid="auth-mode-register"
               className="px-3 py-1.5 rounded-lg border"
               style={authMode === "register" ? solidButtonStyle : outlineButtonStyle}
               onClick={() => setAuthMode("register")}
@@ -77,6 +81,7 @@ export function AuthScreen(props: {
             </button>
           </div>
           <input
+            data-testid="auth-email-input"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="Email"
@@ -84,6 +89,7 @@ export function AuthScreen(props: {
             style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)" }}
           />
           <input
+            data-testid="auth-password-input"
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
@@ -92,6 +98,7 @@ export function AuthScreen(props: {
             style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)" }}
           />
           <select
+            data-testid="auth-session-mode"
             value={props.mode}
             onChange={(e) => void props.onModeChange(e.target.value as SessionMode)}
             className="w-full rounded-lg border bg-transparent px-3 py-2 outline-none"
@@ -102,6 +109,7 @@ export function AuthScreen(props: {
           </select>
           <button
             type="button"
+            data-testid="auth-submit"
             className="w-full rounded-lg border px-4 py-2"
             style={outlineButtonStyle}
             onClick={() => void props.onSubmit(authMode, email, password)}
@@ -112,6 +120,7 @@ export function AuthScreen(props: {
       )}
       <button
         type="button"
+        data-testid="auth-change-server"
         className="text-sm underline"
         style={{ color: "var(--base-grey-light)" }}
         onClick={() => void props.onChangeServer()}

@@ -242,6 +242,15 @@ const (
 	NotificationTypeStoryPublished NotificationType = "story_published"
 )
 
+type NotificationNavigationTarget string
+
+const (
+	NotificationNavigationTargetProfile        NotificationNavigationTarget = "profile"
+	NotificationNavigationTargetChat           NotificationNavigationTarget = "chat"
+	NotificationNavigationTargetPost           NotificationNavigationTarget = "post"
+	NotificationNavigationTargetFriendsRequest NotificationNavigationTarget = "friends_requests"
+)
+
 type TransportMode string
 
 const (
@@ -573,7 +582,17 @@ type AppNotification struct {
 	ActorUsername  *string
 	TargetID       *string
 	Preview        *string
+	IsRead         bool
+	ReadAt         *time.Time
+	Navigation     *NotificationNavigation
 	CreatedAt      time.Time
+}
+
+type NotificationNavigation struct {
+	Target         NotificationNavigationTarget
+	AccountID      *string
+	ConversationID *string
+	PostID         *string
 }
 
 type Device struct {

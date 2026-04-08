@@ -26,6 +26,7 @@ import {
   MessageSquare,
 } from "lucide-react";
 import React from "react";
+import { Toaster, toast } from "sonner";
 
 import { webCryptoProvider } from "../features/messaging/crypto";
 import { WebMessagingRuntime, type RuntimeTransportState } from "../features/messaging/runtime";
@@ -36,6 +37,7 @@ import { ExploreSearchPanel } from "./components/ExploreSearchPanel";
 import { ProfileHeader } from "./components/ProfileHeader";
 import { ProfilePostsSection } from "./components/ProfilePostsSection";
 import { ProfileStats } from "./components/ProfileStats";
+import { BottomNav } from "./components/BottomNav";
 import { Sidebar, type SidebarSection } from "./components/Sidebar";
 import { AutoConnectScreen, AuthScreen, StandaloneCard } from "./components/StandaloneScreens";
 import { StoryFeed } from "./components/StoryFeed";
@@ -122,6 +124,8 @@ const emptyUploadFeedback: UploadFeedback = {
   message: "",
 };
 
+const browserNotificationsPrefKey = "secure-messenger-web-browser-notifications";
+
 function App() {
   const [booting, setBooting] = React.useState(true);
   const [server, setServer] = React.useState<SavedServer | null>(null);
@@ -193,6 +197,14 @@ function App() {
   const [postsLoading, setPostsLoading] = React.useState(false);
   const [postsError, setPostsError] = React.useState("");
   const [notifications, setNotifications] = React.useState<NotificationsResponse["notifications"]>([]);
+  const [notificationsUnreadTotal, setNotificationsUnreadTotal] = React.useState(0);
+  const [notificationsLoading, setNotificationsLoading] = React.useState(false);
+  const [notificationsError, setNotificationsError] = React.useState("");
+  const [preferBrowserNotifications, setPreferBrowserNotifications] = React.useState(false);
+  const [browserNotificationPermission, setBrowserNotificationPermission] = React.useState<NotificationPermission>(
+    typeof window !== "undefined" && "Notification" in window ? Notification.permission : "default",
+  );
+  const [showMobileConversationList, setShowMobileConversationList] = React.useState(true);
 
   const [sessionInfo, setSessionInfo] = React.useState<AuthSessionResponse | null>(null);
   const [deviceList, setDeviceList] = React.useState<DeviceListResponse | null>(null);
@@ -200,6 +212,11 @@ function App() {
 
   const runtimeRef = React.useRef<WebMessagingRuntime | null>(null);
   const deviceMaterialRef = React.useRef<DeviceMaterial | null>(null);
+  const activeConversationIdRef = React.useRef<string | null>(null);
+  const shownToastNotificationIDsRef = React.useRef<Set<string>>(new Set());
+  const knownNotificationIDsRef = React.useRef<Set<string>>(new Set());
+  const preferBrowserNotificationsRef = React.useRef(false);
+  const browserNotificationPermissionRef = React.useRef<NotificationPermission>("default");
   const messageScrollRef = React.useRef<HTMLDivElement | null>(null);
   const attachmentInputRef = React.useRef<HTMLInputElement | null>(null);
   const sendingConversationsRef = React.useRef<Set<string>>(new Set());
@@ -231,6 +248,19 @@ function App() {
     return { input: normalized.origin, config };
   }, []);
 
+  const refreshNotifications = React.useCallback(async () => {
+    if (!api || !session) return;
+    await loadNotifications(
+      api,
+      session,
+      setNotifications,
+      setNotificationsUnreadTotal,
+      setNotificationsLoading,
+      setNotificationsError,
+      toUserError,
+    );
+  }, [api, session?.accessToken]);
+
   React.useEffect(() => {
     let cancelled = false;
     const boot = async () => {
@@ -238,6 +268,17 @@ function App() {
       const mode = normalizeSessionMode(storedMode) ?? (runtimePlatform.sessionPolicy.persistence as SessionMode);
       if (cancelled) return;
       setSessionMode(mode);
+      try {
+        const storedBrowserPref = localStorage.getItem(browserNotificationsPrefKey);
+        if (storedBrowserPref === "enabled") {
+          setPreferBrowserNotifications(true);
+        }
+      } catch {
+        // noop
+      }
+      if (typeof window !== "undefined" && "Notification" in window) {
+        setBrowserNotificationPermission(Notification.permission);
+      }
 
       let targetServer = loadSavedServer();
       if (!targetServer) {
@@ -272,6 +313,7 @@ function App() {
     if (!api || !session) return;
     void loadSummaries(api, session, setSummaries, setSummariesLoading, setSummariesError, setActiveConversationId);
     void loadSettingsData(api, session, setSessionInfo, setDeviceList, setSecurityEvents);
+    void refreshNotifications();
     void loadProfileState(
       api,
       session,
@@ -283,7 +325,7 @@ function App() {
       setPrivacy,
       setStories,
     );
-  }, [api, session?.accessToken]);
+  }, [api, session?.accessToken, refreshNotifications]);
 
   React.useEffect(() => {
     if (!api || !session) return;
@@ -291,12 +333,96 @@ function App() {
       void loadFeed(api, session, setPosts, setPostsLoading, setPostsError, toUserError);
     }
     if (section === "notifications") {
-      void loadNotifications(api, session, setNotifications);
+      void refreshNotifications();
     }
     if (section === "profile") {
       void loadProfilePosts(api, session, setProfilePosts, setProfileLoading, profileTarget?.accountId as string | undefined);
     }
-  }, [section, api, session?.accessToken, profileTarget?.accountId]);
+  }, [section, api, session?.accessToken, profileTarget?.accountId, refreshNotifications]);
+
+  React.useEffect(() => {
+    activeConversationIdRef.current = activeConversationId;
+  }, [activeConversationId]);
+
+  React.useEffect(() => {
+    preferBrowserNotificationsRef.current = preferBrowserNotifications;
+  }, [preferBrowserNotifications]);
+
+  React.useEffect(() => {
+    browserNotificationPermissionRef.current = browserNotificationPermission;
+  }, [browserNotificationPermission]);
+
+  React.useEffect(() => {
+    if (!api || !session) return;
+    const handle = window.setInterval(() => {
+      void refreshNotifications();
+    }, 20_000);
+    return () => window.clearInterval(handle);
+  }, [api, session?.accessToken, refreshNotifications]);
+
+  React.useEffect(() => {
+    if (notificationsLoading) return;
+    const currentIDs = new Set(notifications.map((item) => item.id as string));
+    if (knownNotificationIDsRef.current.size === 0) {
+      knownNotificationIDsRef.current = currentIDs;
+      return;
+    }
+
+    for (const item of notifications) {
+      const id = item.id as string;
+      if (knownNotificationIDsRef.current.has(id)) {
+        continue;
+      }
+      if (item.isRead || section === "notifications") {
+        continue;
+      }
+      const toastID = `notif:${id}`;
+      if (shownToastNotificationIDsRef.current.has(toastID)) {
+        continue;
+      }
+      shownToastNotificationIDsRef.current.add(toastID);
+      toast(renderNotificationTitle(item), {
+        description: item.preview ?? "Откройте уведомление",
+        action: {
+          label: "Открыть",
+          onClick: () => {
+            void openNotification(item);
+          },
+        },
+      });
+      if (
+        preferBrowserNotificationsRef.current &&
+        browserNotificationPermissionRef.current === "granted" &&
+        typeof window !== "undefined" &&
+        "Notification" in window
+      ) {
+        try {
+          const browserNotification = new Notification(renderNotificationTitle(item), {
+            body: item.preview ?? "Откройте уведомление",
+          });
+          browserNotification.onclick = () => {
+            window.focus();
+            void openNotification(item);
+            browserNotification.close();
+          };
+        } catch {
+          // noop
+        }
+      }
+    }
+
+    knownNotificationIDsRef.current = currentIDs;
+  }, [notifications, notificationsLoading, section]);
+
+  React.useEffect(() => {
+    if (section !== "messages") {
+      setShowMobileConversationList(true);
+      return;
+    }
+    if (!activeConversationId) {
+      setShowMobileConversationList(true);
+    }
+  }, [section, activeConversationId]);
 
   React.useEffect(() => {
     if (!api || !session) return;
@@ -309,19 +435,64 @@ function App() {
       const runtime = new WebMessagingRuntime(api, session.accessToken, {
         onBatch: async (batch) => {
           if (!disposed) {
-            await applySyncBatch(
+            const mapped = await applySyncBatch(
               batch,
               session,
               deviceMaterialRef.current,
-              activeConversationId,
+              activeConversationIdRef.current,
               setMessagesByConversation,
               setUnreadByConversation,
             );
             await safeStoreSet(syncCursorStorageKey, String(batch.toCursor));
+            const activeID = activeConversationIdRef.current;
+            const incoming = mapped.filter((item) => !item.own && item.conversationId !== activeID);
+            for (const item of incoming.slice(0, 3)) {
+              const toastID = `msg:${item.id}`;
+              if (shownToastNotificationIDsRef.current.has(toastID)) {
+                continue;
+              }
+              shownToastNotificationIDsRef.current.add(toastID);
+              toast("Новое сообщение", {
+                description: item.text || "Откройте чат, чтобы прочитать.",
+                action: {
+                  label: "Открыть",
+                  onClick: () => {
+                    setSection("messages");
+                    setShowMobileConversationList(false);
+                    void openConversation(item.conversationId);
+                  },
+                },
+              });
+              if (
+                preferBrowserNotificationsRef.current &&
+                browserNotificationPermissionRef.current === "granted" &&
+                typeof window !== "undefined" &&
+                "Notification" in window
+              ) {
+                try {
+                  const browserNotification = new Notification("Новое сообщение", {
+                    body: item.text || "Откройте чат, чтобы прочитать.",
+                  });
+                  browserNotification.onclick = () => {
+                    window.focus();
+                    setSection("messages");
+                    setShowMobileConversationList(false);
+                    void openConversation(item.conversationId);
+                    browserNotification.close();
+                  };
+                } catch {
+                  // noop
+                }
+              }
+            }
           }
         },
         onTransport: (state) => {
-          if (!disposed) setTransportState(state);
+          if (disposed) return;
+          setTransportState(state);
+          if (state.status === "connected" || (state.status === "degraded" && !state.lastError)) {
+            setRuntimeError("");
+          }
         },
         onError: (message) => {
           if (!disposed) setRuntimeError(message);
@@ -349,7 +520,7 @@ function App() {
       runtimeRef.current?.stop();
       runtimeRef.current = null;
     };
-  }, [api, session?.accessToken, session?.deviceId, activeConversationId]);
+  }, [api, session?.accessToken, session?.deviceId]);
 
   React.useEffect(() => {
     if (!activeConversationId) return;
@@ -412,6 +583,12 @@ function App() {
     setOutgoingRequests([]);
     setPrivacy(null);
     setStories([]);
+    setNotifications([]);
+    setNotificationsUnreadTotal(0);
+    setNotificationsError("");
+    setNotificationsLoading(false);
+    knownNotificationIDsRef.current = new Set();
+    shownToastNotificationIDsRef.current = new Set();
     setSection("messages");
   }
 
@@ -581,6 +758,7 @@ function App() {
 
   const openConversation = async (conversationId: string) => {
     setActiveConversationId(conversationId);
+    setShowMobileConversationList(false);
     setUnreadByConversation((current) => ({ ...current, [conversationId]: 0 }));
     if (!api || !session) return;
 
@@ -593,7 +771,7 @@ function App() {
     if (!existingBucket || existingBucket.error) {
       setMessagesByConversation((prev) => ({
         ...prev,
-        [conversationId]: { loading: true, error: "", items: [] },
+        [conversationId]: { loading: true, error: "", items: [], hasMore: false, nextCursor: 0, loadingMore: false },
       }));
       try {
         const device = await ensureDeviceMaterial(session.deviceId);
@@ -607,14 +785,69 @@ function App() {
             loading: false,
             error: "",
             items: decoded.sort((a, b) => a.serverSequence - b.serverSequence),
+            hasMore: history.nextCursor > 0,
+            nextCursor: history.nextCursor,
+            loadingMore: false,
           },
         }));
       } catch (error) {
         setMessagesByConversation((prev) => ({
           ...prev,
-          [conversationId]: { loading: false, error: toUserError(error), items: [] },
+          [conversationId]: { loading: false, error: toUserError(error), items: [], hasMore: false, nextCursor: 0, loadingMore: false },
         }));
       }
+    }
+  };
+
+  const loadOlderMessages = async (conversationId: string) => {
+    if (!api || !session) return;
+    const bucket = messagesByConversation[conversationId];
+    const cursor = bucket?.nextCursor ?? 0;
+    if (!bucket || bucket.loading || bucket.loadingMore || !bucket.hasMore || cursor <= 0) {
+      return;
+    }
+
+    setMessagesByConversation((prev) => ({
+      ...prev,
+      [conversationId]: {
+        ...prev[conversationId],
+        loadingMore: true,
+        error: "",
+      },
+    }));
+
+    try {
+      const device = await ensureDeviceMaterial(session.deviceId);
+      const history = await api.listConversationMessages(session.accessToken, conversationId, {
+        limit: 60,
+        beforeSequence: cursor,
+      });
+      const decoded = await Promise.all(history.messages.map((message) => decodeMessage(message, session, device)));
+      setMessagesByConversation((prev) => {
+        const currentBucket = prev[conversationId] ?? { loading: false, error: "", items: [] as typeof decoded };
+        return {
+          ...prev,
+          [conversationId]: {
+            ...currentBucket,
+            loading: false,
+            loadingMore: false,
+            error: "",
+            hasMore: history.nextCursor > 0,
+            nextCursor: history.nextCursor,
+            items: upsertMessageItems(currentBucket.items, decoded),
+          },
+        };
+      });
+    } catch (error) {
+      setMessagesByConversation((prev) => ({
+        ...prev,
+        [conversationId]: {
+          ...(prev[conversationId] ?? { loading: false, items: [] }),
+          loading: false,
+          loadingMore: false,
+          error: toUserError(error),
+        },
+      }));
     }
   };
 
@@ -818,6 +1051,8 @@ function App() {
     if (!api || !session) return;
     const response = await api.createDirectConversation(session.accessToken, accountId as never);
     const conversationId = response.conversation.id as string;
+    setSection("messages");
+    setShowMobileConversationList(false);
     setShowNewChat(false);
     await loadSummaries(api, session, setSummaries, setSummariesLoading, setSummariesError, setActiveConversationId);
     await openConversation(conversationId);
@@ -833,6 +1068,8 @@ function App() {
     const payload: CreateGroupConversationRequest = { title, memberAccountIds: groupMembers as never };
     const response = await api.createGroupConversation(session.accessToken, payload);
     const conversationId = response.conversation.id as string;
+    setSection("messages");
+    setShowMobileConversationList(false);
     setGroupTitle("");
     setGroupMembers([]);
     setShowNewChat(false);
@@ -879,6 +1116,79 @@ function App() {
 
   const clearProfileTarget = () => {
     setProfileTarget(null);
+  };
+
+  const markNotificationsRead = async (ids: string[], all = false) => {
+    if (!api || !session) return;
+    try {
+      const markedAt = new Date().toISOString();
+      const response = await api.markNotificationsRead(session.accessToken, {
+        ...(all ? { all: true } : {}),
+        ...(ids.length > 0 ? { ids } : {}),
+      });
+      setNotifications((prev) =>
+        prev.map((item) => {
+          const shouldMark = all || ids.includes(item.id as string);
+          if (!shouldMark) return item;
+          return {
+            ...item,
+            isRead: true,
+            readAt: item.readAt ?? (markedAt as never),
+          };
+        }),
+      );
+      setNotificationsUnreadTotal(response.unreadTotal);
+    } catch (error) {
+      setGlobalError(toUserError(error));
+    }
+  };
+
+  const clearAllNotifications = async () => {
+    if (!api || !session) return;
+    try {
+      const response = await api.clearNotifications(session.accessToken);
+      setNotifications([]);
+      setNotificationsUnreadTotal(response.unreadTotal);
+      setNotificationsError("");
+      knownNotificationIDsRef.current = new Set();
+    } catch (error) {
+      setGlobalError(toUserError(error));
+    }
+  };
+
+  const openNotification = async (item: NotificationsResponse["notifications"][number]) => {
+    if (!api || !session) return;
+    const id = item.id as string;
+    if (!item.isRead) {
+      await markNotificationsRead([id], false);
+    }
+
+    const navigation = item.navigation;
+    if (navigation?.target === "chat" && navigation.conversationId) {
+      setSection("messages");
+      setShowMobileConversationList(false);
+      await openConversation(navigation.conversationId as string);
+      return;
+    }
+    if (navigation?.target === "profile" && navigation.accountId) {
+      await openUserProfile(navigation.accountId as string);
+      return;
+    }
+    if (navigation?.target === "post") {
+      setSection("feed");
+      return;
+    }
+    if (navigation?.target === "friends_requests") {
+      clearProfileTarget();
+      setSection("profile");
+      return;
+    }
+
+    if (item.actorAccountId) {
+      await openUserProfile(item.actorAccountId as string);
+      return;
+    }
+    setSection("notifications");
   };
 
   const setProfileUploadState = React.useCallback(
@@ -1200,6 +1510,43 @@ function App() {
     }
   };
 
+  const setBrowserNotificationsPreference = async (enabled: boolean) => {
+    setPreferBrowserNotifications(enabled);
+    try {
+      localStorage.setItem(browserNotificationsPrefKey, enabled ? "enabled" : "disabled");
+    } catch {
+      // noop
+    }
+
+    if (!enabled) {
+      setSettingsMessage("Браузерные уведомления отключены. In-app уведомления продолжают работать.");
+      return;
+    }
+    if (typeof window === "undefined" || !("Notification" in window)) {
+      setSettingsMessage("Браузерные уведомления недоступны в текущем окружении.");
+      return;
+    }
+    if (Notification.permission === "granted") {
+      setBrowserNotificationPermission("granted");
+      setSettingsMessage("Браузерные уведомления включены.");
+      return;
+    }
+
+    const permission = await Notification.requestPermission();
+    setBrowserNotificationPermission(permission);
+    if (permission === "granted") {
+      setSettingsMessage("Браузерные уведомления включены.");
+      return;
+    }
+    setPreferBrowserNotifications(false);
+    try {
+      localStorage.setItem(browserNotificationsPrefKey, "disabled");
+    } catch {
+      // noop
+    }
+    setSettingsMessage("Разрешение на браузерные уведомления не выдано.");
+  };
+
   const resetServer = async () => {
     await clearAuthState();
     await clearPersistedDeviceMaterial();
@@ -1212,6 +1559,12 @@ function App() {
     setPending2fa(null);
     setUnreadByConversation({});
     setMessagesByConversation({});
+    setNotifications([]);
+    setNotificationsUnreadTotal(0);
+    setNotificationsError("");
+    setNotificationsLoading(false);
+    knownNotificationIDsRef.current = new Set();
+    shownToastNotificationIDsRef.current = new Set();
     setSummaries([]);
     setMyProfile(null);
     setProfileTarget(null);
@@ -1221,6 +1574,7 @@ function App() {
     setOutgoingRequests([]);
     setPrivacy(null);
     setStories([]);
+    setShowMobileConversationList(true);
     setSection("messages");
     try {
       const next = await resolveServer();
@@ -1291,15 +1645,17 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen" style={{ backgroundColor: "var(--core-background)" }}>
-      <div className="mx-auto max-w-[1440px] px-5 py-5 grid grid-cols-[280px_1fr] gap-5">
-        <Sidebar
-          activeSection={section}
-          onChange={setSection}
-          badges={{ notifications: notifications.length, messages: unreadTotal }}
-        />
+    <div className="min-h-screen pb-[88px] lg:pb-0" style={{ backgroundColor: "var(--core-background)" }}>
+      <div className="mx-auto max-w-[1440px] px-3 lg:px-5 py-3 lg:py-5 lg:grid lg:grid-cols-[280px_1fr] gap-5">
+        <div className="hidden lg:block">
+          <Sidebar
+            activeSection={section}
+            onChange={setSection}
+            badges={{ notifications: notificationsUnreadTotal, messages: unreadTotal }}
+          />
+        </div>
 
-        <main className="space-y-4">
+        <main className="space-y-3 lg:space-y-4 app-section-transition">
           <header className="flex items-center justify-between rounded-2xl border px-4 py-3" style={cardStyle}>
             <div>
               <h1 style={{ color: "var(--text-primary)", fontSize: 26, fontWeight: 600 }}>{sectionTitle(section)}</h1>
@@ -1308,7 +1664,23 @@ function App() {
             <StatusChip state={transportState.status} />
           </header>
 
-          {runtimeError ? <InlineInfo tone="warning" text={runtimeError} /> : null}
+          {runtimeError ? (
+            <div className="space-y-2">
+              <InlineInfo tone="warning" text={runtimeError} />
+              <button
+                type="button"
+                data-testid="runtime-reconnect-button"
+                className="px-3 py-1.5 rounded-lg border text-sm"
+                style={outlineButtonStyle}
+                onClick={() => {
+                  setRuntimeError("");
+                  runtimeRef.current?.requestReconnect();
+                }}
+              >
+                Переподключиться
+              </button>
+            </div>
+          ) : null}
           {globalError ? <InlineInfo tone="error" text={globalError} /> : null}
 
                     {section === "messages" ? (
@@ -1347,6 +1719,10 @@ function App() {
               onOpenConversation={(conversationId) => {
                 void openConversation(conversationId);
               }}
+              onBackToList={() => {
+                setShowMobileConversationList(true);
+              }}
+              showConversationListOnMobile={showMobileConversationList}
               resolveConversationTitle={resolveConversationTitle}
               onRefreshSummaries={() => {
                 if (!api) return;
@@ -1378,9 +1754,17 @@ function App() {
                 return sendMessage(activeConversationId, retryText);
               }}
               onDownloadAttachment={downloadAttachment}
+              onLoadOlderMessages={() => {
+                if (!activeConversationId) return;
+                void loadOlderMessages(activeConversationId);
+              }}
               attachmentOps={attachmentOps}
               transportState={transportState}
               serverInput={server.input}
+              onReconnect={() => {
+                setRuntimeError("");
+                runtimeRef.current?.requestReconnect();
+              }}
             />
           ) : null}
 
@@ -1417,7 +1801,28 @@ function App() {
           ) : null}
 
                     {section === "notifications" ? (
-            <NotificationsSection notifications={notifications} renderTitle={renderNotificationTitle} />
+            <NotificationsSection
+              notifications={notifications}
+              unreadTotal={notificationsUnreadTotal}
+              loading={notificationsLoading}
+              error={notificationsError}
+              renderTitle={renderNotificationTitle}
+              onRefresh={() => {
+                void refreshNotifications();
+              }}
+              onOpen={(item) => {
+                void openNotification(item);
+              }}
+              onMarkRead={async (id) => {
+                await markNotificationsRead([id], false);
+              }}
+              onMarkAllRead={async () => {
+                await markNotificationsRead([], true);
+              }}
+              onClearAll={async () => {
+                await clearAllNotifications();
+              }}
+            />
           ) : null}
 
 {section === "profile" ? (
@@ -1475,7 +1880,11 @@ function App() {
                           type="button"
                           className="px-3 py-1.5 rounded-lg border text-sm"
                           style={outlineButtonStyle}
-                          onClick={() => void openConversation(profileTarget.existingDirectConversationId as string)}
+                          onClick={() => {
+                            setSection("messages");
+                            setShowMobileConversationList(false);
+                            void openConversation(profileTarget.existingDirectConversationId as string);
+                          }}
                         >
                           Открыть чат
                         </button>
@@ -1762,6 +2171,11 @@ function App() {
               onTestConnection={() => {
                 void testConnection();
               }}
+              browserNotificationsEnabled={preferBrowserNotifications}
+              browserNotificationsPermission={browserNotificationPermission}
+              onBrowserNotificationsChange={(enabled) => {
+                void setBrowserNotificationsPreference(enabled);
+              }}
               onResetServer={() => {
                 void resetServer();
               }}
@@ -1770,6 +2184,27 @@ function App() {
 
         </main>
       </div>
+      <BottomNav
+        activeSection={section}
+        onChange={(nextSection) => {
+          setSection(nextSection);
+          if (nextSection === "messages") {
+            setShowMobileConversationList(true);
+          }
+        }}
+        badges={{ notifications: notificationsUnreadTotal, messages: unreadTotal }}
+      />
+      <Toaster
+        position="top-right"
+        theme="dark"
+        toastOptions={{
+          style: {
+            background: "rgba(24,24,24,0.96)",
+            color: "var(--text-primary)",
+            border: "1px solid var(--glass-border)",
+          },
+        }}
+      />
     </div>
   );
 }

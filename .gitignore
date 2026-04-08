@@ -27,6 +27,10 @@ Thumbs.db
 # Logs
 *.log
 
+# Playwright
+playwright-report/
+test-results/
+
 # Runtime data
 apps/relay-server/data/
 

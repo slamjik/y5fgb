@@ -89,6 +89,7 @@ export type DirectMessagePolicy = "everyone" | "friends" | "nobody";
 export type FriendState = "none" | "incoming_request" | "outgoing_request" | "friends" | "blocked";
 export type FriendRequestStatus = "pending" | "accepted" | "rejected" | "cancelled";
 export type NotificationType = "social_like" | "friend_request" | "friend_accepted" | "story_published";
+export type NotificationNavigationTarget = "profile" | "chat" | "post" | "friends_requests";
 
 export type SecurityEventType =
   | "account_registered"
@@ -849,12 +850,38 @@ export interface NotificationDTO {
   actorUsername: string | null;
   targetId: string | null;
   preview: string | null;
+  isRead: boolean;
+  readAt: ISO8601Timestamp | null;
+  navigation: NotificationNavigationDTO | null;
   createdAt: ISO8601Timestamp;
+}
+
+export interface NotificationNavigationDTO {
+  target: NotificationNavigationTarget;
+  accountId: AccountID | null;
+  conversationId: ConversationID | null;
+  postId: string | null;
 }
 
 export interface NotificationsResponse {
   notifications: NotificationDTO[];
   total: number;
+  unreadTotal: number;
+}
+
+export interface MarkNotificationsReadRequest {
+  ids?: string[];
+  all?: boolean;
+}
+
+export interface MarkNotificationsReadResponse {
+  ok: boolean;
+  unreadTotal: number;
+}
+
+export interface ClearNotificationsResponse {
+  ok: boolean;
+  unreadTotal: number;
 }
 
 export interface ConversationDetailsResponse {

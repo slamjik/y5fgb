@@ -275,6 +275,11 @@ type attachmentUploadRequest struct {
 	Ciphertext     string `json:"ciphertext"`
 }
 
+type markNotificationsReadRequest struct {
+	IDs []string `json:"ids"`
+	All bool     `json:"all"`
+}
+
 type conversationDTO struct {
 	ID                 string                  `json:"id"`
 	Type               string                  `json:"type"`
@@ -576,14 +581,24 @@ type storyDTO struct {
 }
 
 type appNotificationDTO struct {
-	ID             string  `json:"id"`
-	Type           string  `json:"type"`
-	ActorAccountID *string `json:"actorAccountId,omitempty"`
-	ActorName      *string `json:"actorName,omitempty"`
-	ActorUsername  *string `json:"actorUsername,omitempty"`
-	TargetID       *string `json:"targetId,omitempty"`
-	Preview        *string `json:"preview,omitempty"`
-	CreatedAt      string  `json:"createdAt"`
+	ID             string                     `json:"id"`
+	Type           string                     `json:"type"`
+	ActorAccountID *string                    `json:"actorAccountId,omitempty"`
+	ActorName      *string                    `json:"actorName,omitempty"`
+	ActorUsername  *string                    `json:"actorUsername,omitempty"`
+	TargetID       *string                    `json:"targetId,omitempty"`
+	Preview        *string                    `json:"preview,omitempty"`
+	IsRead         bool                       `json:"isRead"`
+	ReadAt         *string                    `json:"readAt,omitempty"`
+	Navigation     *notificationNavigationDTO `json:"navigation,omitempty"`
+	CreatedAt      string                     `json:"createdAt"`
+}
+
+type notificationNavigationDTO struct {
+	Target         string  `json:"target"`
+	AccountID      *string `json:"accountId,omitempty"`
+	ConversationID *string `json:"conversationId,omitempty"`
+	PostID         *string `json:"postId,omitempty"`
 }
 
 type publicConfigPolicyHintsDTO struct {
@@ -1058,7 +1073,22 @@ func mapAppNotification(item domain.AppNotification) appNotificationDTO {
 		ActorUsername:  item.ActorUsername,
 		TargetID:       item.TargetID,
 		Preview:        item.Preview,
+		IsRead:         item.IsRead,
+		ReadAt:         formatNullableTime(item.ReadAt),
+		Navigation:     mapNotificationNavigation(item.Navigation),
 		CreatedAt:      item.CreatedAt.UTC().Format(time.RFC3339),
+	}
+}
+
+func mapNotificationNavigation(item *domain.NotificationNavigation) *notificationNavigationDTO {
+	if item == nil {
+		return nil
+	}
+	return &notificationNavigationDTO{
+		Target:         string(item.Target),
+		AccountID:      item.AccountID,
+		ConversationID: item.ConversationID,
+		PostID:         item.PostID,
 	}
 }
 

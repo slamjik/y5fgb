@@ -19,6 +19,8 @@
   ListSocialPostsResponse,
   LoginSuccessResponse,
   LoginTwoFactorRequiredResponse,
+  MarkNotificationsReadRequest,
+  MarkNotificationsReadResponse,
   MediaMetadataResponse,
   MediaUploadResponse,
   MessageDTO,
@@ -45,6 +47,7 @@
   WebRefreshRequest,
   WebRegisterRequest,
   WebTwoFactorLoginVerifyRequest,
+  ClearNotificationsResponse,
 } from "@project/protocol";
 import type { ServerBootstrapConfig } from "@project/client-core";
 import type { MediaID, StoryID } from "@project/shared-types";
@@ -498,6 +501,17 @@ export class WebApiClient {
 
   async listNotifications(accessToken: string, limit = 50): Promise<NotificationsResponse> {
     return this.request<NotificationsResponse>(`/notifications?limit=${Math.max(1, limit)}`, "GET", undefined, accessToken);
+  }
+
+  async markNotificationsRead(
+    accessToken: string,
+    body: MarkNotificationsReadRequest,
+  ): Promise<MarkNotificationsReadResponse> {
+    return this.request<MarkNotificationsReadResponse>("/notifications/read", "POST", body, accessToken);
+  }
+
+  async clearNotifications(accessToken: string): Promise<ClearNotificationsResponse> {
+    return this.request<ClearNotificationsResponse>("/notifications/clear", "POST", {}, accessToken);
   }
 
   async listDevices(accessToken: string): Promise<DeviceListResponse> {

@@ -40,6 +40,7 @@ export function ExploreSearchPanel({
         <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>Поиск людей и публикаций</p>
         <div className="flex gap-2">
           <input
+            data-testid="explore-search-input"
             value={query}
             onChange={(event) => onQueryChange(event.target.value)}
             onKeyDown={(event) => {
@@ -52,7 +53,13 @@ export function ExploreSearchPanel({
             className="w-full rounded-lg border bg-transparent px-3 py-2 outline-none"
             style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)" }}
           />
-          <button type="button" className="px-3 py-2 rounded-lg border" style={outlineButtonStyle} onClick={onSubmit}>
+          <button
+            type="button"
+            data-testid="explore-search-submit"
+            className="px-3 py-2 rounded-lg border"
+            style={outlineButtonStyle}
+            onClick={onSubmit}
+          >
             <Search className="w-4 h-4 inline mr-2" />
             Найти
           </button>
@@ -67,7 +74,12 @@ export function ExploreSearchPanel({
           {!hasSearched ? <StateCard text="Введите запрос, чтобы найти пользователей." /> : null}
           {hasSearched && !loading && users.length === 0 ? <StateCard text="Пользователи не найдены." /> : null}
           {users.map((item) => (
-            <div key={item.accountId as string} className="rounded-xl border p-3 space-y-2" style={innerPanelStyle}>
+            <div
+              key={item.accountId as string}
+              data-testid={`explore-user-${item.accountId as string}`}
+              className="rounded-xl border p-3 space-y-2"
+              style={innerPanelStyle}
+            >
               <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>
                 {item.displayName || item.username || "Пользователь"}
               </p>
@@ -78,6 +90,7 @@ export function ExploreSearchPanel({
               <div className="flex gap-2 flex-wrap">
                 <button
                   type="button"
+                  data-testid={`explore-user-write-${item.accountId as string}`}
                   className="px-3 py-1.5 rounded-lg border text-sm"
                   style={outlineButtonStyle}
                   onClick={() => void onCreateDirect(item.accountId as string)}
@@ -86,6 +99,7 @@ export function ExploreSearchPanel({
                 </button>
                 <button
                   type="button"
+                  data-testid={`explore-user-profile-${item.accountId as string}`}
                   className="px-3 py-1.5 rounded-lg border text-sm"
                   style={outlineButtonStyle}
                   onClick={() => void onOpenProfile(item.accountId as string)}
@@ -95,6 +109,7 @@ export function ExploreSearchPanel({
                 {item.friendState === "none" && item.canSendFriendRequest ? (
                   <button
                     type="button"
+                    data-testid={`explore-user-add-friend-${item.accountId as string}`}
                     className="px-3 py-1.5 rounded-lg border text-sm"
                     style={outlineButtonStyle}
                     onClick={() => void onSendFriendRequest(item.accountId as string)}

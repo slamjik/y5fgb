@@ -46,6 +46,7 @@ export class WebMessagingRuntime {
   private reconnectBackoffMinMs = 500;
   private reconnectBackoffMaxMs = 10_000;
   private reconnectDelayMs = 500;
+  private suppressNextWsCloseError = false;
 
   private pollLoopPromise: Promise<void> | null = null;
   private reconnectTimer: number | null = null;
@@ -125,6 +126,24 @@ export class WebMessagingRuntime {
     }
   }
 
+  requestReconnect() {
+    if (!this.running) {
+      return;
+    }
+    if (this.reconnectTimer !== null) {
+      window.clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    if (this.ws && (this.ws.readyState === WebSocket.CONNECTING || this.ws.readyState === WebSocket.OPEN)) {
+      this.suppressNextWsCloseError = true;
+      this.ws.close();
+      return;
+    }
+    this.reconnectDelayMs = this.reconnectBackoffMinMs;
+    this.connectWebSocket();
+    this.ensurePollLoop();
+  }
+
   private async configureTransport() {
     const config = await this.api.transportEndpoints(this.accessToken);
 
@@ -182,6 +201,7 @@ export class WebMessagingRuntime {
     this.ws = ws;
 
     ws.onopen = () => {
+      this.suppressNextWsCloseError = false;
       this.reconnectDelayMs = this.reconnectBackoffMinMs;
       this.setTransport({
         mode: "websocket",
@@ -202,6 +222,11 @@ export class WebMessagingRuntime {
 
     ws.onclose = (event) => {
       if (!this.running) {
+        return;
+      }
+      if (this.suppressNextWsCloseError) {
+        this.suppressNextWsCloseError = false;
+        this.scheduleReconnect();
         return;
       }
       const reason = event.reason?.trim() ? `${event.reason} (code=${event.code})` : `code=${event.code}`;
@@ -248,6 +273,7 @@ export class WebMessagingRuntime {
       mode: this.longPollEnabled ? "long_poll" : "websocket",
       status: this.longPollEnabled ? "degraded" : "reconnecting",
       endpoint: this.longPollEnabled ? this.resolvePollEndpoint() : this.wsEndpoints[this.wsIndex],
+      lastError: null,
       lastCursor: this.lastCursor,
     });
 
@@ -278,11 +304,19 @@ export class WebMessagingRuntime {
         mode: "long_poll",
         status: this.wsEndpoints.length > 0 ? "degraded" : "connected",
         endpoint,
+        lastError: null,
         lastCursor: this.lastCursor,
       });
 
       try {
         await this.syncPoll();
+        this.setTransport({
+          mode: "long_poll",
+          status: this.wsEndpoints.length > 0 ? "degraded" : "connected",
+          endpoint,
+          lastError: null,
+          lastCursor: this.lastCursor,
+        });
       } catch (error) {
         const message = error instanceof Error ? error.message : "Ошибка long-poll синхронизации.";
         this.setTransport({
@@ -320,7 +354,9 @@ export class WebMessagingRuntime {
       lastError: message,
       lastCursor: this.lastCursor,
     });
-    this.callbacks.onError(message);
+    if (!this.longPollEnabled) {
+      this.callbacks.onError(message);
+    }
   }
 
   private resolvePollEndpoint(): string {

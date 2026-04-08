@@ -36,6 +36,7 @@ export function Sidebar({ activeSection, onChange, badges }: SidebarProps) {
         {navItems.map((item) => (
           <NavItem
             key={item.id}
+            id={item.id}
             icon={item.icon}
             label={item.label}
             active={activeSection === item.id}
@@ -49,12 +50,14 @@ export function Sidebar({ activeSection, onChange, badges }: SidebarProps) {
 }
 
 function NavItem({
+  id,
   icon: Icon,
   label,
   active,
   badge,
   onClick,
 }: {
+  id: SidebarSection;
   icon: React.ComponentType<{ className?: string }>;
   label: string;
   active: boolean;
@@ -66,6 +69,7 @@ function NavItem({
   return (
     <button
       type="button"
+      data-testid={`sidebar-nav-${id}`}
       className="w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all"
       style={{
         backgroundColor: active || isHovered ? "var(--glass-fill-hover)" : "transparent",
@@ -79,6 +83,7 @@ function NavItem({
       <span className="flex-1 text-left">{label}</span>
       {typeof badge === "number" && badge > 0 ? (
         <span
+          data-testid={`sidebar-nav-${id}-badge`}
           className="text-xs px-2 py-0.5 rounded-full"
           style={{
             backgroundColor: "var(--accent-brown)",

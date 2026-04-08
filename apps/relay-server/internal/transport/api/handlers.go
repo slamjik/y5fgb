@@ -167,6 +167,8 @@ func RegisterRoutes(mux *http.ServeMux, prefix string, handler *Handler, authSer
 	mux.Handle(base+"/stories/feed", middleware.AuthRequired(authService, http.HandlerFunc(handler.handleStoryFeed)))
 	mux.Handle(base+"/stories/", middleware.AuthRequired(authService, http.HandlerFunc(handler.handleStorySubroutes)))
 	mux.Handle(base+"/notifications", middleware.AuthRequired(authService, http.HandlerFunc(handler.handleNotifications)))
+	mux.Handle(base+"/notifications/read", middleware.AuthRequired(authService, http.HandlerFunc(handler.handleNotificationsRead)))
+	mux.Handle(base+"/notifications/clear", middleware.AuthRequired(authService, http.HandlerFunc(handler.handleNotificationsClear)))
 	mux.HandleFunc(base+"/config", handler.handlePublicConfig)
 }
 
@@ -1798,7 +1800,7 @@ func (h *Handler) handleNotifications(w http.ResponseWriter, r *http.Request) {
 			limit = parsed
 		}
 	}
-	items, err := h.notificationsService.List(r.Context(), auth.AuthPrincipal{
+	result, err := h.notificationsService.List(r.Context(), auth.AuthPrincipal{
 		AccountID: principal.AccountID,
 		DeviceID:  principal.DeviceID,
 		SessionID: principal.SessionID,
@@ -1807,11 +1809,78 @@ func (h *Handler) handleNotifications(w http.ResponseWriter, r *http.Request) {
 		WriteServiceError(w, r, err, http.StatusBadRequest)
 		return
 	}
-	payload := make([]appNotificationDTO, 0, len(items))
-	for _, item := range items {
+	payload := make([]appNotificationDTO, 0, len(result.Notifications))
+	for _, item := range result.Notifications {
 		payload = append(payload, mapAppNotification(item))
 	}
-	WriteJSON(w, http.StatusOK, map[string]any{"notifications": payload, "total": len(payload)})
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"notifications": payload,
+		"total":         result.Total,
+		"unreadTotal":   result.UnreadTotal,
+	})
+}
+
+func (h *Handler) handleNotificationsRead(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "method not allowed"), http.StatusMethodNotAllowed)
+		return
+	}
+	if !h.enforceBodySize(w, r, maxAuthBodyBytes) {
+		return
+	}
+	principal, ok := middleware.PrincipalFromContext(r.Context())
+	if !ok {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeUnauthorized, "missing auth context"), http.StatusUnauthorized)
+		return
+	}
+
+	var req markNotificationsReadRequest
+	if err := middleware.DecodeJSON(r, &req); err != nil {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "invalid request body"), http.StatusBadRequest)
+		return
+	}
+
+	unreadTotal, err := h.notificationsService.MarkRead(r.Context(), auth.AuthPrincipal{
+		AccountID: principal.AccountID,
+		DeviceID:  principal.DeviceID,
+		SessionID: principal.SessionID,
+	}, req.IDs, req.All)
+	if err != nil {
+		WriteServiceError(w, r, err, http.StatusBadRequest)
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"ok":          true,
+		"unreadTotal": unreadTotal,
+	})
+}
+
+func (h *Handler) handleNotificationsClear(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "method not allowed"), http.StatusMethodNotAllowed)
+		return
+	}
+	principal, ok := middleware.PrincipalFromContext(r.Context())
+	if !ok {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeUnauthorized, "missing auth context"), http.StatusUnauthorized)
+		return
+	}
+
+	unreadTotal, err := h.notificationsService.Clear(r.Context(), auth.AuthPrincipal{
+		AccountID: principal.AccountID,
+		DeviceID:  principal.DeviceID,
+		SessionID: principal.SessionID,
+	})
+	if err != nil {
+		WriteServiceError(w, r, err, http.StatusBadRequest)
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"ok":          true,
+		"unreadTotal": unreadTotal,
+	})
 }
 
 func (h *Handler) handleUserSubroutes(w http.ResponseWriter, r *http.Request) {
