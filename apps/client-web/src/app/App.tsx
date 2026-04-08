@@ -330,10 +330,17 @@ function App() {
       await runtime.start(Number.isFinite(initialCursor) ? initialCursor : 0);
     };
 
-    void startRuntime().catch((error) => {
-      if (!disposed) {
-        setRuntimeError(toUserError(error));
+    void startRuntime().catch(async (error) => {
+      if (disposed) return;
+      const message = toUserError(error);
+      if (message.toLowerCase().includes("ключ устройства")) {
+        await clearAuthState();
+        await clearPersistedDeviceMaterial();
+        clearSignedInState();
+        setGlobalError("Сессия требует повторного входа. Войдите снова.");
+        return;
       }
+      setRuntimeError(message);
     });
 
     return () => {
@@ -383,7 +390,7 @@ function App() {
     await clearPersistedDeviceMaterial();
   }
 
-  const clearSignedInState = React.useCallback(() => {
+  function clearSignedInState(): void {
     runtimeRef.current?.stop();
     runtimeRef.current = null;
     deviceMaterialRef.current = null;
@@ -405,7 +412,7 @@ function App() {
     setPrivacy(null);
     setStories([]);
     setSection("messages");
-  }, []);
+  }
 
   React.useEffect(() => {
     if (!session) return;
@@ -414,8 +421,12 @@ function App() {
       if (!cancelled) {
         deviceMaterialRef.current = device;
       }
-    }).catch(() => {
-      // noop
+    }).catch(async (error) => {
+      if (cancelled) return;
+      await clearAuthState();
+      await clearPersistedDeviceMaterial();
+      clearSignedInState();
+      setGlobalError(toUserError(error));
     });
     return () => {
       cancelled = true;
