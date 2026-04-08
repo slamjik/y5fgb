@@ -56,7 +56,7 @@ func (s *Service) GetMyProfile(ctx context.Context, principal auth.AuthPrincipal
 }
 
 func (s *Service) GetProfileByUsername(ctx context.Context, principal auth.AuthPrincipal, username string) (domain.UserPublicProfile, error) {
-	trimmed := strings.TrimSpace(username)
+	trimmed := normalizeProfileQuery(username)
 	if trimmed == "" {
 		return domain.UserPublicProfile{}, service.NewError(service.ErrorCodeValidation, "username is required")
 	}
@@ -71,7 +71,7 @@ func (s *Service) GetProfileByUsername(ctx context.Context, principal auth.AuthP
 }
 
 func (s *Service) SearchProfiles(ctx context.Context, principal auth.AuthPrincipal, query string, limit int) ([]domain.UserSearchItem, error) {
-	trimmed := strings.TrimSpace(query)
+	trimmed := normalizeProfileQuery(query)
 	if len(trimmed) < 2 {
 		return []domain.UserSearchItem{}, nil
 	}
@@ -379,4 +379,10 @@ func (s *Service) resolveFriendState(ctx context.Context, viewerAccountID string
 		return domain.FriendRelationNone, service.NewError(service.ErrorCodeInternal, "failed to resolve friend request state")
 	}
 	return domain.FriendRelationNone, nil
+}
+
+func normalizeProfileQuery(value string) string {
+	trimmed := strings.TrimSpace(value)
+	trimmed = strings.TrimLeft(trimmed, "@")
+	return strings.TrimSpace(trimmed)
 }

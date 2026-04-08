@@ -24,25 +24,46 @@ func New(repo *postgres.Store) *Service {
 }
 
 func (s *Service) Search(ctx context.Context, principal auth.AuthPrincipal, input SearchInput) ([]domain.UserSearchItem, error) {
-	query := strings.TrimSpace(input.Query)
+	rawQuery := strings.TrimSpace(input.Query)
+	query := normalizeUserQuery(rawQuery)
 	if len(query) < 2 {
 		return []domain.UserSearchItem{}, nil
 	}
 
-	items, err := s.repo.SearchAccountsByEmail(ctx, query, input.Limit)
+	profileItems, err := s.repo.SearchUserProfiles(ctx, query, input.Limit)
 	if err != nil {
 		return nil, service.NewError(service.ErrorCodeInternal, "failed to search users")
 	}
 
-	filtered := make([]domain.UserSearchItem, 0, len(items))
-	for _, item := range items {
+	result := make([]domain.UserSearchItem, 0, len(profileItems))
+	seen := make(map[string]struct{}, len(profileItems))
+
+	appendUnique := func(item domain.UserSearchItem) {
 		if item.AccountID == principal.AccountID {
-			continue
+			return
 		}
-		filtered = append(filtered, item)
+		if _, exists := seen[item.AccountID]; exists {
+			return
+		}
+		seen[item.AccountID] = struct{}{}
+		result = append(result, item)
 	}
 
-	return filtered, nil
+	for _, item := range profileItems {
+		appendUnique(item)
+	}
+
+	if strings.Contains(rawQuery, "@") {
+		emailItems, emailErr := s.repo.SearchAccountsByEmail(ctx, rawQuery, input.Limit)
+		if emailErr != nil {
+			return nil, service.NewError(service.ErrorCodeInternal, "failed to search users")
+		}
+		for _, item := range emailItems {
+			appendUnique(item)
+		}
+	}
+
+	return result, nil
 }
 
 func (s *Service) GetPublicProfile(ctx context.Context, principal auth.AuthPrincipal, accountID string) (domain.UserPublicProfile, error) {
@@ -83,4 +104,10 @@ func (s *Service) GetPublicProfile(ctx context.Context, principal auth.AuthPrinc
 		CanStartDirectChat:         canStartDirect,
 		ExistingDirectConversation: existingDirectConversationID,
 	}, nil
+}
+
+func normalizeUserQuery(value string) string {
+	trimmed := strings.TrimSpace(value)
+	trimmed = strings.TrimLeft(trimmed, "@")
+	return strings.TrimSpace(trimmed)
 }

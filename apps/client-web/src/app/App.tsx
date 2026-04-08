@@ -183,6 +183,7 @@ function App() {
   const [groupMembers, setGroupMembers] = React.useState<string[]>([]);
   const [exploreQuery, setExploreQuery] = React.useState("");
   const [exploreLoading, setExploreLoading] = React.useState(false);
+  const [exploreHasSearched, setExploreHasSearched] = React.useState(false);
   const [exploreUsers, setExploreUsers] = React.useState<ProfileDTO[]>([]);
   const [explorePosts, setExplorePosts] = React.useState<CreateSocialPostResponse["post"][]>([]);
   const [myProfile, setMyProfile] = React.useState<ProfileDTO | null>(null);
@@ -691,13 +692,18 @@ function App() {
   const searchUsers = async (query: string) => {
     if (!api || !session) return;
     setUserSearchQuery(query);
-    const trimmed = query.trim();
+    const trimmed = normalizeUserSearchInput(query);
     if (trimmed.length < 2) {
       setUserSearchResults([]);
       return;
     }
-    const response = await api.searchUsers(session.accessToken, trimmed, 20);
-    setUserSearchResults(response.users);
+    try {
+      const response = await api.searchUsers(session.accessToken, trimmed, 20);
+      setUserSearchResults(response.users);
+    } catch (error) {
+      setUserSearchResults([]);
+      setGlobalError(toUserError(error));
+    }
   };
 
   const createDirect = async (accountId: string) => {
@@ -728,13 +734,15 @@ function App() {
 
   const runExploreSearch = async () => {
     if (!api || !session) return;
-    const query = exploreQuery.trim();
+    const query = normalizeUserSearchInput(exploreQuery);
     if (query.length < 2) {
+      setExploreHasSearched(false);
       setExploreUsers([]);
       setExplorePosts([]);
       return;
     }
 
+    setExploreHasSearched(true);
     setExploreLoading(true);
     try {
       const [profilesResponse, postsResponse] = await Promise.all([
@@ -853,6 +861,13 @@ function App() {
     if (!api || !session) return;
     try {
       await api.createFriendRequest(session.accessToken, { targetAccountId: accountId as never });
+      setExploreUsers((current) =>
+        current.map((item) =>
+          (item.accountId as string) === accountId
+            ? { ...item, friendState: "outgoing_request", canSendFriendRequest: false }
+            : item,
+        ),
+      );
       await loadProfileState(
         api,
         session,
@@ -868,6 +883,7 @@ function App() {
         const refreshed = await api.getUserProfile(session.accessToken, accountId);
         setProfileTarget(refreshed.profile);
       }
+      setSettingsMessage("Заявка в друзья отправлена.");
     } catch (error) {
       setGlobalError(toUserError(error));
     }
@@ -1039,6 +1055,7 @@ function App() {
   };
 
   const activeBucket = activeConversationId ? messagesByConversation[activeConversationId] : undefined;
+  const viewedProfile = profileTarget ?? myProfile;
 
   if (booting) {
     return <StandaloneCard title="Запуск приложения" subtitle="Проверяем сервер и сессию..." />;
@@ -1309,6 +1326,12 @@ function App() {
                   <input
                     value={exploreQuery}
                     onChange={(event) => setExploreQuery(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        void runExploreSearch();
+                      }
+                    }}
                     placeholder="Введите @username, имя или текст публикации"
                     className="w-full rounded-lg border bg-transparent px-3 py-2 outline-none"
                     style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)" }}
@@ -1325,7 +1348,8 @@ function App() {
               <div className="grid gap-4 lg:grid-cols-2">
                 <div className="rounded-2xl border p-4 space-y-3" style={cardStyle}>
                   <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>Люди</p>
-                  {exploreUsers.length === 0 ? <InlineInfo text="Введите запрос, чтобы найти пользователей." /> : null}
+                  {!exploreHasSearched ? <InlineInfo text="Введите запрос, чтобы найти пользователей." /> : null}
+                  {exploreHasSearched && !exploreLoading && exploreUsers.length === 0 ? <InlineInfo text="Пользователи не найдены." /> : null}
                   {exploreUsers.map((item) => (
                     <div key={item.accountId as string} className="rounded-xl border p-3 space-y-2" style={innerCardStyle}>
                       <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>
@@ -1356,7 +1380,8 @@ function App() {
 
                 <div className="rounded-2xl border p-4 space-y-3" style={cardStyle}>
                   <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>Публикации</p>
-                  {explorePosts.length === 0 ? <InlineInfo text="Нет публикаций по запросу." /> : null}
+                  {!exploreHasSearched ? <InlineInfo text="Введите запрос для публикаций." /> : null}
+                  {exploreHasSearched && !exploreLoading && explorePosts.length === 0 ? <InlineInfo text="Публикации не найдены." /> : null}
                   {explorePosts.map((post) => (
                     <PostCard
                       key={post.id as string}
@@ -1402,24 +1427,55 @@ function App() {
           {section === "profile" ? (
             <section className="space-y-4">
               <div className="rounded-2xl border overflow-hidden" style={cardStyle}>
-                <div
-                  className="h-28 border-b"
-                  style={{ borderColor: "var(--glass-border)", background: "linear-gradient(135deg,#2b2f3f,#1a1f29)" }}
-                />
+                <div className="h-36 border-b relative overflow-hidden" style={{ borderColor: "var(--glass-border)" }}>
+                  {viewedProfile?.bannerMediaId ? (
+                    <AuthenticatedImage
+                      mediaId={viewedProfile.bannerMediaId as string}
+                      accessToken={session.accessToken}
+                      apiBaseUrl={server.config.apiBaseUrl}
+                      apiPrefix={server.config.apiPrefix}
+                      alt="Обложка профиля"
+                      className="absolute inset-0 w-full h-full object-cover"
+                      fallbackClassName="absolute inset-0 w-full h-full"
+                    />
+                  ) : (
+                    <div className="absolute inset-0" style={{ background: "linear-gradient(135deg,#2b2f3f,#1a1f29)" }} />
+                  )}
+                  <div className="absolute inset-0" style={{ background: "linear-gradient(to bottom, rgba(0,0,0,0.18), rgba(0,0,0,0.45))" }} />
+                </div>
                 <div className="p-4 space-y-3">
                   <div className="flex items-start justify-between gap-4">
-                    <div>
+                    <div className="flex items-start gap-3">
+                      <div className="w-16 h-16 rounded-full border overflow-hidden shrink-0" style={{ borderColor: "var(--glass-border)", backgroundColor: "rgba(8,8,8,0.45)" }}>
+                        {viewedProfile?.avatarMediaId ? (
+                          <AuthenticatedImage
+                            mediaId={viewedProfile.avatarMediaId as string}
+                            accessToken={session.accessToken}
+                            apiBaseUrl={server.config.apiBaseUrl}
+                            apiPrefix={server.config.apiPrefix}
+                            alt="Аватар профиля"
+                            className="w-full h-full object-cover"
+                            fallbackClassName="w-full h-full"
+                          />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center" style={{ color: "var(--base-grey-light)", fontSize: 12 }}>
+                            AV
+                          </div>
+                        )}
+                      </div>
+                      <div>
                       <p style={{ color: "var(--text-primary)", fontSize: 22, fontWeight: 700 }}>
-                        {(profileTarget ?? myProfile)?.displayName || "Профиль"}
+                        {viewedProfile?.displayName || "Профиль"}
                       </p>
                       <p style={{ color: "var(--base-grey-light)" }}>
-                        @{(profileTarget ?? myProfile)?.username || "username"}
+                        @{viewedProfile?.username || "username"}
                       </p>
-                      {(profileTarget ?? myProfile)?.statusText ? (
+                      {viewedProfile?.statusText ? (
                         <p style={{ color: "var(--base-grey-light)", marginTop: 8 }}>
-                          {(profileTarget ?? myProfile)?.statusText}
+                          {viewedProfile.statusText}
                         </p>
                       ) : null}
+                    </div>
                     </div>
                     <div className="flex gap-2 flex-wrap justify-end">
                       {profileTarget ? (
@@ -1507,18 +1563,18 @@ function App() {
                     </div>
                   </div>
 
-                  {(profileTarget ?? myProfile)?.bio ? (
-                    <p style={{ color: "var(--text-primary)" }}>{(profileTarget ?? myProfile)?.bio}</p>
+                  {viewedProfile?.bio ? (
+                    <p style={{ color: "var(--text-primary)" }}>{viewedProfile.bio}</p>
                   ) : (
                     <p style={{ color: "var(--base-grey-light)" }}>
-                      {(profileTarget ?? myProfile) ? "Пока нет описания профиля." : "Профиль загружается..."}
+                      {viewedProfile ? "Пока нет описания профиля." : "Профиль загружается..."}
                     </p>
                   )}
 
                   <div className="flex flex-wrap gap-3 text-sm">
-                    <span style={{ color: "var(--base-grey-light)" }}>Публикации: {(profileTarget ?? myProfile)?.postCount ?? 0}</span>
-                    <span style={{ color: "var(--base-grey-light)" }}>Фото: {(profileTarget ?? myProfile)?.photoCount ?? 0}</span>
-                    <span style={{ color: "var(--base-grey-light)" }}>Друзья: {(profileTarget ?? myProfile)?.friendCount ?? 0}</span>
+                    <span style={{ color: "var(--base-grey-light)" }}>Публикации: {viewedProfile?.postCount ?? 0}</span>
+                    <span style={{ color: "var(--base-grey-light)" }}>Фото: {viewedProfile?.photoCount ?? 0}</span>
+                    <span style={{ color: "var(--base-grey-light)" }}>Друзья: {viewedProfile?.friendCount ?? 0}</span>
                   </div>
                 </div>
               </div>
@@ -1923,6 +1979,73 @@ function StandaloneCard({ title, subtitle, children }: { title: string; subtitle
   );
 }
 
+function AuthenticatedImage(props: {
+  mediaId: string;
+  accessToken: string;
+  apiBaseUrl: string;
+  apiPrefix: string;
+  alt: string;
+  className?: string;
+  fallbackClassName?: string;
+}) {
+  const { mediaId, accessToken, apiBaseUrl, apiPrefix, alt, className, fallbackClassName } = props;
+  const [blobUrl, setBlobUrl] = React.useState<string | null>(null);
+  const [error, setError] = React.useState("");
+
+  React.useEffect(() => {
+    let disposed = false;
+    let currentObjectUrl: string | null = null;
+
+    const load = async () => {
+      setError("");
+      setBlobUrl(null);
+      try {
+        const endpoint = `${apiBaseUrl}${apiPrefix}/media/${mediaId}/content`;
+        const response = await fetch(endpoint, {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+        });
+        if (!response.ok) {
+          throw new Error("Не удалось загрузить изображение.");
+        }
+        const blob = await response.blob();
+        currentObjectUrl = URL.createObjectURL(blob);
+        if (!disposed) {
+          setBlobUrl(currentObjectUrl);
+        }
+      } catch (loadError) {
+        if (!disposed) {
+          setError(loadError instanceof Error ? loadError.message : "Не удалось загрузить изображение.");
+        }
+      }
+    };
+
+    void load();
+    return () => {
+      disposed = true;
+      if (currentObjectUrl) {
+        URL.revokeObjectURL(currentObjectUrl);
+      }
+    };
+  }, [accessToken, apiBaseUrl, apiPrefix, mediaId]);
+
+  if (!blobUrl) {
+    return (
+      <div className={fallbackClassName ?? className} style={{ background: "linear-gradient(135deg,#2b2f3f,#1a1f29)" }}>
+        {error ? (
+          <div className="w-full h-full flex items-center justify-center" style={{ color: "var(--base-grey-light)", fontSize: 12 }}>
+            Ошибка загрузки
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  return <img src={blobUrl} alt={alt} className={className} />;
+}
+
 function MessageRow({
   message,
   onResend,
@@ -2012,6 +2135,10 @@ function sectionTitle(section: SidebarSection): string {
 function sectionSubtitle(section: SidebarSection, server: string, transportState: RuntimeTransportState): string {
   if (section === "messages") return `Сервер: ${server} · ${transportState.status}`;
   return `Сервер: ${server}`;
+}
+
+function normalizeUserSearchInput(value: string): string {
+  return value.trim().replace(/^@+/, "").trim();
 }
 
 function renderVisibilityScope(value: string): string {
