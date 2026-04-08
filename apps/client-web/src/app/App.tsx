@@ -73,6 +73,7 @@ import {
   base64ToBytes,
   collectRecipients,
   decodeMessage,
+  hasCompatibleRecipientDevices,
   upsertMessageItems,
   uploadEncryptedAttachments,
 } from "./message-helpers";
@@ -669,6 +670,9 @@ function App() {
 
     try {
       const details = conversationDetails[conversationId] ?? (await api.getConversation(session.accessToken, conversationId)).conversation;
+      if (!hasCompatibleRecipientDevices(details.members, session.accountId)) {
+        throw new Error("У получателя нет совместимого устройства для защищенных сообщений. Попросите его заново войти в приложение.");
+      }
       const recipients = collectRecipients(details.members);
       if (recipients.length === 0) throw new Error("Нет доступных устройств получателей.");
       const attachmentSecrets = await uploadEncryptedAttachments(api, session.accessToken, uploads);
@@ -709,6 +713,7 @@ function App() {
       setUploadsByConversation((prev) => ({ ...prev, [conversationId]: [] }));
       void loadSummaries(api, session, setSummaries, setSummariesLoading, setSummariesError, setActiveConversationId);
     } catch (error) {
+      setRuntimeError(toUserError(error));
       setMessagesByConversation((prev) => {
         const bucket = prev[conversationId] ?? { loading: false, error: "", items: [] };
         return {

@@ -58,10 +58,23 @@ export function collectRecipients(members: ConversationDTO["members"]): Recipien
   for (const member of members) {
     if (!member.isActive) continue;
     for (const device of member.trustedDevices) {
-      result.push({ recipientDeviceId: device.id as string, publicKey: device.publicDeviceMaterial });
+      const publicKey = String(device.publicDeviceMaterial ?? "").trim();
+      if (!isCompatiblePublicKey(publicKey)) {
+        continue;
+      }
+      result.push({ recipientDeviceId: device.id as string, publicKey });
     }
   }
   return result;
+}
+
+export function hasCompatibleRecipientDevices(members: ConversationDTO["members"], accountId: string): boolean {
+  return members.some(
+    (member) =>
+      member.isActive &&
+      (member.accountId as string) !== accountId &&
+      member.trustedDevices.some((device) => isCompatiblePublicKey(String(device.publicDeviceMaterial ?? "").trim())),
+  );
 }
 
 export async function applySyncBatch(
@@ -280,5 +293,15 @@ export function base64ToBytes(value: string): Uint8Array {
     result[index] = binary.charCodeAt(index);
   }
   return result;
+}
+
+function isCompatiblePublicKey(value: string): boolean {
+  if (!value) return false;
+  try {
+    const decoded = atob(value);
+    return decoded.length === 32;
+  } catch {
+    return false;
+  }
 }
 
