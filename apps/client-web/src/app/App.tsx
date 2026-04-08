@@ -348,7 +348,7 @@ function App() {
       runtimeRef.current?.stop();
       runtimeRef.current = null;
     };
-  }, [api, session?.accessToken, session?.deviceId, activeConversationId, ensureDeviceMaterial]);
+  }, [api, session?.accessToken, session?.deviceId, activeConversationId]);
 
   React.useEffect(() => {
     if (!activeConversationId) return;
@@ -431,7 +431,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [session?.deviceId, ensureDeviceMaterial]);
+  }, [session?.deviceId]);
 
   const applySession = React.useCallback(
     async (response: LoginSuccessResponse, fallbackEmail?: string) => {
