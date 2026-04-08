@@ -11,14 +11,16 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o
 FROM alpine:3.20
 
 RUN addgroup -S app && adduser -S -G app -h /app app \
-    && apk add --no-cache ca-certificates wget
+    && apk add --no-cache ca-certificates wget su-exec
 
 WORKDIR /app
 COPY --from=builder /out/relay-server /app/relay-server
+COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 
-RUN mkdir -p /app/data/attachments \
+RUN chmod +x /app/docker-entrypoint.sh \
+    && mkdir -p /app/data/attachments /app/data/media \
     && chown -R app:app /app
 
-USER app
+USER root
 EXPOSE 8080
-ENTRYPOINT ["/app/relay-server"]
+ENTRYPOINT ["/app/docker-entrypoint.sh"]

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -115,6 +116,15 @@ func (s *Service) Upload(ctx context.Context, input UploadInput) (domain.MediaOb
 	}
 	if s.cfg.LocalMaxPerUserBytes > 0 && usedBytes+int64(len(input.Payload)) > s.cfg.LocalMaxPerUserBytes {
 		return domain.MediaObject{}, service.NewError(service.ErrorCodeValidation, "media quota exceeded for current account")
+	}
+	if strings.EqualFold(s.cfg.StorageBackend, "local") && s.cfg.LocalMaxTotalBytes > 0 {
+		totalBytes, totalErr := s.repo.CountActiveMediaSizeTotal(ctx)
+		if totalErr != nil {
+			return domain.MediaObject{}, service.NewError(service.ErrorCodeInternal, "failed to calculate total media quota")
+		}
+		if totalBytes+int64(len(input.Payload)) > s.cfg.LocalMaxTotalBytes {
+			return domain.MediaObject{}, service.NewError(service.ErrorCodeValidation, "server media storage quota exceeded")
+		}
 	}
 
 	mediaID := security.NewID()
@@ -236,6 +246,43 @@ func (s *Service) ListByOwner(ctx context.Context, principal auth.AuthPrincipal,
 		return nil, service.NewError(service.ErrorCodeInternal, "failed to list media")
 	}
 	return items, nil
+}
+
+func (s *Service) RunCleanupLoop(ctx context.Context, logger *slog.Logger) {
+	interval := s.cfg.CleanupInterval
+	if interval <= 0 {
+		interval = 30 * time.Minute
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := s.RunCleanupIteration(ctx); err != nil && logger != nil {
+				logger.Warn("media cleanup iteration failed", "error", err)
+			}
+		}
+	}
+}
+
+func (s *Service) RunCleanupIteration(ctx context.Context) error {
+	expired, err := s.repo.ListExpiredMedia(ctx, time.Now().UTC(), 300)
+	if err != nil {
+		return err
+	}
+	for _, item := range expired {
+		if deleteErr := s.storage.Delete(ctx, item.ObjectKey); deleteErr != nil {
+			// Keep row active so the next cleanup iteration can retry deletion.
+			return deleteErr
+		}
+		if markErr := s.repo.MarkMediaExpired(ctx, item.ID); markErr != nil {
+			return markErr
+		}
+	}
+	return nil
 }
 
 func detectMimeType(payload []byte) string {

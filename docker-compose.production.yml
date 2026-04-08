@@ -113,6 +113,9 @@ services:
       timeout: 5s
       retries: 10
       start_period: 15s
+    depends_on:
+      relay-server:
+        condition: service_healthy
     restart: unless-stopped
     networks:
       - backend

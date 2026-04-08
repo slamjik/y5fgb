@@ -2142,7 +2142,7 @@ function normalizeUserSearchInput(value: string): string {
 }
 
 function renderVisibilityScope(value: string): string {
-  if (value === "public") return "всем";
+  if (value === "public" || value === "everyone") return "всем";
   if (value === "friends") return "друзьям";
   if (value === "only_me") return "только мне";
   return value;
@@ -2686,6 +2686,7 @@ function toUserError(error: unknown): string {
     if (error.code === "invalid_credentials") return "Неверный email или пароль.";
     if (error.code === "two_fa_required") return "Нужен код двухфакторной аутентификации.";
     if (error.code === "account_already_exists") return "Аккаунт уже существует.";
+    if (error.code === "network_error") return "Не удалось подключиться к серверу.";
     return error.message || "Ошибка запроса.";
   }
   if (error instanceof Error) return error.message || "Произошла ошибка.";

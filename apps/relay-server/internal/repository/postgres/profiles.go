@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -56,6 +57,59 @@ func (s *Store) GetUserProfileByAccountID(ctx context.Context, accountID string)
 	profile.Location = normalizeNullableText(profile.Location)
 	profile.WebsiteURL = normalizeNullableText(profile.WebsiteURL)
 	return profile, nil
+}
+
+func (s *Store) EnsureDefaultProfileAndPrivacy(ctx context.Context, account domain.Account) error {
+	accountID := strings.TrimSpace(account.ID)
+	if accountID == "" {
+		return fmt.Errorf("account id is required")
+	}
+
+	displayName := defaultDisplayNameFromEmail(account.Email)
+	username := defaultUsernameFromAccount(account.ID, account.Email)
+
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO user_profiles (
+			account_id,
+			display_name,
+			username,
+			bio,
+			status_text,
+			location,
+			website_url,
+			created_at,
+			updated_at
+		)
+		VALUES ($1, $2, $3, '', '', '', '', NOW(), NOW())
+		ON CONFLICT (account_id) DO NOTHING
+	`, accountID, displayName, username)
+	if err != nil {
+		return fmt.Errorf("failed to ensure default user profile: %w", err)
+	}
+
+	_, err = s.pool.Exec(ctx, `
+		INSERT INTO profile_privacy_settings (
+			account_id,
+			profile_visibility,
+			posts_visibility,
+			photos_visibility,
+			stories_visibility,
+			friends_visibility,
+			birth_date_visibility,
+			location_visibility,
+			links_visibility,
+			friend_requests_policy,
+			dm_policy,
+			updated_at
+		)
+		VALUES ($1, 'everyone', 'friends', 'friends', 'friends', 'friends', 'friends', 'friends', 'friends', 'everyone', 'friends', NOW())
+		ON CONFLICT (account_id) DO NOTHING
+	`, accountID)
+	if err != nil {
+		return fmt.Errorf("failed to ensure default profile privacy settings: %w", err)
+	}
+
+	return nil
 }
 
 func (s *Store) GetUserProfileByUsername(ctx context.Context, username string) (domain.UserProfile, error) {
@@ -171,8 +225,8 @@ func (s *Store) UpdateUserProfile(ctx context.Context, profile domain.UserProfil
 			bio = $4,
 			status_text = $5,
 			birth_date = $6,
-			location = $7,
-			website_url = $8,
+			location = COALESCE($7, ''),
+			website_url = COALESCE($8, ''),
 			avatar_media_id = $9,
 			banner_media_id = $10,
 			username_changed_at = $11,
@@ -289,4 +343,51 @@ func nullableText(value *string) any {
 		return nil
 	}
 	return trimmed
+}
+
+var usernameAllowedCharsPattern = regexp.MustCompile(`[^a-z0-9._-]+`)
+
+func defaultDisplayNameFromEmail(email string) string {
+	local := strings.TrimSpace(strings.Split(strings.ToLower(strings.TrimSpace(email)), "@")[0])
+	if local == "" {
+		return "user"
+	}
+	if len(local) > 64 {
+		return local[:64]
+	}
+	return local
+}
+
+func defaultUsernameFromAccount(accountID string, email string) string {
+	local := strings.TrimSpace(strings.Split(strings.ToLower(strings.TrimSpace(email)), "@")[0])
+	base := usernameAllowedCharsPattern.ReplaceAllString(local, "")
+	base = strings.Trim(base, "._-")
+	if base == "" {
+		base = "user"
+	}
+
+	suffix := strings.ReplaceAll(strings.TrimSpace(accountID), "-", "")
+	if len(suffix) > 6 {
+		suffix = suffix[:6]
+	}
+	if suffix == "" {
+		suffix = "000000"
+	}
+
+	const maxUsernameLength = 24
+	maxBaseLen := maxUsernameLength - 1 - len(suffix)
+	if maxBaseLen < 3 {
+		maxBaseLen = 3
+	}
+	if len(base) > maxBaseLen {
+		base = base[:maxBaseLen]
+	}
+	base = strings.Trim(base, "._-")
+	if base == "" {
+		base = "user"
+		if len(base) > maxBaseLen {
+			base = base[:maxBaseLen]
+		}
+	}
+	return base + "_" + suffix
 }

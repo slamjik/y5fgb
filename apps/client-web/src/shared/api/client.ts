@@ -530,9 +530,7 @@ export class WebApiClient {
       const message =
         error instanceof Error && error.name === "AbortError"
           ? "Превышено время ожидания ответа сервера."
-          : error instanceof Error
-            ? error.message
-            : "network error";
+          : "Не удалось подключиться к серверу.";
       throw new ApiClientError(message, 0, "network_error");
     } finally {
       clearTimeout(timeoutHandle);
@@ -567,9 +565,7 @@ export class WebApiClient {
       const message =
         error instanceof Error && error.name === "AbortError"
           ? "Превышено время ожидания ответа сервера."
-          : error instanceof Error
-            ? error.message
-            : "network error";
+          : "Не удалось подключиться к серверу.";
       throw new ApiClientError(message, 0, "network_error");
     } finally {
       clearTimeout(timeoutHandle);

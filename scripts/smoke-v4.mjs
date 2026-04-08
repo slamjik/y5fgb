@@ -52,20 +52,22 @@ async function registerUser(label) {
   const suffix = randomId().slice(0, 10);
   const email = `smoke.${label}.${suffix}@example.com`;
   const password = "SmokePassword!234";
+  const accountIdentityMaterial = randomDeviceMaterial();
+  const deviceMaterial = randomDeviceMaterial();
 
   const response = await request("/auth/register", {
     method: "POST",
     body: {
       email,
       password,
-      accountIdentityMaterial: randomDeviceMaterial(),
-      accountIdentityFingerprint: crypto.randomBytes(16).toString("hex"),
+      accountIdentityMaterial,
+      accountIdentityFingerprint: sha256Hex(Buffer.from(accountIdentityMaterial.trim(), "utf8")),
       device: {
         deviceId: crypto.randomUUID(),
         name: `Smoke-${label}`,
-        platform: "desktop",
-        publicDeviceMaterial: randomDeviceMaterial(),
-        fingerprint: crypto.randomBytes(16).toString("hex"),
+        platform: "desktop-tauri",
+        publicDeviceMaterial: deviceMaterial,
+        fingerprint: sha256Hex(Buffer.from(deviceMaterial.trim(), "utf8")),
       },
     },
   });
@@ -142,8 +144,16 @@ async function run() {
       nonce: crypto.randomBytes(24).toString("base64"),
       ciphertext: crypto.randomBytes(64).toString("base64"),
       recipients: [
-        { recipientDeviceId: recipientDeviceA, wrappedKey: "wrapped-key-self", keyAlgorithm: "x25519-sealedbox" },
-        { recipientDeviceId: recipientDeviceB, wrappedKey: "wrapped-key-peer", keyAlgorithm: "x25519-sealedbox" },
+        {
+          recipientDeviceId: recipientDeviceA,
+          wrappedKey: crypto.randomBytes(48).toString("base64"),
+          keyAlgorithm: "x25519-sealedbox",
+        },
+        {
+          recipientDeviceId: recipientDeviceB,
+          wrappedKey: crypto.randomBytes(48).toString("base64"),
+          keyAlgorithm: "x25519-sealedbox",
+        },
       ],
       ttlSeconds: 90,
     },
@@ -192,8 +202,16 @@ async function run() {
       nonce: crypto.randomBytes(24).toString("base64"),
       ciphertext: crypto.randomBytes(96).toString("base64"),
       recipients: [
-        { recipientDeviceId: senderDeviceId, wrappedKey: "wrapped-key-self-2", keyAlgorithm: "x25519-sealedbox" },
-        { recipientDeviceId: recipientDeviceB, wrappedKey: "wrapped-key-peer-2", keyAlgorithm: "x25519-sealedbox" },
+        {
+          recipientDeviceId: senderDeviceId,
+          wrappedKey: crypto.randomBytes(48).toString("base64"),
+          keyAlgorithm: "x25519-sealedbox",
+        },
+        {
+          recipientDeviceId: recipientDeviceB,
+          wrappedKey: crypto.randomBytes(48).toString("base64"),
+          keyAlgorithm: "x25519-sealedbox",
+        },
       ],
       attachmentIds: [attachment.attachment.id],
     },

@@ -1157,12 +1157,21 @@ func (h *Handler) handleProfileSearch(w http.ResponseWriter, r *http.Request) {
 		WriteServiceError(w, r, err, http.StatusBadRequest)
 		return
 	}
-	payload := make([]userSearchItemDTO, 0, len(items))
+
+	payload := make([]profileDTO, 0, len(items))
 	for _, item := range items {
-		payload = append(payload, mapUserSearchItem(item))
+		profile, profileErr := h.profileService.GetProfileByAccountID(r.Context(), auth.AuthPrincipal{
+			AccountID: principal.AccountID,
+			DeviceID:  principal.DeviceID,
+			SessionID: principal.SessionID,
+		}, item.AccountID)
+		if profileErr != nil {
+			continue
+		}
+		payload = append(payload, mapProfile(profile))
 	}
 	WriteJSON(w, http.StatusOK, map[string]any{
-		"users": payload,
+		"profiles": payload,
 		"total": len(payload),
 		"limit": limit,
 	})
@@ -1586,7 +1595,7 @@ func (h *Handler) handleMediaUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	mediaDomain := domain.MediaDomain(strings.ToLower(strings.TrimSpace(r.FormValue("domain"))))
 	mediaKind := domain.MediaKind(strings.ToLower(strings.TrimSpace(r.FormValue("kind"))))
-	visibility := domain.VisibilityScope(strings.ToLower(strings.TrimSpace(r.FormValue("visibility"))))
+	visibility := normalizeVisibilityScopeInput(r.FormValue("visibility"))
 	if visibility == "" {
 		visibility = domain.VisibilityFriends
 	}
@@ -1686,7 +1695,7 @@ func (h *Handler) handleStories(w http.ResponseWriter, r *http.Request) {
 	}
 	var visibility *domain.VisibilityScope
 	if req.Visibility != nil {
-		value := domain.VisibilityScope(strings.ToLower(strings.TrimSpace(*req.Visibility)))
+		value := normalizeVisibilityScopeInput(*req.Visibility)
 		visibility = &value
 	}
 	created, err := h.storiesService.Create(r.Context(), auth.AuthPrincipal{
@@ -1842,7 +1851,7 @@ func (h *Handler) handleUserSubroutes(w http.ResponseWriter, r *http.Request) {
 		"username":                     profilePayload.Username,
 		"avatarMediaId":                profilePayload.AvatarMediaID,
 		"bannerMediaId":                profilePayload.BannerMediaID,
-		"friendState":                  profilePayload.FriendState,
+		"friendState":                  mapFriendState(profilePayload.FriendState),
 	})
 }
 
@@ -2585,8 +2594,16 @@ func parseVisibilityPointer(raw *string) *domain.VisibilityScope {
 	if raw == nil {
 		return nil
 	}
-	value := domain.VisibilityScope(strings.ToLower(strings.TrimSpace(*raw)))
+	value := normalizeVisibilityScopeInput(*raw)
 	return &value
+}
+
+func normalizeVisibilityScopeInput(raw string) domain.VisibilityScope {
+	value := domain.VisibilityScope(strings.ToLower(strings.TrimSpace(raw)))
+	if value == "public" {
+		return domain.VisibilityEveryone
+	}
+	return value
 }
 
 func parseFriendRequestPolicyPointer(raw *string) *domain.FriendRequestPolicy {

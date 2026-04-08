@@ -179,3 +179,16 @@ func (s *Service) Delete(ctx context.Context, principal auth.AuthPrincipal, stor
 	}
 	return nil
 }
+
+func (s *Service) RunCleanupIteration(ctx context.Context) error {
+	expired, err := s.repo.ListExpiredStories(ctx, time.Now().UTC(), 300)
+	if err != nil {
+		return err
+	}
+	for _, item := range expired {
+		if markErr := s.repo.MarkStoryExpired(ctx, item.ID); markErr != nil {
+			return markErr
+		}
+	}
+	return nil
+}

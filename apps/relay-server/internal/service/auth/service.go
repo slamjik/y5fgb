@@ -224,6 +224,10 @@ func (s *Service) Register(ctx context.Context, input RegisterInput) (*SessionEn
 
 registrationCreated:
 
+	if err := s.repo.EnsureDefaultProfileAndPrivacy(ctx, createdAccount); err != nil {
+		return nil, nil, service.NewError(service.ErrorCodeInternal, "failed to initialize default profile")
+	}
+
 	recoveryCodes, recoveryCodeModels, err := s.generateRecoveryCodes(createdAccount.ID, 10)
 	if err != nil {
 		return nil, nil, service.NewError(service.ErrorCodeInternal, "failed to generate recovery codes")
@@ -353,6 +357,10 @@ func (s *Service) RegisterWeb(ctx context.Context, input WebRegisterInput) (*Ses
 	}
 
 webRegistrationCreated:
+
+	if err := s.repo.EnsureDefaultProfileAndPrivacy(ctx, createdAccount); err != nil {
+		return nil, service.NewError(service.ErrorCodeInternal, "failed to initialize default profile")
+	}
 
 	sessionOptions := s.resolveWebSessionIssueOptions(input.SessionPersistence)
 	session, tokens, err := s.issueSessionWithOptions(ctx, createdAccount.ID, createdDevice.ID, input.UserAgent, input.IPAddress, sessionOptions)

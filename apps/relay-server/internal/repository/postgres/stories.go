@@ -213,6 +213,18 @@ func (s *Store) ListExpiredStories(ctx context.Context, before time.Time, limit 
 	return result, nil
 }
 
+func (s *Store) MarkStoryExpired(ctx context.Context, storyID string) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE stories
+		SET deleted_at = COALESCE(deleted_at, NOW())
+		WHERE id = $1
+	`, storyID)
+	if err != nil {
+		return fmt.Errorf("failed to mark story expired: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) ListFriendStoryNotifications(ctx context.Context, viewerAccountID string, limit int) ([]domain.StoryFeedItem, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 30

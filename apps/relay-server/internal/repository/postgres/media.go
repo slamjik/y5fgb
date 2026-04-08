@@ -272,6 +272,20 @@ func (s *Store) CountActiveMediaSizeByOwner(ctx context.Context, ownerAccountID 
 	return total, nil
 }
 
+func (s *Store) CountActiveMediaSizeTotal(ctx context.Context) (int64, error) {
+	var total int64
+	err := s.pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(size_bytes), 0)
+		FROM media_objects
+		WHERE deleted_at IS NULL
+		  AND status = 'active'
+	`).Scan(&total)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count active media total size: %w", err)
+	}
+	return total, nil
+}
+
 func (s *Store) CountMediaByOwner(ctx context.Context, ownerAccountID string, domainName *domain.MediaDomain, kinds []domain.MediaKind) (int64, error) {
 	query := `
 		SELECT COUNT(*)

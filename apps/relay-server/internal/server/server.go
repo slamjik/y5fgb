@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/example/secure-messenger/apps/relay-server/internal/config"
 	"github.com/example/secure-messenger/apps/relay-server/internal/migrations"
@@ -29,10 +30,13 @@ import (
 )
 
 type RelayServer struct {
-	cfg        config.Config
-	logger     *slog.Logger
-	httpServer *http.Server
-	repo       *postgres.Store
+	cfg               config.Config
+	logger            *slog.Logger
+	httpServer        *http.Server
+	repo              *postgres.Store
+	mediaService      *media.Service
+	storiesService    *stories.Service
+	maintenanceCancel context.CancelFunc
 }
 
 func New(cfg config.Config, logger *slog.Logger) (*RelayServer, error) {
@@ -91,7 +95,7 @@ func New(cfg config.Config, logger *slog.Logger) (*RelayServer, error) {
 
 	addr := net.JoinHostPort(cfg.HTTP.Host, strconv.Itoa(cfg.HTTP.Port))
 	originPolicy := middleware.NewOriginPolicy(cfg.WebSecurity)
-	hardeningChain := middleware.CORS(originPolicy, middleware.SecurityHeaders(middleware.RequestID(middleware.BodyLimit(32<<20, mux))))
+	hardeningChain := middleware.RequestID(middleware.CORS(originPolicy, middleware.SecurityHeaders(middleware.BodyLimit(32<<20, mux))))
 	httpServer := &http.Server{
 		Addr:         addr,
 		Handler:      hardeningChain,
@@ -101,14 +105,31 @@ func New(cfg config.Config, logger *slog.Logger) (*RelayServer, error) {
 	}
 
 	return &RelayServer{
-		cfg:        cfg,
-		logger:     logger,
-		httpServer: httpServer,
-		repo:       repo,
+		cfg:            cfg,
+		logger:         logger,
+		httpServer:     httpServer,
+		repo:           repo,
+		mediaService:   mediaService,
+		storiesService: storiesService,
 	}, nil
 }
 
 func (s *RelayServer) Start() error {
+	maintenanceCtx, cancelMaintenance := context.WithCancel(context.Background())
+	s.maintenanceCancel = cancelMaintenance
+	if s.mediaService != nil {
+		if err := s.mediaService.RunCleanupIteration(maintenanceCtx); err != nil {
+			s.logger.Warn("initial media cleanup iteration failed", "error", err)
+		}
+		go s.mediaService.RunCleanupLoop(maintenanceCtx, s.logger)
+	}
+	if s.storiesService != nil {
+		if err := s.storiesService.RunCleanupIteration(maintenanceCtx); err != nil {
+			s.logger.Warn("initial stories cleanup iteration failed", "error", err)
+		}
+		go s.runStoryCleanupLoop(maintenanceCtx)
+	}
+
 	s.logger.Info("starting relay server",
 		"addr", s.httpServer.Addr,
 		"health_path", s.cfg.HTTP.HealthPath,
@@ -130,6 +151,32 @@ func (s *RelayServer) Start() error {
 }
 
 func (s *RelayServer) Shutdown(ctx context.Context) error {
+	if s.maintenanceCancel != nil {
+		s.maintenanceCancel()
+	}
 	defer s.repo.Close()
 	return s.httpServer.Shutdown(ctx)
+}
+
+func (s *RelayServer) runStoryCleanupLoop(ctx context.Context) {
+	interval := s.cfg.Media.CleanupInterval
+	if interval <= 0 {
+		interval = 30 * time.Minute
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if s.storiesService == nil {
+				continue
+			}
+			if err := s.storiesService.RunCleanupIteration(ctx); err != nil {
+				s.logger.Warn("story cleanup iteration failed", "error", err)
+			}
+		}
+	}
 }

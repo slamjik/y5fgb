@@ -913,7 +913,7 @@ func mapProfile(profile domain.UserPublicProfile) profileDTO {
 		WebsiteURL:                 profile.WebsiteURL,
 		AvatarMediaID:              profile.AvatarMediaID,
 		BannerMediaID:              profile.BannerMediaID,
-		FriendState:                string(profile.FriendState),
+		FriendState:                mapFriendState(profile.FriendState),
 		PostCount:                  profile.PostCount,
 		PhotoCount:                 profile.PhotoCount,
 		FriendCount:                profile.FriendCount,
@@ -926,6 +926,17 @@ func mapProfile(profile domain.UserPublicProfile) profileDTO {
 		CanSendFriendRequest:       profile.CanSendFriendRequest,
 		CreatedAt:                  profile.CreatedAt.UTC().Format(time.RFC3339),
 		Privacy:                    mapProfilePrivacy(profile.Privacy),
+	}
+}
+
+func mapFriendState(state domain.FriendRelationState) string {
+	switch state {
+	case domain.FriendRelationIncoming:
+		return "incoming_request"
+	case domain.FriendRelationOutgoing:
+		return "outgoing_request"
+	default:
+		return string(state)
 	}
 }
 
