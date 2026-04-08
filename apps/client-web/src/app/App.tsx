@@ -588,7 +588,8 @@ function App() {
       setConversationDetails((prev) => ({ ...prev, [conversationId]: details.conversation }));
     }
 
-    if (!messagesByConversation[conversationId]) {
+    const existingBucket = messagesByConversation[conversationId];
+    if (!existingBucket || existingBucket.error) {
       setMessagesByConversation((prev) => ({
         ...prev,
         [conversationId]: { loading: true, error: "", items: [] },
@@ -615,6 +616,13 @@ function App() {
       }
     }
   };
+
+  React.useEffect(() => {
+    if (!activeConversationId || !api || !session) return;
+    const bucket = messagesByConversation[activeConversationId];
+    if (bucket && !bucket.error) return;
+    void openConversation(activeConversationId);
+  }, [activeConversationId, api, session?.accessToken, messagesByConversation]);
 
   const sendMessage = async (conversationId: string, retryText?: string) => {
     if (!api || !session) return;
