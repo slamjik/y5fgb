@@ -55,6 +55,30 @@ func TestNormalizeMedia(t *testing.T) {
 			mediaURL:  ptr("ftp://cdn.example.com/image.png"),
 			wantErr:   true,
 		},
+		{
+			name:      "reject localhost media url",
+			mediaType: &imageType,
+			mediaURL:  ptr("http://localhost/image.png"),
+			wantErr:   true,
+		},
+		{
+			name:      "reject private ip media url",
+			mediaType: &imageType,
+			mediaURL:  ptr("https://10.0.0.4/image.png"),
+			wantErr:   true,
+		},
+		{
+			name:      "reject loopback ip media url",
+			mediaType: &imageType,
+			mediaURL:  ptr("http://127.0.0.1/image.png"),
+			wantErr:   true,
+		},
+		{
+			name:      "reject ipv6 loopback media url",
+			mediaType: &videoType,
+			mediaURL:  ptr("http://[::1]/video.mp4"),
+			wantErr:   true,
+		},
 	}
 
 	for _, testCase := range tests {
@@ -73,7 +97,7 @@ func TestNormalizeMedia(t *testing.T) {
 }
 
 func TestNormalizeMood(t *testing.T) {
-	valid := "радость"
+	valid := "happy"
 	got, err := normalizeMood(&valid)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)

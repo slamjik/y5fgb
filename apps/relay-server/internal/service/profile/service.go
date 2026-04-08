@@ -194,7 +194,6 @@ func (s *Service) GetProfileByAccountID(ctx context.Context, principal auth.Auth
 
 	result := domain.UserPublicProfile{
 		AccountID:                  account.ID,
-		Email:                      account.Email,
 		DisplayName:                profile.DisplayName,
 		Username:                   profile.Username,
 		Bio:                        profile.Bio,
@@ -217,6 +216,9 @@ func (s *Service) GetProfileByAccountID(ctx context.Context, principal auth.Auth
 		CanViewStories:             canViewStories,
 		CanViewFriends:             canViewFriends,
 		CanSendFriendRequest:       canSendFriendRequest && principal.AccountID != targetAccountID && friendState == domain.FriendRelationNone,
+	}
+	if principal.AccountID == targetAccountID {
+		result.Email = account.Email
 	}
 
 	if visible, visErr := s.privacyPolicy.CanView(ctx, targetAccountID, principal.AccountID, settings.BirthDateVisibility); visErr == nil && !visible {

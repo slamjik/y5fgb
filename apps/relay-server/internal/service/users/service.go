@@ -53,16 +53,6 @@ func (s *Service) Search(ctx context.Context, principal auth.AuthPrincipal, inpu
 		appendUnique(item)
 	}
 
-	if strings.Contains(rawQuery, "@") {
-		emailItems, emailErr := s.repo.SearchAccountsByEmail(ctx, rawQuery, input.Limit)
-		if emailErr != nil {
-			return nil, service.NewError(service.ErrorCodeInternal, "failed to search users")
-		}
-		for _, item := range emailItems {
-			appendUnique(item)
-		}
-	}
-
 	return result, nil
 }
 
@@ -96,14 +86,17 @@ func (s *Service) GetPublicProfile(ctx context.Context, principal auth.AuthPrinc
 		}
 	}
 
-	return domain.UserPublicProfile{
+	profile := domain.UserPublicProfile{
 		AccountID:                  account.ID,
-		Email:                      account.Email,
 		CreatedAt:                  account.CreatedAt,
 		PostCount:                  postCount,
 		CanStartDirectChat:         canStartDirect,
 		ExistingDirectConversation: existingDirectConversationID,
-	}, nil
+	}
+	if principal.AccountID == resolvedAccountID {
+		profile.Email = account.Email
+	}
+	return profile, nil
 }
 
 func normalizeUserQuery(value string) string {

@@ -129,7 +129,7 @@ if [[ ! -f "$IP_OVERRIDE_FILE" ]]; then
   exit 1
 fi
 
-read -rp "Введите домен или IP: " server_input
+read -rp "Enter domain or IP: " server_input
 server_host="$(normalize_server_input "$server_input")"
 
 if [[ -z "$server_host" ]]; then
@@ -144,7 +144,7 @@ fi
 
 if [[ "$mode" == "domain" ]]; then
   default_email="admin@$server_host"
-  read -rp "Email для TLS сертификата [${default_email}]: " acme_email
+  read -rp "Email for TLS certificate [${default_email}]: " acme_email
   acme_email="$(trim "${acme_email:-$default_email}")"
   if [[ -z "$acme_email" ]]; then
     acme_email="$default_email"
@@ -306,8 +306,8 @@ fi
 "${compose_cmd[@]}" ps
 
 printf '\n==============================\n'
-printf 'СЕРВЕР ГОТОВ\n\n'
-printf 'Сайт:\n%s\n\n' "$site_url"
+printf 'SERVER IS READY\n\n'
+printf 'Site:\n%s\n\n' "$site_url"
 printf 'API:\n%s\n\n' "$api_base"
-printf 'Веб-клиент подключится автоматически.\n'
+printf 'Web client will connect automatically.\n'
 printf '==============================\n'

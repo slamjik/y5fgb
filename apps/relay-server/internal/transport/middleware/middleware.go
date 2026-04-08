@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -216,7 +217,18 @@ func (rl *IPRateLimiter) gc(now time.Time) {
 	}
 }
 
+func RateLimitKeyFromRequest(trustProxyHeaders bool) RateLimitKeyFn {
+	if trustProxyHeaders {
+		return forwardedOrRemoteRateLimitKey
+	}
+	return remoteRateLimitKey
+}
+
 func defaultRateLimitKey(r *http.Request) string {
+	return remoteRateLimitKey(r)
+}
+
+func forwardedOrRemoteRateLimitKey(r *http.Request) string {
 	forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-For"))
 	if forwarded != "" {
 		parts := strings.Split(forwarded, ",")
@@ -227,13 +239,20 @@ func defaultRateLimitKey(r *http.Request) string {
 			}
 		}
 	}
+	return remoteRateLimitKey(r)
+}
 
+func remoteRateLimitKey(r *http.Request) string {
 	addr := strings.TrimSpace(r.RemoteAddr)
-	if index := strings.LastIndex(addr, ":"); index != -1 {
-		return addr[:index]
-	}
 	if addr == "" {
 		return "unknown"
+	}
+	host, _, err := net.SplitHostPort(addr)
+	if err == nil && strings.TrimSpace(host) != "" {
+		return strings.TrimSpace(host)
+	}
+	if index := strings.LastIndex(addr, ":"); index != -1 {
+		return addr[:index]
 	}
 	return addr
 }

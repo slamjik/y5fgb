@@ -1,4 +1,4 @@
-FROM node:20-alpine AS build
+FROM node:22-alpine AS build
 WORKDIR /app
 
 ARG VITE_API_BASE_URL
@@ -14,7 +14,7 @@ COPY . .
 RUN npm ci
 RUN npm run build --workspace apps/client-web
 
-FROM nginx:1.27-alpine
+FROM nginx:1.29-alpine
 WORKDIR /usr/share/nginx/html
 
 COPY infra/nginx/client-web.conf /etc/nginx/conf.d/default.conf

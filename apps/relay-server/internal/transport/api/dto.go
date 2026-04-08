@@ -872,7 +872,7 @@ func mapSocialPost(item domain.SocialPostFeedItem, viewerAccountID string) socia
 	return socialPostDTO{
 		ID:                item.Post.ID,
 		AuthorAccountID:   item.Post.AuthorAccountID,
-		AuthorEmail:       item.AuthorEmail,
+		AuthorEmail:       "",
 		AuthorDisplayName: item.AuthorDisplayName,
 		AuthorUsername:    item.AuthorUsername,
 		AuthorAvatarID:    item.AuthorAvatarID,
@@ -894,7 +894,7 @@ func mapSocialNotification(item domain.SocialNotification) socialNotificationDTO
 	return socialNotificationDTO{
 		PostID:         item.PostID,
 		ActorAccountID: item.ActorAccountID,
-		ActorEmail:     item.ActorEmail,
+		ActorEmail:     "",
 		PostPreview:    item.PostPreview,
 		CreatedAt:      item.CreatedAt.UTC().Format(time.RFC3339),
 	}
@@ -941,16 +941,20 @@ func mapFriendState(state domain.FriendRelationState) string {
 }
 
 func mapProfilePrivacy(settings domain.ProfilePrivacySettings) profilePrivacyDTO {
+	friendRequestsPolicy := string(settings.FriendRequestsPolicy)
+	if settings.FriendRequestsPolicy == domain.FriendRequestPolicyFriends {
+		friendRequestsPolicy = "friends_of_friends"
+	}
 	return profilePrivacyDTO{
-		ProfileVisibility:    string(settings.ProfileVisibility),
-		PostsVisibility:      string(settings.PostsVisibility),
-		PhotosVisibility:     string(settings.PhotosVisibility),
-		StoriesVisibility:    string(settings.StoriesVisibility),
-		FriendsVisibility:    string(settings.FriendsVisibility),
-		BirthDateVisibility:  string(settings.BirthDateVisibility),
-		LocationVisibility:   string(settings.LocationVisibility),
-		LinksVisibility:      string(settings.LinksVisibility),
-		FriendRequestsPolicy: string(settings.FriendRequestsPolicy),
+		ProfileVisibility:    mapVisibilityScopeForAPI(settings.ProfileVisibility),
+		PostsVisibility:      mapVisibilityScopeForAPI(settings.PostsVisibility),
+		PhotosVisibility:     mapVisibilityScopeForAPI(settings.PhotosVisibility),
+		StoriesVisibility:    mapVisibilityScopeForAPI(settings.StoriesVisibility),
+		FriendsVisibility:    mapVisibilityScopeForAPI(settings.FriendsVisibility),
+		BirthDateVisibility:  mapVisibilityScopeForAPI(settings.BirthDateVisibility),
+		LocationVisibility:   mapVisibilityScopeForAPI(settings.LocationVisibility),
+		LinksVisibility:      mapVisibilityScopeForAPI(settings.LinksVisibility),
+		FriendRequestsPolicy: friendRequestsPolicy,
 		DMPolicy:             string(settings.DMPolicy),
 		UpdatedAt:            settings.UpdatedAt.UTC().Format(time.RFC3339),
 	}
@@ -991,8 +995,7 @@ func mapMedia(media domain.MediaObject, apiPrefix string) mediaDTO {
 		MimeType:       media.MimeType,
 		SizeBytes:      media.SizeBytes,
 		ChecksumSHA256: media.ChecksumSHA256,
-		ObjectKey:      media.ObjectKey,
-		Visibility:     string(media.Visibility),
+		Visibility:     mapVisibilityScopeForAPI(media.Visibility),
 		Status:         string(media.Status),
 		CreatedAt:      media.CreatedAt.UTC().Format(time.RFC3339),
 		ExpiresAt:      formatNullableTime(media.ExpiresAt),
@@ -1012,8 +1015,7 @@ func mapOptionalMedia(media *domain.MediaObject) *mediaDTO {
 		MimeType:       media.MimeType,
 		SizeBytes:      media.SizeBytes,
 		ChecksumSHA256: media.ChecksumSHA256,
-		ObjectKey:      media.ObjectKey,
-		Visibility:     string(media.Visibility),
+		Visibility:     mapVisibilityScopeForAPI(media.Visibility),
 		Status:         string(media.Status),
 		CreatedAt:      media.CreatedAt.UTC().Format(time.RFC3339),
 		ExpiresAt:      formatNullableTime(media.ExpiresAt),
@@ -1033,11 +1035,18 @@ func mapStory(item domain.StoryFeedItem, apiPrefix string) storyDTO {
 		OwnerUsername:  item.OwnerUser,
 		OwnerAvatarID:  item.OwnerAvatar,
 		Caption:        item.Story.Caption,
-		Visibility:     string(item.Story.Visibility),
+		Visibility:     mapVisibilityScopeForAPI(item.Story.Visibility),
 		CreatedAt:      item.Story.CreatedAt.UTC().Format(time.RFC3339),
 		ExpiresAt:      item.Story.ExpiresAt.UTC().Format(time.RFC3339),
 		Media:          media,
 	}
+}
+
+func mapVisibilityScopeForAPI(value domain.VisibilityScope) string {
+	if value == domain.VisibilityEveryone {
+		return "public"
+	}
+	return string(value)
 }
 
 func mapAppNotification(item domain.AppNotification) appNotificationDTO {

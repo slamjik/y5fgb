@@ -95,7 +95,11 @@ func New(cfg config.Config, logger *slog.Logger) (*RelayServer, error) {
 
 	addr := net.JoinHostPort(cfg.HTTP.Host, strconv.Itoa(cfg.HTTP.Port))
 	originPolicy := middleware.NewOriginPolicy(cfg.WebSecurity)
-	hardeningChain := middleware.RequestID(middleware.CORS(originPolicy, middleware.SecurityHeaders(middleware.BodyLimit(32<<20, mux))))
+	bodyLimitBytes := int64(32 << 20)
+	bodyLimitBytes = maxInt64(bodyLimitBytes, cfg.Messaging.AttachmentMaxSizeBytes)
+	bodyLimitBytes = maxInt64(bodyLimitBytes, cfg.Media.MaxVideoBytes)
+
+	hardeningChain := middleware.RequestID(middleware.CORS(originPolicy, middleware.SecurityHeaders(middleware.BodyLimit(bodyLimitBytes, mux))))
 	httpServer := &http.Server{
 		Addr:         addr,
 		Handler:      hardeningChain,
@@ -112,6 +116,13 @@ func New(cfg config.Config, logger *slog.Logger) (*RelayServer, error) {
 		mediaService:   mediaService,
 		storiesService: storiesService,
 	}, nil
+}
+
+func maxInt64(a int64, b int64) int64 {
+	if b > a {
+		return b
+	}
+	return a
 }
 
 func (s *RelayServer) Start() error {

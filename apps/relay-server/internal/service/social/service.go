@@ -2,6 +2,7 @@ package social
 
 import (
 	"context"
+	"net/netip"
 	"net/url"
 	"strings"
 	"time"
@@ -196,7 +197,7 @@ func (s *Service) DeletePost(ctx context.Context, principal auth.AuthPrincipal, 
 }
 
 func (s *Service) LikePost(ctx context.Context, principal auth.AuthPrincipal, postID string) (int64, bool, error) {
-	if err := s.ensurePostVisibleToViewer(ctx, postID); err != nil {
+	if err := s.ensurePostVisibleToViewer(ctx, principal, postID); err != nil {
 		return 0, false, err
 	}
 	if err := s.repo.UpsertSocialPostLike(ctx, domain.SocialPostLike{
@@ -214,7 +215,7 @@ func (s *Service) LikePost(ctx context.Context, principal auth.AuthPrincipal, po
 }
 
 func (s *Service) UnlikePost(ctx context.Context, principal auth.AuthPrincipal, postID string) (int64, bool, error) {
-	if err := s.ensurePostVisibleToViewer(ctx, postID); err != nil {
+	if err := s.ensurePostVisibleToViewer(ctx, principal, postID); err != nil {
 		return 0, false, err
 	}
 	if err := s.repo.DeleteSocialPostLike(ctx, postID, principal.AccountID); err != nil {
@@ -238,7 +239,7 @@ func (s *Service) ListNotifications(ctx context.Context, principal auth.AuthPrin
 	return items, nil
 }
 
-func (s *Service) ensurePostVisibleToViewer(ctx context.Context, postID string) error {
+func (s *Service) ensurePostVisibleToViewer(ctx context.Context, principal auth.AuthPrincipal, postID string) error {
 	post, err := s.repo.GetSocialPostByID(ctx, postID)
 	if err != nil {
 		if err == postgres.ErrNotFound {
@@ -248,6 +249,33 @@ func (s *Service) ensurePostVisibleToViewer(ctx context.Context, postID string) 
 	}
 	if post.DeletedAt != nil {
 		return service.NewError(service.ErrorCodeNotFound, "social post not found")
+	}
+	if post.AuthorAccountID == principal.AccountID {
+		return nil
+	}
+
+	blockedByViewer, blockErr := s.repo.IsBlocked(ctx, principal.AccountID, post.AuthorAccountID)
+	if blockErr != nil {
+		return service.NewError(service.ErrorCodeInternal, "failed to resolve block state")
+	}
+	blockedByAuthor, blockErr := s.repo.IsBlocked(ctx, post.AuthorAccountID, principal.AccountID)
+	if blockErr != nil {
+		return service.NewError(service.ErrorCodeInternal, "failed to resolve block state")
+	}
+	if blockedByViewer || blockedByAuthor {
+		return service.NewError(service.ErrorCodeForbidden, "social post is not visible")
+	}
+
+	settings, settingsErr := s.privacyPolicy.GetSettings(ctx, post.AuthorAccountID)
+	if settingsErr != nil {
+		return settingsErr
+	}
+	canView, visibilityErr := s.privacyPolicy.CanView(ctx, post.AuthorAccountID, principal.AccountID, settings.PostsVisibility)
+	if visibilityErr != nil {
+		return visibilityErr
+	}
+	if !canView {
+		return service.NewError(service.ErrorCodeForbidden, "social post is not visible")
 	}
 	return nil
 }
@@ -299,6 +327,9 @@ func (s *Service) normalizeMediaInput(ctx context.Context, principal auth.AuthPr
 			if scheme != "http" && scheme != "https" {
 				return nil, nil, nil, service.NewError(service.ErrorCodeValidation, "media url must use http/https")
 			}
+			if isRestrictedMediaHost(parsed.Hostname()) {
+				return nil, nil, nil, service.NewError(service.ErrorCodeValidation, "media url host is not allowed")
+			}
 			normalized := parsed.String()
 			normalizedURL = &normalized
 		}
@@ -330,6 +361,27 @@ func normalizeMood(mood *string) (*string, error) {
 		return nil, service.NewError(service.ErrorCodeValidation, "mood is too long")
 	}
 	return &trimmed, nil
+}
+
+func isRestrictedMediaHost(hostname string) bool {
+	host := strings.ToLower(strings.TrimSpace(hostname))
+	if host == "" {
+		return true
+	}
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return true
+	}
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		return false
+	}
+	if addr.IsUnspecified() || addr.IsLoopback() || addr.IsMulticast() {
+		return true
+	}
+	if addr.IsPrivate() || addr.IsLinkLocalUnicast() || addr.IsLinkLocalMulticast() {
+		return true
+	}
+	return false
 }
 
 func normalizeOptionalText(value *string) *string {

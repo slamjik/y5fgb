@@ -26,6 +26,7 @@
   PrivacyResponse,
   PrivacyUpdateRequest,
   ProfileResponse,
+  ProfileDTO,
   ProfileSearchResponse,
   SecurityEventsResponse,
   SendMessageRequest,
@@ -133,14 +134,14 @@ export class WebApiClient {
     challengeId: string;
     loginToken: string;
     code: string;
-    device: WebDevicePayload;
+    device?: Partial<WebDevicePayload>;
     sessionPersistence: "ephemeral" | "remembered";
   }): Promise<LoginSuccessResponse> {
     const body: WebTwoFactorLoginVerifyRequest = {
       challengeId: input.challengeId,
       loginToken: input.loginToken,
       code: input.code,
-      device: input.device,
+      ...(input.device ? { device: input.device } : {}),
       sessionPersistence: input.sessionPersistence,
     };
     return this.request<LoginSuccessResponse>("/auth/web/2fa/verify", "POST", body);
@@ -362,7 +363,29 @@ export class WebApiClient {
 
   async searchProfiles(accessToken: string, query: string, limit = 20): Promise<ProfileSearchResponse> {
     const params = new URLSearchParams({ query, limit: String(limit) });
-    return this.request<ProfileSearchResponse>(`/profiles/search?${params.toString()}`, "GET", undefined, accessToken);
+    const response = await this.request<Partial<ProfileSearchResponse> & { users?: unknown[] }>(
+      `/profiles/search?${params.toString()}`,
+      "GET",
+      undefined,
+      accessToken,
+    );
+    if (Array.isArray(response.profiles)) {
+      return {
+        profiles: response.profiles,
+        total: typeof response.total === "number" ? response.total : response.profiles.length,
+      };
+    }
+    // Backward-compatible fallback for older server payloads.
+    if (Array.isArray(response.users)) {
+      const legacyProfiles = response.users
+        .map((item) => mapLegacyUserToProfile(item))
+        .filter((item): item is ProfileDTO => item !== null);
+      return {
+        profiles: legacyProfiles,
+        total: legacyProfiles.length,
+      };
+    }
+    return { profiles: [], total: 0 };
   }
 
   async getPrivacy(accessToken: string): Promise<PrivacyResponse> {
@@ -587,6 +610,61 @@ export class WebApiClient {
     const code = source.error?.code?.trim() || "request_failed";
     return new ApiClientError(message, status, code);
   }
+}
+
+function mapLegacyUserToProfile(input: unknown): ProfileDTO | null {
+  if (!input || typeof input !== "object") {
+    return null;
+  }
+  const source = input as Record<string, unknown>;
+  const accountId = typeof source.accountId === "string" ? source.accountId : "";
+  const username = typeof source.username === "string" ? source.username : "";
+  const displayName = typeof source.displayName === "string" ? source.displayName : username || "Пользователь";
+  if (!accountId) {
+    return null;
+  }
+
+  const createdAtRaw = typeof source.createdAt === "string" ? source.createdAt : "";
+  const createdAt = createdAtRaw || new Date().toISOString();
+  const avatarMediaId = typeof source.avatarMediaId === "string" ? source.avatarMediaId : null;
+
+  return {
+    accountId: accountId as ProfileDTO["accountId"],
+    displayName,
+    username,
+    bio: "",
+    statusText: "",
+    birthDate: null,
+    location: null,
+    websiteUrl: null,
+    avatarMediaId: avatarMediaId as ProfileDTO["avatarMediaId"],
+    bannerMediaId: null,
+    friendState: "none",
+    postCount: 0,
+    photoCount: 0,
+    friendCount: 0,
+    canStartDirectChat: true,
+    existingDirectConversationId: null,
+    canViewPosts: false,
+    canViewPhotos: false,
+    canViewStories: false,
+    canViewFriends: false,
+    canSendFriendRequest: true,
+    createdAt: createdAt as ProfileDTO["createdAt"],
+    privacy: {
+      profileVisibility: "public",
+      postsVisibility: "friends",
+      photosVisibility: "friends",
+      storiesVisibility: "friends",
+      friendsVisibility: "friends",
+      birthDateVisibility: "friends",
+      locationVisibility: "friends",
+      linksVisibility: "friends",
+      friendRequestsPolicy: "anyone",
+      dmPolicy: "friends",
+      updatedAt: createdAt as ProfileDTO["createdAt"],
+    },
+  };
 }
 
 

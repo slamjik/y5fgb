@@ -137,6 +137,7 @@ const refreshTokenStorageKey = "secure-messenger-web-refresh-token";
 const sessionModeStorageKey = "secure-messenger-web-session-mode";
 const syncCursorStorageKey = "secure-messenger-web-sync-cursor";
 const safeStoreTimeoutMs = 1500;
+const serverConfigFetchTimeoutMs = 8000;
 
 const secretVault = createMemorySecretVault();
 const persistentStore = createIndexedDbStateStore();
@@ -389,6 +390,34 @@ function App() {
     return device;
   }, []);
 
+  const resetDeviceMaterial = React.useCallback(() => {
+    deviceMaterialRef.current = null;
+  }, []);
+
+  const clearSignedInState = React.useCallback(() => {
+    runtimeRef.current?.stop();
+    runtimeRef.current = null;
+    deviceMaterialRef.current = null;
+    setSession(null);
+    setPending2fa(null);
+    setSummaries([]);
+    setConversationDetails({});
+    setMessagesByConversation({});
+    setDrafts({});
+    setUploadsByConversation({});
+    setUnreadByConversation({});
+    setAttachmentOps({});
+    setMyProfile(null);
+    setProfileTarget(null);
+    setProfilePosts([]);
+    setFriends([]);
+    setIncomingRequests([]);
+    setOutgoingRequests([]);
+    setPrivacy(null);
+    setStories([]);
+    setSection("messages");
+  }, []);
+
   const applySession = React.useCallback(
     async (response: LoginSuccessResponse, fallbackEmail?: string) => {
       if (!api) return;
@@ -418,41 +447,93 @@ function App() {
     [api, sessionMode],
   );
 
+  const refreshSessionTokens = React.useCallback(async () => {
+    if (!api || !session) {
+      return false;
+    }
+    try {
+      const refreshed = await api.refreshWeb(session.refreshToken);
+      const profile = await api.webSession(refreshed.tokens.accessToken).catch(() => null);
+      const next: SessionState = {
+        accessToken: refreshed.tokens.accessToken,
+        refreshToken: refreshed.tokens.refreshToken,
+        accountId: refreshed.accountId as string,
+        email: profile?.email ?? session.email,
+        deviceId: refreshed.device.id as string,
+      };
+      await secretVault.set(refreshTokenStorageKey, next.refreshToken);
+      if (sessionMode === "remembered") {
+        await safeStoreSet(refreshTokenStorageKey, next.refreshToken);
+      }
+      setSession(next);
+      return true;
+    } catch (error) {
+      if (error instanceof ApiClientError && (error.status === 401 || error.code === "unauthorized")) {
+        await clearAuthState();
+        clearSignedInState();
+        setGlobalError("Сессия истекла. Войдите снова.");
+      }
+      return false;
+    }
+  }, [api, session, sessionMode, clearSignedInState]);
+
+  React.useEffect(() => {
+    if (!api || !session) {
+      return;
+    }
+    const refreshInterval = window.setInterval(() => {
+      void refreshSessionTokens();
+    }, 4 * 60 * 1000);
+
+    return () => {
+      window.clearInterval(refreshInterval);
+    };
+  }, [api, session?.refreshToken, refreshSessionTokens]);
+
   const submitAuth = async (mode: AuthMode, email: string, password: string) => {
     if (!api) throw new Error("Сначала подключитесь к серверу.");
-    const device = await ensureDeviceMaterial();
-    const payload: WebDevicePayload = {
-      name: device.name,
-      platform: device.platform,
-      publicDeviceMaterial: device.publicKey,
+    const execute = async () => {
+      const device = await ensureDeviceMaterial();
+      const payload: WebDevicePayload = {
+        name: device.name,
+        platform: device.platform,
+        publicDeviceMaterial: device.publicKey,
+      };
+
+      if (mode === "register") {
+        const response = await api.registerWeb({ email, password, device: payload, sessionPersistence: sessionMode });
+        await applySession(response, email);
+        return;
+      }
+
+      const response = await api.loginWeb({ email, password, device: payload, sessionPersistence: sessionMode });
+      if ("challengeId" in response) {
+        setPending2fa(response);
+        return;
+      }
+      await applySession(response, email);
     };
 
-    if (mode === "register") {
-      const response = await api.registerWeb({ email, password, device: payload, sessionPersistence: sessionMode });
-      await applySession(response, email);
-      return;
+    try {
+      await execute();
+    } catch (error) {
+      if (error instanceof ApiClientError && error.code === "fingerprint_mismatch") {
+        resetDeviceMaterial();
+        setPending2fa(null);
+        await execute();
+        return;
+      }
+      throw error;
     }
-
-    const response = await api.loginWeb({ email, password, device: payload, sessionPersistence: sessionMode });
-    if ("challengeId" in response) {
-      setPending2fa(response);
-      return;
-    }
-    await applySession(response, email);
   };
 
   const submit2fa = async (code: string) => {
     if (!api || !pending2fa) throw new Error("Челлендж 2FA не найден.");
-    const device = await ensureDeviceMaterial();
     const response = await api.verifyWeb2FA({
       challengeId: pending2fa.challengeId,
       loginToken: pending2fa.loginToken,
       code,
-      device: {
-        name: device.name,
-        platform: device.platform,
-        publicDeviceMaterial: device.publicKey,
-      },
+      device: undefined,
       sessionPersistence: sessionMode,
     });
     await applySession(response);
@@ -468,27 +549,7 @@ function App() {
     }
 
     await clearAuthState();
-    runtimeRef.current?.stop();
-    runtimeRef.current = null;
-    deviceMaterialRef.current = null;
-    setSession(null);
-    setPending2fa(null);
-    setSummaries([]);
-    setConversationDetails({});
-    setMessagesByConversation({});
-    setDrafts({});
-    setUploadsByConversation({});
-    setUnreadByConversation({});
-    setAttachmentOps({});
-    setMyProfile(null);
-    setProfileTarget(null);
-    setProfilePosts([]);
-    setFriends([]);
-    setIncomingRequests([]);
-    setOutgoingRequests([]);
-    setPrivacy(null);
-    setStories([]);
-    setSection("messages");
+    clearSignedInState();
   };
 
   const openConversation = async (conversationId: string) => {
@@ -2000,7 +2061,7 @@ function AuthenticatedImage(props: {
       setError("");
       setBlobUrl(null);
       try {
-        const endpoint = `${apiBaseUrl}${apiPrefix}/media/${mediaId}/content`;
+        const endpoint = `${apiBaseUrl}${apiPrefix}/media/${encodeURIComponent(mediaId)}/content`;
         const response = await fetch(endpoint, {
           method: "GET",
           headers: {
@@ -2552,11 +2613,15 @@ async function loadSettingsData(
 
 async function fetchServerConfig(origin: string): Promise<ServerBootstrapConfig> {
   const endpoint = buildServerConfigEndpoint(origin);
+  const controller = new AbortController();
+  const timeoutHandle = window.setTimeout(() => controller.abort(), serverConfigFetchTimeoutMs);
   let response: Response;
   try {
-    response = await fetch(endpoint, { method: "GET" });
+    response = await fetch(endpoint, { method: "GET", signal: controller.signal });
   } catch {
     throw new Error("Не удалось подключиться к серверу.");
+  } finally {
+    window.clearTimeout(timeoutHandle);
   }
   if (response.status === 404) return buildFallbackConfig(origin);
   if (!response.ok) throw new Error("Сервер вернул некорректный ответ конфигурации.");
@@ -2686,6 +2751,8 @@ function toUserError(error: unknown): string {
     if (error.code === "invalid_credentials") return "Неверный email или пароль.";
     if (error.code === "two_fa_required") return "Нужен код двухфакторной аутентификации.";
     if (error.code === "account_already_exists") return "Аккаунт уже существует.";
+    if (error.code === "fingerprint_mismatch") return "Конфликт ключа устройства. Очистите данные сайта и войдите снова.";
+    if (error.code === "device_not_approved") return "Устройство не подтверждено. Завершите подтверждение входа.";
     if (error.code === "network_error") return "Не удалось подключиться к серверу.";
     return error.message || "Ошибка запроса.";
   }

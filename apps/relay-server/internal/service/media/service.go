@@ -186,6 +186,9 @@ func (s *Service) GetMedia(ctx context.Context, principal auth.AuthPrincipal, me
 	if media.DeletedAt != nil || media.Status != domain.MediaStatusActive {
 		return domain.MediaObject{}, service.NewError(service.ErrorCodeNotFound, "media not found")
 	}
+	if media.ExpiresAt != nil && media.ExpiresAt.Before(time.Now().UTC()) {
+		return domain.MediaObject{}, service.NewError(service.ErrorCodeNotFound, "media not found")
+	}
 
 	if media.OwnerAccountID == principal.AccountID {
 		return media, nil

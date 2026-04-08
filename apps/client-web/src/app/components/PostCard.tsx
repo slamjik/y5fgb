@@ -76,6 +76,9 @@ export function PostCard({
     }
   };
 
+  const safeImageUrl = imageUrl && isSafeMediaUrl(imageUrl) ? imageUrl : null;
+  const safeVideoUrl = videoUrl && isSafeMediaUrl(videoUrl) ? videoUrl : null;
+
   return (
     <article
       className="rounded-2xl p-5 border transition-all"
@@ -156,13 +159,13 @@ export function PostCard({
           mimeType={media.mimeType}
           accessToken={accessToken}
         />
-      ) : imageUrl ? (
+      ) : safeImageUrl ? (
         <MediaContainer>
-          <img src={imageUrl} alt="Изображение поста" className="w-full h-80 object-cover rounded-lg" loading="lazy" />
+          <img src={safeImageUrl} alt="Изображение поста" className="w-full h-80 object-cover rounded-lg" loading="lazy" />
         </MediaContainer>
-      ) : videoUrl ? (
+      ) : safeVideoUrl ? (
         <MediaContainer>
-          <video controls className="w-full h-80 object-cover rounded-lg" src={videoUrl} preload="metadata" />
+          <video controls className="w-full h-80 object-cover rounded-lg" src={safeVideoUrl} preload="metadata" />
         </MediaContainer>
       ) : null}
 
@@ -205,6 +208,12 @@ function ProtectedMedia({
   const [loading, setLoading] = React.useState(true);
 
   React.useEffect(() => {
+    if (!isSafeMediaUrl(contentUrl)) {
+      setLoading(false);
+      setError("Небезопасный URL медиа.");
+      return;
+    }
+
     let disposed = false;
     let currentUrl: string | null = null;
     const load = async () => {
@@ -279,6 +288,16 @@ function ProtectedMedia({
       <img src={blobUrl} alt="Изображение поста" className="w-full h-80 object-cover rounded-lg" loading="lazy" />
     </MediaContainer>
   );
+}
+
+function isSafeMediaUrl(value: string): boolean {
+  try {
+    const base = typeof window !== "undefined" && window.location?.origin ? window.location.origin : "http://localhost";
+    const parsed = new URL(value, base);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 function MediaContainer({ children }: { children: React.ReactNode }) {

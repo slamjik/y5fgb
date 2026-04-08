@@ -76,6 +76,7 @@ func NewHandler(
 	notificationsService *notifications.Service,
 	cfg config.Config,
 ) *Handler {
+	rateLimitKeyFn := middleware.RateLimitKeyFromRequest(cfg.WebSecurity.TrustProxyHeaders)
 	return &Handler{
 		logger:                logger,
 		authService:           authService,
@@ -92,12 +93,12 @@ func NewHandler(
 		storiesService:        storiesService,
 		notificationsService:  notificationsService,
 		cfg:                   cfg,
-		authRateLimiter:       middleware.NewIPRateLimiter(30, time.Minute, nil),
-		recoveryRateLimiter:   middleware.NewIPRateLimiter(10, time.Minute, nil),
-		messageRateLimiter:    middleware.NewIPRateLimiter(180, time.Minute, nil),
-		attachmentRateLimiter: middleware.NewIPRateLimiter(60, time.Minute, nil),
-		socialRateLimiter:     middleware.NewIPRateLimiter(120, time.Minute, nil),
-		mediaRateLimiter:      middleware.NewIPRateLimiter(30, time.Minute, nil),
+		authRateLimiter:       middleware.NewIPRateLimiter(30, time.Minute, rateLimitKeyFn),
+		recoveryRateLimiter:   middleware.NewIPRateLimiter(10, time.Minute, rateLimitKeyFn),
+		messageRateLimiter:    middleware.NewIPRateLimiter(180, time.Minute, rateLimitKeyFn),
+		attachmentRateLimiter: middleware.NewIPRateLimiter(60, time.Minute, rateLimitKeyFn),
+		socialRateLimiter:     middleware.NewIPRateLimiter(120, time.Minute, rateLimitKeyFn),
+		mediaRateLimiter:      middleware.NewIPRateLimiter(30, time.Minute, rateLimitKeyFn),
 	}
 }
 
@@ -1172,8 +1173,8 @@ func (h *Handler) handleProfileSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	WriteJSON(w, http.StatusOK, map[string]any{
 		"profiles": payload,
-		"total": len(payload),
-		"limit": limit,
+		"total":    len(payload),
+		"limit":    limit,
 	})
 }
 
@@ -1840,9 +1841,8 @@ func (h *Handler) handleUserSubroutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, map[string]any{
+	response := map[string]any{
 		"accountId":                    profilePayload.AccountID,
-		"email":                        profilePayload.Email,
 		"createdAt":                    profilePayload.CreatedAt.UTC().Format(time.RFC3339),
 		"postCount":                    profilePayload.PostCount,
 		"canStartDirectChat":           profilePayload.CanStartDirectChat,
@@ -1852,7 +1852,11 @@ func (h *Handler) handleUserSubroutes(w http.ResponseWriter, r *http.Request) {
 		"avatarMediaId":                profilePayload.AvatarMediaID,
 		"bannerMediaId":                profilePayload.BannerMediaID,
 		"friendState":                  mapFriendState(profilePayload.FriendState),
-	})
+	}
+	if strings.TrimSpace(profilePayload.Email) != "" {
+		response["email"] = profilePayload.Email
+	}
+	WriteJSON(w, http.StatusOK, response)
 }
 
 func (h *Handler) handleConversationSubroutes(w http.ResponseWriter, r *http.Request) {
@@ -2610,7 +2614,11 @@ func parseFriendRequestPolicyPointer(raw *string) *domain.FriendRequestPolicy {
 	if raw == nil {
 		return nil
 	}
-	value := domain.FriendRequestPolicy(strings.ToLower(strings.TrimSpace(*raw)))
+	normalized := strings.ToLower(strings.TrimSpace(*raw))
+	if normalized == "friends_of_friends" {
+		normalized = string(domain.FriendRequestPolicyFriends)
+	}
+	value := domain.FriendRequestPolicy(normalized)
 	return &value
 }
 
