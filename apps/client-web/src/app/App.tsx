@@ -246,6 +246,7 @@ function App() {
   const deviceMaterialRef = React.useRef<DeviceMaterial | null>(null);
   const messageScrollRef = React.useRef<HTMLDivElement | null>(null);
   const attachmentInputRef = React.useRef<HTMLInputElement | null>(null);
+  const sendingConversationsRef = React.useRef<Set<string>>(new Set());
 
   const api = React.useMemo(() => (server ? new WebApiClient(server.config) : null), [server]);
   const unreadTotal = React.useMemo(
@@ -616,6 +617,8 @@ function App() {
     const text = (retryText ?? drafts[conversationId] ?? "").trim();
     const uploads = uploadsByConversation[conversationId] ?? [];
     if (!text && uploads.length === 0) return;
+    if (sendingConversationsRef.current.has(conversationId)) return;
+    sendingConversationsRef.current.add(conversationId);
 
     const optimisticId = `local_${Date.now()}_${Math.random().toString(16).slice(2)}`;
     setMessagesByConversation((prev) => {
@@ -624,28 +627,30 @@ function App() {
         ...prev,
         [conversationId]: {
           ...bucket,
-          items: [...bucket.items, {
-            id: optimisticId,
-            conversationId,
-            senderAccountId: session.accountId,
-            createdAt: new Date().toISOString(),
-            serverSequence: Number.MAX_SAFE_INTEGER,
-            text,
-            attachments: uploads.map((item) => ({
-              id: item.id,
-              kind: item.file.type.startsWith("image/") ? "image" : "file",
-              fileName: item.file.name,
-              mimeType: item.file.type || "application/octet-stream",
-              sizeBytes: item.file.size,
-              checksumSha256: "",
-              algorithm: "xchacha20poly1305_ietf",
-              nonce: "",
-              symmetricKey: null,
-            })),
-            own: true,
-            deliveryState: "pending",
-            localStatus: "sending",
-          }],
+          items: upsertMessageItems(bucket.items, [
+            {
+              id: optimisticId,
+              conversationId,
+              senderAccountId: session.accountId,
+              createdAt: new Date().toISOString(),
+              serverSequence: Number.MAX_SAFE_INTEGER,
+              text,
+              attachments: uploads.map((item) => ({
+                id: item.id,
+                kind: item.file.type.startsWith("image/") ? "image" : "file",
+                fileName: item.file.name,
+                mimeType: item.file.type || "application/octet-stream",
+                sizeBytes: item.file.size,
+                checksumSha256: "",
+                algorithm: "xchacha20poly1305_ietf",
+                nonce: "",
+                symmetricKey: null,
+              })),
+              own: true,
+              deliveryState: "pending",
+              localStatus: "sending",
+            },
+          ]),
         },
       };
     });
@@ -673,16 +678,17 @@ function App() {
       });
 
       const mapped = await decodeMessage(response.message, session, deviceMaterialRef.current);
+      const mappedWithFallback = applyOwnMessageFallback(mapped, text, response.message.envelope.attachments, attachmentSecrets);
       setMessagesByConversation((prev) => {
         const bucket = prev[conversationId] ?? { loading: false, error: "", items: [] };
         return {
           ...prev,
           [conversationId]: {
             ...bucket,
-            items: bucket.items
-              .filter((item) => item.id !== optimisticId)
-              .concat(mapped)
-              .sort((a, b) => a.serverSequence - b.serverSequence),
+            items: upsertMessageItems(
+              bucket.items.filter((item) => item.id !== optimisticId),
+              [mappedWithFallback],
+            ),
           },
         };
       });
@@ -705,6 +711,8 @@ function App() {
           },
         };
       });
+    } finally {
+      sendingConversationsRef.current.delete(conversationId);
     }
   };
 
@@ -2248,7 +2256,13 @@ function MessageRow({
           </div>
         ) : null}
         <div className="flex items-center justify-between">
-          <p style={{ color: "var(--base-grey-light)", fontSize: 11 }}>{message.localStatus === "sending" ? "Отправляем..." : message.localStatus === "failed" ? "Ошибка отправки" : message.deliveryState}</p>
+          <p style={{ color: "var(--base-grey-light)", fontSize: 11 }}>
+            {message.localStatus === "sending"
+              ? "Отправляем..."
+              : message.localStatus === "failed"
+                ? "Ошибка отправки"
+                : renderDeliveryState(message.deliveryState)}
+          </p>
           {message.localStatus === "failed" && onResend ? <button type="button" className="px-2 py-1 rounded-lg border text-xs" style={outlineButtonStyle} onClick={() => void onResend()}>Повторить</button> : null}
         </div>
       </div>
@@ -2360,6 +2374,15 @@ function renderFriendState(value: string): string {
   return "нет связи";
 }
 
+function renderDeliveryState(value: string): string {
+  if (value === "queued" || value === "pending") return "В очереди";
+  if (value === "sent") return "Отправлено";
+  if (value === "delivered") return "Доставлено";
+  if (value === "read") return "Прочитано";
+  if (value === "failed") return "Ошибка";
+  return value;
+}
+
 function renderNotificationTitle(item: NotificationsResponse["notifications"][number]): string {
   const actor = item.actorName || item.actorUsername || "Пользователь";
   if (item.type === "friend_request") return `${actor} отправил(а) заявку в друзья`;
@@ -2444,10 +2467,9 @@ async function applySyncBatch(
     const next = { ...current };
     for (const item of mapped) {
       const bucket = next[item.conversationId] ?? { loading: false, error: "", items: [] };
-      const filtered = bucket.items.filter((existing) => existing.id !== item.id);
       next[item.conversationId] = {
         ...bucket,
-        items: filtered.concat(item).sort((a, b) => a.serverSequence - b.serverSequence),
+        items: upsertMessageItems(bucket.items, [item]),
       };
     }
     if (activeConversationId && next[activeConversationId]) {
@@ -2538,6 +2560,64 @@ function mapMessageAttachments(
       symmetricKey: secret?.symmetricKey ?? null,
     };
   });
+}
+
+function applyOwnMessageFallback(
+  message: MessageView,
+  fallbackText: string,
+  envelopeAttachments: AttachmentMetaDTO[] | undefined,
+  attachmentSecrets: AttachmentSecret[],
+): MessageView {
+  if (!message.own) {
+    return message;
+  }
+
+  if (!isEncryptedPlaceholderText(message.text)) {
+    return message;
+  }
+
+  return {
+    ...message,
+    text: fallbackText,
+    attachments: mapMessageAttachments(envelopeAttachments, attachmentSecrets),
+  };
+}
+
+function upsertMessageItems(current: MessageView[], incoming: MessageView[]): MessageView[] {
+  const byID = new Map<string, MessageView>();
+  for (const item of current) {
+    byID.set(item.id, item);
+  }
+  for (const item of incoming) {
+    const existing = byID.get(item.id);
+    byID.set(item.id, mergeMessageView(existing, item));
+  }
+  return Array.from(byID.values()).sort((left, right) => left.serverSequence - right.serverSequence);
+}
+
+function mergeMessageView(existing: MessageView | undefined, incoming: MessageView): MessageView {
+  if (!existing) {
+    return incoming;
+  }
+
+  const merged: MessageView = {
+    ...existing,
+    ...incoming,
+  };
+
+  if (isEncryptedPlaceholderText(incoming.text) && !isEncryptedPlaceholderText(existing.text)) {
+    merged.text = existing.text;
+    if (existing.attachments.length > 0) {
+      merged.attachments = existing.attachments;
+    }
+  }
+
+  return merged;
+}
+
+function isEncryptedPlaceholderText(value: string): boolean {
+  const normalized = value.trim();
+  return normalized === "Зашифрованное сообщение" || normalized === "Не удалось расшифровать сообщение";
 }
 
 async function uploadEncryptedAttachments(
