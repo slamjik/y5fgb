@@ -64,6 +64,14 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 12000;
 const LONG_POLL_GRACE_MS = 8000;
 const LARGE_TRANSFER_TIMEOUT_MS = 300000;
 
+type UploadProgress = {
+  loaded: number;
+  total: number | null;
+  percent: number;
+};
+
+type UploadProgressHandler = (progress: UploadProgress) => void;
+
 export class ApiClientError extends Error {
   readonly code: string;
   readonly status: number;
@@ -444,6 +452,7 @@ export class WebApiClient {
       domain: "profile" | "social" | "story";
       kind: "avatar" | "banner" | "photo" | "video" | "story_image" | "story_video";
       visibility?: "public" | "friends" | "only_me";
+      onProgress?: UploadProgressHandler;
     },
   ): Promise<MediaUploadResponse> {
     const form = new FormData();
@@ -453,7 +462,14 @@ export class WebApiClient {
     if (input.visibility) {
       form.set("visibility", input.visibility);
     }
-    return this.requestForm<MediaUploadResponse>("/media/upload", "POST", form, accessToken, LARGE_TRANSFER_TIMEOUT_MS);
+    return this.requestForm<MediaUploadResponse>(
+      "/media/upload",
+      "POST",
+      form,
+      accessToken,
+      LARGE_TRANSFER_TIMEOUT_MS,
+      input.onProgress,
+    );
   }
 
   async getMedia(accessToken: string, mediaId: string): Promise<MediaMetadataResponse> {
@@ -569,7 +585,12 @@ export class WebApiClient {
     body: FormData,
     accessToken?: string,
     timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+    onProgress?: UploadProgressHandler,
   ): Promise<T> {
+    if (onProgress && typeof XMLHttpRequest !== "undefined") {
+      return this.requestFormWithProgress<T>(path, method, body, accessToken, timeoutMs, onProgress);
+    }
+
     const endpoint = `${this.config.apiBaseUrl}${this.config.apiPrefix}${path}`;
     const controller = new AbortController();
     const timeoutHandle = setTimeout(() => controller.abort(), Math.max(1000, timeoutMs));
@@ -601,6 +622,79 @@ export class WebApiClient {
     return payload as T;
   }
 
+  private requestFormWithProgress<T>(
+    path: string,
+    method: HTTPMethod,
+    body: FormData,
+    accessToken: string | undefined,
+    timeoutMs: number,
+    onProgress: UploadProgressHandler,
+  ): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const endpoint = `${this.config.apiBaseUrl}${this.config.apiPrefix}${path}`;
+      const xhr = new XMLHttpRequest();
+      xhr.open(method, endpoint, true);
+      xhr.timeout = Math.max(1000, timeoutMs);
+      xhr.setRequestHeader("Accept", "application/json");
+      if (accessToken) {
+        xhr.setRequestHeader("Authorization", `Bearer ${accessToken}`);
+      }
+
+      let settled = false;
+      const resolveOnce = (value: T) => {
+        if (settled) return;
+        settled = true;
+        resolve(value);
+      };
+      const rejectOnce = (error: ApiClientError) => {
+        if (settled) return;
+        settled = true;
+        reject(error);
+      };
+
+      onProgress({ loaded: 0, total: null, percent: 0 });
+
+      xhr.upload.onprogress = (event) => {
+        const total = event.lengthComputable ? event.total : null;
+        const percent =
+          total && total > 0 ? Math.max(0, Math.min(100, Math.round((event.loaded / total) * 100))) : 0;
+        onProgress({
+          loaded: event.loaded,
+          total,
+          percent,
+        });
+      };
+
+      xhr.onload = () => {
+        const payload = safeParseJson(xhr.responseText);
+        if (xhr.status >= 200 && xhr.status < 300) {
+          onProgress({
+            loaded: 1,
+            total: 1,
+            percent: 100,
+          });
+          resolveOnce(payload as T);
+          return;
+        }
+        rejectOnce(this.errorFromPayload(payload, xhr.status, "Ошибка загрузки файла."));
+      };
+
+      xhr.onerror = () => {
+        rejectOnce(new ApiClientError("Не удалось подключиться к серверу.", 0, "network_error"));
+      };
+
+      xhr.onabort = () => {
+        rejectOnce(new ApiClientError("Превышено время ожидания ответа сервера.", 0, "network_error"));
+      };
+
+      xhr.ontimeout = () => {
+        rejectOnce(new ApiClientError("Превышено время ожидания ответа сервера.", 0, "network_error"));
+      };
+
+      xhr.send(body);
+    });
+  }
+
   private errorFromPayload(payload: unknown, status: number, fallback: string): ApiClientError {
     if (!payload || typeof payload !== "object") {
       return new ApiClientError(fallback, status, "request_failed");
@@ -609,6 +703,17 @@ export class WebApiClient {
     const message = source.error?.message?.trim() || fallback;
     const code = source.error?.code?.trim() || "request_failed";
     return new ApiClientError(message, status, code);
+  }
+}
+
+function safeParseJson(raw: string): unknown {
+  if (!raw) {
+    return {};
+  }
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return {};
   }
 }
 

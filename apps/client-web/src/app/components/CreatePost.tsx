@@ -11,15 +11,22 @@ export interface CreatePostPayload {
   mood?: string;
 }
 
+export type CreatePostUploadStatus = {
+  phase: "idle" | "uploading" | "success" | "error";
+  percent: number;
+  message: string;
+};
+
 interface CreatePostProps {
   onSubmit: (payload: CreatePostPayload) => Promise<void>;
   disabled?: boolean;
+  uploadStatus?: CreatePostUploadStatus;
 }
 
 const moodOptions = ["Радость", "Вдохновение", "Спокойствие", "Идея", "Фокус"];
 const maxMediaSizeBytes = 25 * 1024 * 1024;
 
-export function CreatePost({ onSubmit, disabled = false }: CreatePostProps) {
+export function CreatePost({ onSubmit, disabled = false, uploadStatus }: CreatePostProps) {
   const [postText, setPostText] = React.useState("");
   const [mediaType, setMediaType] = React.useState<ComposerMediaType | null>(null);
   const [mediaUrl, setMediaUrl] = React.useState("");
@@ -44,21 +51,26 @@ export function CreatePost({ onSubmit, disabled = false }: CreatePostProps) {
   const onFileChange = (files: FileList | null) => {
     const file = files?.[0] ?? null;
     if (!file) return;
+
     if (file.size > maxMediaSizeBytes) {
       setError("Файл слишком большой. Максимум 25 МБ.");
       return;
     }
+
     if (mediaType === "image" && !file.type.startsWith("image/")) {
       setError("Для фото выберите изображение.");
       return;
     }
+
     if (mediaType === "video" && !file.type.startsWith("video/")) {
       setError("Для видео выберите видеофайл.");
       return;
     }
+
     if (previewUrl) {
       URL.revokeObjectURL(previewUrl);
     }
+
     setError(null);
     setMediaUrl("");
     setMediaFile(file);
@@ -78,6 +90,7 @@ export function CreatePost({ onSubmit, disabled = false }: CreatePostProps) {
     if (submitDisabled) {
       return;
     }
+
     if (mediaType && !mediaFile && !mediaUrl.trim()) {
       setError("Добавьте файл или укажите ссылку на медиа.");
       return;
@@ -111,6 +124,13 @@ export function CreatePost({ onSubmit, disabled = false }: CreatePostProps) {
       setIsSubmitting(false);
     }
   };
+
+  const uploadColor =
+    uploadStatus?.phase === "error"
+      ? "#fca5a5"
+      : uploadStatus?.phase === "success"
+        ? "#86efac"
+        : "var(--accent-brown)";
 
   return (
     <div
@@ -261,6 +281,43 @@ export function CreatePost({ onSubmit, disabled = false }: CreatePostProps) {
               {option}
             </button>
           ))}
+        </div>
+      ) : null}
+
+      {uploadStatus && uploadStatus.phase !== "idle" ? (
+        <div
+          className="mt-3 rounded-xl border px-3 py-2 space-y-2"
+          style={{ backgroundColor: "rgba(20, 20, 20, 0.52)", borderColor: "var(--glass-border)" }}
+        >
+          <div className="flex items-center justify-between text-xs">
+            <span style={{ color: "var(--base-grey-light)" }}>Загрузка медиа</span>
+            <span style={{ color: uploadColor }}>
+              {uploadStatus.phase === "uploading"
+                ? `${Math.max(0, Math.min(100, Math.round(uploadStatus.percent)))}%`
+                : uploadStatus.phase === "success"
+                  ? "Успешно"
+                  : "Ошибка"}
+            </span>
+          </div>
+          <div className="h-1.5 rounded-full" style={{ backgroundColor: "rgba(255,255,255,0.09)" }}>
+            <div
+              className="h-full rounded-full transition-all"
+              style={{
+                width: `${
+                  uploadStatus.phase === "uploading"
+                    ? Math.max(0, Math.min(100, Math.round(uploadStatus.percent)))
+                    : uploadStatus.phase === "success"
+                      ? 100
+                      : Math.max(12, Math.max(0, Math.min(100, Math.round(uploadStatus.percent))))
+                }%`,
+                backgroundColor: uploadColor,
+                opacity: uploadStatus.phase === "error" ? 0.65 : 1,
+              }}
+            />
+          </div>
+          <p className="text-sm" style={{ color: uploadColor }}>
+            {uploadStatus.message}
+          </p>
         </div>
       ) : null}
 

@@ -132,6 +132,14 @@ type MessageBucket = {
   items: MessageView[];
 };
 
+type UploadFeedbackPhase = "idle" | "uploading" | "success" | "error";
+
+type UploadFeedback = {
+  phase: UploadFeedbackPhase;
+  percent: number;
+  message: string;
+};
+
 const serverStorageKey = "secure-messenger-web-server-v3";
 const refreshTokenStorageKey = "secure-messenger-web-refresh-token";
 const sessionModeStorageKey = "secure-messenger-web-session-mode";
@@ -150,6 +158,12 @@ const emptyTransportState: RuntimeTransportState = {
   lastError: null,
   lastCursor: 0,
   updatedAt: new Date().toISOString(),
+};
+
+const emptyUploadFeedback: UploadFeedback = {
+  phase: "idle",
+  percent: 0,
+  message: "",
 };
 
 function App() {
@@ -210,6 +224,14 @@ function App() {
   const [twoFAEnableCode, setTwoFAEnableCode] = React.useState("");
   const [twoFADisableCode, setTwoFADisableCode] = React.useState("");
   const [settingsMessage, setSettingsMessage] = React.useState("");
+  const [profileMediaUpload, setProfileMediaUpload] = React.useState<{
+    avatar: UploadFeedback;
+    banner: UploadFeedback;
+  }>({
+    avatar: emptyUploadFeedback,
+    banner: emptyUploadFeedback,
+  });
+  const [postMediaUpload, setPostMediaUpload] = React.useState<UploadFeedback>(emptyUploadFeedback);
 
   const [posts, setPosts] = React.useState<CreateSocialPostResponse["post"][]>([]);
   const [postsLoading, setPostsLoading] = React.useState(false);
@@ -834,27 +856,71 @@ function App() {
     setProfileTarget(null);
   };
 
+  const setProfileUploadState = React.useCallback(
+    (kind: "avatar" | "banner", next: UploadFeedback) => {
+      setProfileMediaUpload((prev) => ({
+        ...prev,
+        [kind]: next,
+      }));
+    },
+    [setProfileMediaUpload],
+  );
+
   const publishPost = async (payload: CreatePostPayload) => {
     if (!api || !session) throw new Error("Сессия не активна.");
+    setPostMediaUpload(emptyUploadFeedback);
+
     let mediaId: string | undefined;
-    if (payload.mediaFile) {
-      const uploaded = await api.uploadMedia(session.accessToken, {
-        file: payload.mediaFile,
-        domain: "social",
-        kind: payload.mediaType === "video" ? "video" : "photo",
-        visibility: "friends",
-      });
-      mediaId = uploaded.media.id as string;
+    try {
+      if (payload.mediaFile) {
+        setPostMediaUpload({
+          phase: "uploading",
+          percent: 0,
+          message: "Загружаем медиа: 0%",
+        });
+        const uploaded = await api.uploadMedia(session.accessToken, {
+          file: payload.mediaFile,
+          domain: "social",
+          kind: payload.mediaType === "video" ? "video" : "photo",
+          visibility: "friends",
+          onProgress: ({ percent }) => {
+            const normalized = normalizeProgress(percent);
+            setPostMediaUpload({
+              phase: "uploading",
+              percent: normalized,
+              message: `Загружаем медиа: ${normalized}%`,
+            });
+          },
+        });
+        mediaId = uploaded.media.id as string;
+      }
+
+      const request: CreateSocialPostRequest = {
+        content: payload.content,
+        mediaType: payload.mediaType,
+        mediaUrl: payload.mediaUrl,
+        mediaId: mediaId as never,
+        mood: payload.mood,
+      };
+      const created = await api.createPost(session.accessToken, request);
+      setPosts((prev) => [created.post, ...prev]);
+      if (payload.mediaFile) {
+        setPostMediaUpload({
+          phase: "success",
+          percent: 100,
+          message: "Медиа успешно загружено и опубликовано.",
+        });
+      }
+    } catch (error) {
+      if (payload.mediaFile) {
+        setPostMediaUpload({
+          phase: "error",
+          percent: 0,
+          message: toUserError(error),
+        });
+      }
+      throw error;
     }
-    const request: CreateSocialPostRequest = {
-      content: payload.content,
-      mediaType: payload.mediaType,
-      mediaUrl: payload.mediaUrl,
-      mediaId: mediaId as never,
-      mood: payload.mood,
-    };
-    const created = await api.createPost(session.accessToken, request);
-    setPosts((prev) => [created.post, ...prev]);
   };
 
   const saveProfile = async () => {
@@ -877,20 +943,45 @@ function App() {
 
   const uploadProfileMedia = async (file: File, kind: "avatar" | "banner") => {
     if (!api || !session) return;
+    const uploadLabel = kind === "avatar" ? "аватар" : "обложку";
     try {
+      setProfileUploadState(kind, {
+        phase: "uploading",
+        percent: 0,
+        message: `Загружаем ${uploadLabel}: 0%`,
+      });
+
       const uploaded = await api.uploadMedia(session.accessToken, {
         file,
         domain: "profile",
         kind,
         visibility: "public",
+        onProgress: ({ percent }) => {
+          const normalized = normalizeProgress(percent);
+          setProfileUploadState(kind, {
+            phase: "uploading",
+            percent: normalized,
+            message: `Загружаем ${uploadLabel}: ${normalized}%`,
+          });
+        },
       });
       const response = await api.updateMyProfile(session.accessToken, {
         avatarMediaId: kind === "avatar" ? uploaded.media.id : undefined,
         bannerMediaId: kind === "banner" ? uploaded.media.id : undefined,
       });
       setMyProfile(response.profile);
+      setProfileUploadState(kind, {
+        phase: "success",
+        percent: 100,
+        message: kind === "avatar" ? "Аватар успешно загружен." : "Обложка успешно загружена.",
+      });
       setSettingsMessage(kind === "avatar" ? "Аватар обновлён." : "Обложка обновлена.");
     } catch (error) {
+      setProfileUploadState(kind, {
+        phase: "error",
+        percent: 0,
+        message: toUserError(error),
+      });
       setSettingsMessage(toUserError(error));
     }
   };
@@ -1352,7 +1443,7 @@ function App() {
 
           {section === "feed" ? (
             <section className="space-y-4">
-              <CreatePost onSubmit={publishPost} />
+              <CreatePost onSubmit={publishPost} uploadStatus={postMediaUpload} />
               {postsLoading ? <InlineInfo text="Загрузка ленты..." /> : null}
               {postsError ? <InlineInfo tone="error" text={postsError} /> : null}
               {posts.map((post) => (
@@ -1672,6 +1763,10 @@ function App() {
                           event.currentTarget.value = "";
                         }} />
                       </label>
+                    </div>
+                    <div className="grid gap-2 md:grid-cols-2">
+                      <UploadStatusPill label="Аватар" status={profileMediaUpload.avatar} />
+                      <UploadStatusPill label="Обложка" status={profileMediaUpload.banner} />
                     </div>
                   </div>
 
@@ -2166,6 +2261,47 @@ function InlineInfo({ text, tone = "default" }: { text: string; tone?: "default"
   return <div className="rounded-xl border px-3 py-2" style={innerCardStyle}><p style={{ color }}>{text}</p></div>;
 }
 
+function UploadStatusPill({ label, status }: { label: string; status: UploadFeedback }) {
+  if (status.phase === "idle") {
+    return null;
+  }
+
+  const accentColor =
+    status.phase === "error"
+      ? "#fca5a5"
+      : status.phase === "success"
+        ? "#86efac"
+        : "var(--accent-brown)";
+
+  return (
+    <div className="rounded-lg border px-3 py-2 space-y-2" style={innerCardStyle}>
+      <div className="flex items-center justify-between text-xs">
+        <span style={{ color: "var(--base-grey-light)" }}>{label}</span>
+        <span style={{ color: accentColor }}>
+          {status.phase === "uploading" ? `${status.percent}%` : status.phase === "success" ? "Успешно" : "Ошибка"}
+        </span>
+      </div>
+      <div className="h-1.5 rounded-full" style={{ backgroundColor: "rgba(255,255,255,0.09)" }}>
+        <div
+          className="h-full rounded-full transition-all"
+          style={{
+            width: `${
+              status.phase === "uploading"
+                ? status.percent
+                : status.phase === "success"
+                  ? 100
+                  : Math.max(12, status.percent)
+            }%`,
+            backgroundColor: accentColor,
+            opacity: status.phase === "error" ? 0.65 : 1,
+          }}
+        />
+      </div>
+      <p style={{ color: accentColor, fontSize: 12 }}>{status.message}</p>
+    </div>
+  );
+}
+
 function StatusChip({ state }: { state: RuntimeTransportState["status"] }) {
   const descriptor = state === "connected" ? { label: "Онлайн", icon: Wifi, color: "#86efac" } : state === "degraded" ? { label: "Ограниченно", icon: AlertTriangle, color: "#fde68a" } : state === "connecting" || state === "reconnecting" ? { label: "Подключение", icon: Loader2, color: "#93c5fd" } : { label: "Офлайн", icon: WifiOff, color: "#fca5a5" };
   const Icon = descriptor.icon;
@@ -2200,6 +2336,13 @@ function sectionSubtitle(section: SidebarSection, server: string, transportState
 
 function normalizeUserSearchInput(value: string): string {
   return value.trim().replace(/^@+/, "").trim();
+}
+
+function normalizeProgress(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.min(100, Math.max(0, Math.round(value)));
 }
 
 function renderVisibilityScope(value: string): string {
