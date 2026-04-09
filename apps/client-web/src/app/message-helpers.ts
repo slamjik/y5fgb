@@ -108,6 +108,7 @@ export async function applySyncBatch(
   device: DeviceMaterial | null,
   activeConversationId: string | null,
   currentMessages: Record<string, MessageBucket>,
+  knownMessageIDs: Set<string>,
   setMessages: React.Dispatch<React.SetStateAction<Record<string, MessageBucket>>>,
   setUnread: React.Dispatch<React.SetStateAction<Record<string, number>>>,
 ): Promise<MessageView[]> {
@@ -121,8 +122,13 @@ export async function applySyncBatch(
   if (mapped.length === 0) return [];
 
   const newlyInserted = mapped.filter((item) => {
+    if (knownMessageIDs.has(item.id)) {
+      return false;
+    }
     const bucket = currentMessages[item.conversationId];
-    return !bucket?.items.some((existing) => existing.id === item.id);
+    const isNew = !bucket?.items.some((existing) => existing.id === item.id);
+    knownMessageIDs.add(item.id);
+    return isNew;
   });
   setMessages((current) => {
     const next = { ...current };

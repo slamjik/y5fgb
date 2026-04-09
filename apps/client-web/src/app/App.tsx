@@ -123,6 +123,8 @@ const emptyTransportState: RuntimeTransportState = {
   endpoint: null,
   lastError: null,
   lastCursor: 0,
+  lastSuccessfulSyncAt: null,
+  reconnectAttempt: 0,
   updatedAt: new Date().toISOString(),
 };
 
@@ -238,7 +240,9 @@ function App() {
   const attachmentPreviewUrlsRef = React.useRef<Map<string, string>>(new Map());
   const attachmentPreviewInFlightRef = React.useRef<Set<string>>(new Set());
   const attachmentSecretsByIdRef = React.useRef<Map<string, { symmetricKey: string; nonce: string }>>(new Map());
+  const knownMessageIDsRef = React.useRef<Set<string>>(new Set());
   const typingSignalsRef = React.useRef<Record<string, { active: boolean; timer: number | null }>>({});
+  const authExpiredHandledRef = React.useRef(false);
 
   const api = React.useMemo(() => (server ? new WebApiClient(server.config) : null), [server]);
   const unreadTotal = React.useMemo(
@@ -379,6 +383,10 @@ function App() {
   React.useEffect(() => {
     messagesByConversationRef.current = messagesByConversation;
   }, [messagesByConversation]);
+
+  React.useEffect(() => {
+    authExpiredHandledRef.current = false;
+  }, [session?.accessToken]);
 
   React.useEffect(() => {
     const handle = window.setInterval(() => {
@@ -545,6 +553,7 @@ function App() {
               deviceMaterialRef.current,
               activeConversationIdRef.current,
               messagesByConversationRef.current,
+              knownMessageIDsRef.current,
               setMessagesByConversation,
               setUnreadByConversation,
             );
@@ -595,12 +604,31 @@ function App() {
         onTransport: (state) => {
           if (disposed) return;
           setTransportState(state);
-          if (state.status === "connected" || (state.status === "degraded" && !state.lastError)) {
+          if (
+            state.status === "connected" ||
+            state.status === "degraded" ||
+            state.status === "connecting" ||
+            state.status === "syncing" ||
+            state.status === "reconnecting"
+          ) {
             setRuntimeError("");
+          }
+          if (state.status === "auth_expired" && state.lastError) {
+            setRuntimeError(state.lastError);
           }
         },
         onError: (message) => {
           if (!disposed) setRuntimeError(message);
+        },
+        onAuthExpired: (message) => {
+          if (disposed || authExpiredHandledRef.current) return;
+          authExpiredHandledRef.current = true;
+          setRuntimeError(message);
+          void (async () => {
+            await clearAuthState();
+            clearSignedInState();
+            setGlobalError(message);
+          })();
         },
         onTyping: (event) => {
           if (disposed || event.accountId === session.accountId) return;
@@ -700,6 +728,7 @@ function App() {
   function clearSignedInState(): void {
     runtimeRef.current?.stop();
     runtimeRef.current = null;
+    authExpiredHandledRef.current = false;
     deviceMaterialRef.current = null;
     setSession(null);
     setPending2fa(null);
@@ -727,6 +756,7 @@ function App() {
     setNotificationsUnreadTotal(0);
     setNotificationsError("");
     setNotificationsLoading(false);
+    knownMessageIDsRef.current = new Set();
     knownNotificationIDsRef.current = new Set();
     shownToastNotificationIDsRef.current = new Set();
     readReceiptInFlightRef.current = new Set();
@@ -1041,6 +1071,9 @@ function App() {
         const decoded = await Promise.all(
           history.messages.map((message) => decodeMessage(message, session, device)),
         );
+        for (const item of decoded) {
+          knownMessageIDsRef.current.add(item.id);
+        }
         setMessagesByConversation((prev) => ({
           ...prev,
           [conversationId]: {
@@ -1088,6 +1121,9 @@ function App() {
         beforeSequence: cursor,
       });
       const decoded = await Promise.all(history.messages.map((message) => decodeMessage(message, session, device)));
+      for (const item of decoded) {
+        knownMessageIDsRef.current.add(item.id);
+      }
       setMessagesByConversation((prev) => {
         const currentBucket = prev[conversationId] ?? { loading: false, error: "", items: [] as typeof decoded };
         return {
@@ -2111,12 +2147,14 @@ function App() {
     setPending2fa(null);
     setUnreadByConversation({});
     setMessagesByConversation({});
+    messagesByConversationRef.current = {};
     clearAttachmentPreviews();
     clearAttachmentSecretsCache();
     setNotifications([]);
     setNotificationsUnreadTotal(0);
     setNotificationsError("");
     setNotificationsLoading(false);
+    knownMessageIDsRef.current = new Set();
     knownNotificationIDsRef.current = new Set();
     shownToastNotificationIDsRef.current = new Set();
     readReceiptInFlightRef.current = new Set();
@@ -2153,6 +2191,7 @@ function App() {
       ? Object.keys(typingByConversation[activeConversationId]).length
       : 0;
   const viewedProfile = profileTarget ?? myProfile;
+  const connectionNotice = describeConnectionNotice(transportState, runtimeError);
 
   if (booting) {
     return <StandaloneCard title="Запуск приложения" subtitle="Проверяем сервер и сессию..." />;
@@ -2228,21 +2267,23 @@ function App() {
             <StatusChip state={transportState.status} />
           </header>
 
-          {runtimeError ? (
+          {connectionNotice ? (
             <div className="space-y-2">
-              <InlineInfo tone="warning" text={runtimeError} />
-              <button
-                type="button"
-                data-testid="runtime-reconnect-button"
-                className="px-3 py-1.5 rounded-lg border text-sm"
-                style={outlineButtonStyle}
-                onClick={() => {
-                  setRuntimeError("");
-                  runtimeRef.current?.requestReconnect();
-                }}
-              >
-                Переподключиться
-              </button>
+              <InlineInfo tone={connectionNotice.tone} text={connectionNotice.text} />
+              {connectionNotice.action === "reconnect" ? (
+                <button
+                  type="button"
+                  data-testid="runtime-reconnect-button"
+                  className="px-3 py-1.5 rounded-lg border text-sm"
+                  style={outlineButtonStyle}
+                  onClick={() => {
+                    setRuntimeError("");
+                    runtimeRef.current?.requestReconnect();
+                  }}
+                >
+                  Переподключиться
+                </button>
+              ) : null}
             </div>
           ) : null}
           {globalError ? <InlineInfo tone="error" text={globalError} /> : null}
@@ -2799,6 +2840,63 @@ function App() {
       />
     </div>
   );
+}
+
+function describeConnectionNotice(
+  transport: RuntimeTransportState,
+  runtimeError: string,
+): { text: string; tone: "default" | "warning" | "error"; action: "none" | "reconnect" } | null {
+  if (transport.status === "auth_expired") {
+    return {
+      text:
+        runtimeError ||
+        "Сессия истекла. Чтобы восстановить сообщения и синхронизацию, войдите в аккаунт снова.",
+      tone: "error",
+      action: "none",
+    };
+  }
+
+  if (runtimeError && (transport.status === "offline" || transport.status === "reconnecting")) {
+    return {
+      text: runtimeError,
+      tone: "warning",
+      action: "reconnect",
+    };
+  }
+
+  if (transport.status === "offline") {
+    return {
+      text: "Соединение с сервером потеряно. Пробуем восстановить связь.",
+      tone: "warning",
+      action: "reconnect",
+    };
+  }
+
+  if (transport.status === "reconnecting") {
+    return {
+      text: "Переподключаемся к серверу. Сообщения будут догружены автоматически.",
+      tone: "default",
+      action: "none",
+    };
+  }
+
+  if (transport.status === "degraded") {
+    return {
+      text: "WebSocket нестабилен, работает резервный канал синхронизации.",
+      tone: "default",
+      action: "none",
+    };
+  }
+
+  if (transport.status === "syncing" || transport.status === "connecting") {
+    return {
+      text: "Синхронизируем данные и восстанавливаем соединение.",
+      tone: "default",
+      action: "none",
+    };
+  }
+
+  return null;
 }
 
 export default App;

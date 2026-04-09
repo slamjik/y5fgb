@@ -1,4 +1,4 @@
-import { AlertTriangle, Loader2, Wifi, WifiOff } from "lucide-react";
+﻿import { AlertTriangle, Loader2, Wifi, WifiOff } from "lucide-react";
 
 import type { RuntimeTransportState } from "../../../features/messaging/runtime";
 import type { UploadFeedback } from "../../types";
@@ -30,7 +30,7 @@ export function UploadStatusPill({ label, status }: { label: string; status: Upl
       <div className="flex items-center justify-between text-xs">
         <span style={{ color: "var(--base-grey-light)" }}>{label}</span>
         <span style={{ color: accentColor }}>
-          {status.phase === "uploading" ? `${status.percent}%` : status.phase === "success" ? "Успешно" : "Ошибка"}
+          {status.phase === "uploading" ? `${status.percent}%` : status.phase === "success" ? "РЈСЃРїРµС€РЅРѕ" : "РћС€РёР±РєР°"}
         </span>
       </div>
       <div className="h-1.5 rounded-full" style={{ backgroundColor: "rgba(255,255,255,0.09)" }}>
@@ -59,15 +59,22 @@ export function StatusChip({ state }: { state: RuntimeTransportState["status"] }
     state === "connected"
       ? { label: "Онлайн", icon: Wifi, color: "#86efac" }
       : state === "degraded"
-        ? { label: "Ограниченно", icon: AlertTriangle, color: "#fde68a" }
-        : state === "connecting" || state === "reconnecting"
-          ? { label: "Подключение", icon: Loader2, color: "#93c5fd" }
-          : { label: "Офлайн", icon: WifiOff, color: "#fca5a5" };
+        ? { label: "Резервный канал", icon: AlertTriangle, color: "#fde68a" }
+        : state === "syncing" || state === "connecting" || state === "reconnecting"
+          ? { label: "Синхронизация", icon: Loader2, color: "#93c5fd" }
+          : state === "auth_expired"
+            ? { label: "Требуется вход", icon: AlertTriangle, color: "#fca5a5" }
+            : { label: "Офлайн", icon: WifiOff, color: "#fca5a5" };
   const Icon = descriptor.icon;
   return (
-    <span className="inline-flex items-center gap-2 rounded-lg border px-3 py-1 text-sm" style={innerCardStyle}>
+    <span
+      data-testid="transport-status-chip"
+      data-status={state}
+      className="inline-flex items-center gap-2 rounded-lg border px-3 py-1 text-sm"
+      style={innerCardStyle}
+    >
       <Icon
-        className={`w-4 h-4 ${state === "connecting" || state === "reconnecting" ? "animate-spin" : ""}`}
+        className={`w-4 h-4 ${state === "syncing" || state === "connecting" || state === "reconnecting" ? "animate-spin" : ""}`}
         style={{ color: descriptor.color }}
       />
       <span style={{ color: descriptor.color }}>{descriptor.label}</span>
@@ -81,6 +88,14 @@ export function TransportCard({ state }: { state: RuntimeTransportState }) {
       <p style={{ color: "var(--base-grey-light)", fontSize: 12 }}>Режим: {state.mode}</p>
       <p style={{ color: "var(--base-grey-light)", fontSize: 12 }}>Статус: {state.status}</p>
       <p style={{ color: "var(--base-grey-light)", fontSize: 12 }}>Курсор: {state.lastCursor}</p>
+      {state.lastSuccessfulSyncAt ? (
+        <p style={{ color: "var(--base-grey-light)", fontSize: 12 }}>
+          Последняя синхронизация: {new Date(state.lastSuccessfulSyncAt).toLocaleTimeString("ru-RU")}
+        </p>
+      ) : null}
+      {state.reconnectAttempt > 0 ? (
+        <p style={{ color: "var(--base-grey-light)", fontSize: 12 }}>Попытка reconnect: {state.reconnectAttempt}</p>
+      ) : null}
       {state.endpoint ? (
         <p style={{ color: "var(--base-grey-light)", fontSize: 12, wordBreak: "break-all" }}>
           Endpoint: {state.endpoint}
@@ -90,4 +105,3 @@ export function TransportCard({ state }: { state: RuntimeTransportState }) {
     </div>
   );
 }
-

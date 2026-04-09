@@ -398,6 +398,7 @@ export function MessageRow({
             onClick={(event) => event.stopPropagation()}
           >
             <ActionItem
+              testId="message-action-reply"
               icon={<Reply className="w-4 h-4" />}
               label="Ответить"
               onClick={() => {
@@ -406,6 +407,7 @@ export function MessageRow({
               }}
             />
             <ActionItem
+              testId="message-action-copy"
               icon={<Copy className="w-4 h-4" />}
               label="Скопировать"
               onClick={() => {
@@ -416,6 +418,7 @@ export function MessageRow({
             />
             {canEdit ? (
               <ActionItem
+                testId="message-action-edit"
                 icon={<PencilLine className="w-4 h-4" />}
                 label="Редактировать"
                 onClick={() => {
@@ -425,6 +428,7 @@ export function MessageRow({
               />
             ) : null}
             <ActionItem
+              testId="message-action-delete-me"
               icon={<Trash2 className="w-4 h-4" />}
               label="Удалить у себя"
               onClick={() => {
@@ -434,6 +438,7 @@ export function MessageRow({
             />
             {message.own ? (
               <ActionItem
+                testId="message-action-delete-all"
                 icon={<Trash2 className="w-4 h-4" />}
                 label="Удалить у всех"
                 onClick={() => {
@@ -443,6 +448,7 @@ export function MessageRow({
               />
             ) : null}
             <ActionItem
+              testId="message-action-forward"
               icon={<Forward className="w-4 h-4" />}
               label="Переслать"
               onClick={() => {
@@ -458,11 +464,13 @@ export function MessageRow({
 }
 
 function ActionItem({
+  testId,
   icon,
   label,
   onClick,
   disabled,
 }: {
+  testId?: string;
   icon: React.ReactNode;
   label: string;
   onClick: () => void;
@@ -471,6 +479,7 @@ function ActionItem({
   return (
     <button
       type="button"
+      data-testid={testId}
       className="w-full px-2.5 py-1.5 rounded-lg text-left flex items-center gap-2 border"
       style={outlineButtonStyle}
       onClick={onClick}

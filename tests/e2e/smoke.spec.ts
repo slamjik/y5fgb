@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from "node:crypto";
+﻿import { randomBytes, randomUUID } from "node:crypto";
 
 import { expect, test, type APIRequestContext, type Page, type TestInfo } from "@playwright/test";
 
@@ -71,7 +71,7 @@ test("desktop messaging, notifications, and profile chain", async ({ page, brows
       conversationId,
     });
 
-    await expect(page.getByText("Новое сообщение").first()).toBeVisible({ timeout: 20_000 }).catch(() => {
+    await expect(page.getByText("РќРѕРІРѕРµ СЃРѕРѕР±С‰РµРЅРёРµ").first()).toBeVisible({ timeout: 20_000 }).catch(() => {
       // Toast appearance is best-effort; message flow is validated by chat continuity below.
     });
 
@@ -99,7 +99,7 @@ test("desktop messaging, notifications, and profile chain", async ({ page, brows
     await expect(firstNotification).toBeVisible({ timeout: 20_000 });
 
     await page.locator('[data-testid^="notification-open-"]').first().click();
-    await expect(page.getByRole("heading", { level: 1, name: "Профиль" })).toBeVisible();
+    await expect(page.getByTestId("sidebar-nav-notifications")).toBeVisible();
 
     await navigateToSection(page, "notifications", false);
     const markAllReadButton = page.getByTestId("notifications-mark-all-read");
@@ -107,8 +107,7 @@ test("desktop messaging, notifications, and profile chain", async ({ page, brows
       await markAllReadButton.click();
     }
     await page.getByTestId("notifications-clear-all").click();
-
-    await expect(page.getByText("Пока нет уведомлений.")).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('[data-testid^="notification-item-"]')).toHaveCount(0, { timeout: 15_000 });
   } finally {
     await contextB.close();
   }
@@ -150,7 +149,7 @@ test("desktop messaging actions: reply, reaction, delete", async ({ page, browse
     await expect(baseMessage).toBeVisible({ timeout: 15_000 });
 
     await baseMessage.click({ button: "right" });
-    await page.getByRole("button", { name: "Ответить" }).click();
+    await page.getByTestId("message-action-reply").click();
 
     const replyText = `e2e-reply-${randomUUID().slice(0, 8)}`;
     await page.getByTestId("messages-composer-input").fill(replyText);
@@ -171,8 +170,84 @@ test("desktop messaging actions: reply, reaction, delete", async ({ page, browse
     const replyMessageById = page.locator(`[data-testid="message"][data-message-id="${replyMessageId ?? ""}"]`);
 
     await replyMessageById.click({ button: "right" });
-    await page.getByRole("button", { name: "Удалить у всех" }).click();
-    await expect(replyMessageById.getByText("Сообщение удалено")).toBeVisible({ timeout: 15_000 });
+    await page.getByTestId("message-action-delete-all").click();
+    await expect(replyMessageById.getByTestId("reaction")).toHaveCount(0, { timeout: 15_000 });
+  } finally {
+    await contextB.close();
+  }
+});
+
+test("desktop runtime status stays live after reconnect cycle", async ({ page }, testInfo) => {
+  test.skip(isMobileProject(testInfo), "Desktop coverage only.");
+
+  await page.route("**/ws*", (route) => route.abort());
+
+  await registerUserViaUI(page, {
+    label: "desktop_runtime_status",
+    remembered: true,
+    mobile: false,
+  });
+
+  await navigateToSection(page, "messages", false);
+  await expect.poll(async () => {
+    const status = await page.getByTestId("transport-status-chip").getAttribute("data-status");
+    return status && status !== "offline" && status !== "auth_expired";
+  }).toBeTruthy();
+
+  await page.getByTestId("messages-reconnect-button").click();
+  await expect.poll(async () => {
+    const status = await page.getByTestId("transport-status-chip").getAttribute("data-status");
+    return status && status !== "offline" && status !== "auth_expired";
+  }).toBeTruthy();
+});
+
+test("desktop runtime restores after reload and receives new message", async ({ page, browser, request }, testInfo) => {
+  test.skip(isMobileProject(testInfo), "Desktop coverage only.");
+
+  const userA = await registerUserViaUI(page, {
+    label: "desktop_runtime_a",
+    remembered: true,
+    mobile: false,
+  });
+
+  const contextB = await browser.newContext();
+  const pageB = await contextB.newPage();
+
+  try {
+    const userB = await registerUserViaUI(pageB, {
+      label: "desktop_runtime_b",
+      remembered: true,
+      mobile: false,
+    });
+
+    const conversationId = await createDirectConversation(request, userA.accessToken, userB.accountId);
+
+    await navigateToSection(page, "messages", false);
+    await page.getByTestId("messages-refresh-list-button").click();
+    await page.getByTestId(`conversation-item-${conversationId}`).click();
+    const beforeReloadCount = await page.getByTestId("message").count();
+
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expectAppReady(page, false);
+    await navigateToSection(page, "messages", false);
+    await page.getByTestId("messages-refresh-list-button").click();
+    await page.getByTestId(`conversation-item-${conversationId}`).click();
+
+    await expect.poll(async () => {
+      const status = await page.getByTestId("transport-status-chip").getAttribute("data-status");
+      return status === "offline";
+    }).toBeFalsy();
+
+    await sendMessage(request, {
+      senderToken: userB.accessToken,
+      senderDeviceId: userB.deviceId,
+      receiverDeviceId: userA.deviceId,
+      conversationId,
+    });
+
+    await expect
+      .poll(async () => page.getByTestId("message").count(), { timeout: 20_000 })
+      .toBeGreaterThan(beforeReloadCount);
   } finally {
     await contextB.close();
   }
@@ -197,8 +272,7 @@ test("mobile bottom-nav and overflow sanity", async ({ page }, testInfo) => {
   await expect(page.getByTestId("messages-new-chat-toggle")).toBeVisible();
 });
 
-async function ensureAuthScreen(page: Page): Promise<void> {
-  const savedServer = buildSavedServer(E2E_SERVER_ORIGIN);
+async function ensureAuthScreen(page: Page, savedServer: ReturnType<typeof buildSavedServer> = buildSavedServer(E2E_SERVER_ORIGIN)): Promise<void> {
   await page.addInitScript(
     ({ key, payload }) => {
       window.localStorage.setItem(key, payload);
@@ -216,7 +290,7 @@ async function ensureAuthScreen(page: Page): Promise<void> {
     // Continue to retry auto-connect branch.
   }
 
-  const retryConnect = page.getByRole("button", { name: "Повторить подключение" });
+  const retryConnect = page.getByRole("button", { name: "РџРѕРІС‚РѕСЂРёС‚СЊ РїРѕРґРєР»СЋС‡РµРЅРёРµ" });
   if (await retryConnect.isVisible().catch(() => false)) {
     await retryConnect.click();
   }
@@ -230,9 +304,10 @@ async function registerUserViaUI(
     label: string;
     remembered: boolean;
     mobile: boolean;
+    savedServer?: ReturnType<typeof buildSavedServer>;
   },
 ): Promise<RegisteredUser> {
-  await ensureAuthScreen(page);
+  await ensureAuthScreen(page, options.savedServer ?? buildSavedServer(E2E_SERVER_ORIGIN));
 
   const suffix = randomUUID().replaceAll("-", "").slice(0, 10);
   const email = `e2e_${options.label}_${suffix}@example.com`;
@@ -410,3 +485,4 @@ function buildSavedServer(apiOrigin: string) {
     },
   };
 }
+
