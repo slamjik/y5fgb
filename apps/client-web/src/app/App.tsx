@@ -1,4 +1,4 @@
-import type {
+﻿import type {
   AuthSessionResponse,
   ConversationDTO,
   ConversationSummaryDTO,
@@ -150,6 +150,9 @@ function App() {
   const [uploadsByConversation, setUploadsByConversation] = React.useState<Record<string, UploadDraft[]>>({});
   const [unreadByConversation, setUnreadByConversation] = React.useState<Record<string, number>>({});
   const [attachmentOps, setAttachmentOps] = React.useState<Record<string, { loading: boolean; error: string }>>({});
+  const [attachmentPreviews, setAttachmentPreviews] = React.useState<
+    Record<string, { loading: boolean; src: string | null; error: string }>
+  >({});
 
   const [showNewChat, setShowNewChat] = React.useState(false);
   const [userSearchQuery, setUserSearchQuery] = React.useState("");
@@ -222,6 +225,8 @@ function App() {
   const attachmentInputRef = React.useRef<HTMLInputElement | null>(null);
   const sendingConversationsRef = React.useRef<Set<string>>(new Set());
   const readReceiptInFlightRef = React.useRef<Set<string>>(new Set());
+  const attachmentPreviewUrlsRef = React.useRef<Map<string, string>>(new Map());
+  const attachmentPreviewInFlightRef = React.useRef<Set<string>>(new Set());
 
   const api = React.useMemo(() => (server ? new WebApiClient(server.config) : null), [server]);
   const unreadTotal = React.useMemo(
@@ -248,6 +253,15 @@ function App() {
     const normalized = normalizeServerInput(source);
     const config = await fetchServerConfig(normalized.origin);
     return { input: normalized.origin, config };
+  }, []);
+
+  const clearAttachmentPreviews = React.useCallback(() => {
+    for (const url of attachmentPreviewUrlsRef.current.values()) {
+      URL.revokeObjectURL(url);
+    }
+    attachmentPreviewUrlsRef.current.clear();
+    attachmentPreviewInFlightRef.current.clear();
+    setAttachmentPreviews({});
   }, []);
 
   const refreshNotifications = React.useCallback(async () => {
@@ -351,6 +365,41 @@ function App() {
   }, [messagesByConversation]);
 
   React.useEffect(() => {
+    const attachmentIDs = new Set<string>();
+    for (const bucket of Object.values(messagesByConversation)) {
+      for (const message of bucket.items) {
+        for (const attachment of message.attachments) {
+          attachmentIDs.add(attachment.id);
+        }
+      }
+    }
+
+    let removedAny = false;
+    for (const [attachmentId, url] of attachmentPreviewUrlsRef.current.entries()) {
+      if (attachmentIDs.has(attachmentId)) continue;
+      URL.revokeObjectURL(url);
+      attachmentPreviewUrlsRef.current.delete(attachmentId);
+      removedAny = true;
+    }
+    if (!removedAny) return;
+
+    setAttachmentPreviews((prev) => {
+      let changed = false;
+      const next: Record<string, { loading: boolean; src: string | null; error: string }> = {};
+      for (const [attachmentId, value] of Object.entries(prev)) {
+        if (!attachmentIDs.has(attachmentId)) {
+          changed = true;
+          continue;
+        }
+        next[attachmentId] = value;
+      }
+      return changed ? next : prev;
+    });
+  }, [messagesByConversation]);
+
+  React.useEffect(() => () => clearAttachmentPreviews(), [clearAttachmentPreviews]);
+
+  React.useEffect(() => {
     preferBrowserNotificationsRef.current = preferBrowserNotifications;
   }, [preferBrowserNotifications]);
 
@@ -388,9 +437,9 @@ function App() {
       }
       shownToastNotificationIDsRef.current.add(toastID);
       toast(renderNotificationTitle(item), {
-        description: item.preview ?? "Откройте уведомление",
+        description: item.preview ?? "РћС‚РєСЂРѕР№С‚Рµ СѓРІРµРґРѕРјР»РµРЅРёРµ",
         action: {
-          label: "Открыть",
+          label: "РћС‚РєСЂС‹С‚СЊ",
           onClick: () => {
             void openNotification(item);
           },
@@ -404,7 +453,7 @@ function App() {
       ) {
         try {
           const browserNotification = new Notification(renderNotificationTitle(item), {
-            body: item.preview ?? "Откройте уведомление",
+            body: item.preview ?? "РћС‚РєСЂРѕР№С‚Рµ СѓРІРµРґРѕРјР»РµРЅРёРµ",
           });
           browserNotification.onclick = () => {
             window.focus();
@@ -459,10 +508,10 @@ function App() {
                 continue;
               }
               shownToastNotificationIDsRef.current.add(toastID);
-              toast("Новое сообщение", {
-                description: item.text || "Откройте чат, чтобы прочитать.",
+              toast("РќРѕРІРѕРµ СЃРѕРѕР±С‰РµРЅРёРµ", {
+                description: item.text || "РћС‚РєСЂРѕР№С‚Рµ С‡Р°С‚, С‡С‚РѕР±С‹ РїСЂРѕС‡РёС‚Р°С‚СЊ.",
                 action: {
-                  label: "Открыть",
+                  label: "РћС‚РєСЂС‹С‚СЊ",
                   onClick: () => {
                     setSection("messages");
                     setShowMobileConversationList(false);
@@ -477,8 +526,8 @@ function App() {
                 "Notification" in window
               ) {
                 try {
-                  const browserNotification = new Notification("Новое сообщение", {
-                    body: item.text || "Откройте чат, чтобы прочитать.",
+                  const browserNotification = new Notification("РќРѕРІРѕРµ СЃРѕРѕР±С‰РµРЅРёРµ", {
+                    body: item.text || "РћС‚РєСЂРѕР№С‚Рµ С‡Р°С‚, С‡С‚РѕР±С‹ РїСЂРѕС‡РёС‚Р°С‚СЊ.",
                   });
                   browserNotification.onclick = () => {
                     window.focus();
@@ -512,11 +561,11 @@ function App() {
     void startRuntime().catch(async (error) => {
       if (disposed) return;
       const message = toUserError(error);
-      if (message.toLowerCase().includes("ключ устройства")) {
+      if (message.toLowerCase().includes("РєР»СЋС‡ СѓСЃС‚СЂРѕР№СЃС‚РІР°")) {
         await clearAuthState();
         await clearPersistedDeviceMaterial();
         clearSignedInState();
-        setGlobalError("Сессия требует повторного входа. Войдите снова.");
+        setGlobalError("РЎРµСЃСЃРёСЏ С‚СЂРµР±СѓРµС‚ РїРѕРІС‚РѕСЂРЅРѕРіРѕ РІС…РѕРґР°. Р’РѕР№РґРёС‚Рµ СЃРЅРѕРІР°.");
         return;
       }
       setRuntimeError(message);
@@ -551,7 +600,7 @@ function App() {
       return restored;
     }
     if (expectedDeviceId) {
-      throw new Error("Локальный ключ устройства не найден. Выйдите и войдите снова.");
+      throw new Error("Р›РѕРєР°Р»СЊРЅС‹Р№ РєР»СЋС‡ СѓСЃС‚СЂРѕР№СЃС‚РІР° РЅРµ РЅР°Р№РґРµРЅ. Р’С‹Р№РґРёС‚Рµ Рё РІРѕР№РґРёС‚Рµ СЃРЅРѕРІР°.");
     }
     const pair = await webCryptoProvider.generateIdentityKeyPair();
     const device: DeviceMaterial = {
@@ -584,6 +633,7 @@ function App() {
     setUploadsByConversation({});
     setUnreadByConversation({});
     setAttachmentOps({});
+    clearAttachmentPreviews();
     setMyProfile(null);
     setProfileTarget(null);
     setProfilePosts([]);
@@ -680,7 +730,7 @@ function App() {
       if (error instanceof ApiClientError && (error.status === 401 || error.code === "unauthorized")) {
         await clearAuthState();
         clearSignedInState();
-        setGlobalError("Сессия истекла. Войдите снова.");
+        setGlobalError("РЎРµСЃСЃРёСЏ РёСЃС‚РµРєР»Р°. Р’РѕР№РґРёС‚Рµ СЃРЅРѕРІР°.");
       }
       return false;
     }
@@ -756,7 +806,7 @@ function App() {
   };
 
   const submit2fa = async (code: string) => {
-    if (!api || !pending2fa) throw new Error("Челлендж 2FA не найден.");
+    if (!api || !pending2fa) throw new Error("Р§РµР»Р»РµРЅРґР¶ 2FA РЅРµ РЅР°Р№РґРµРЅ.");
     const device = await ensureDeviceMaterial();
     const response = await api.verifyWeb2FA({
       challengeId: pending2fa.challengeId,
@@ -990,10 +1040,10 @@ function App() {
     try {
       const details = conversationDetails[conversationId] ?? (await api.getConversation(session.accessToken, conversationId)).conversation;
       if (!hasCompatibleRecipientDevices(details.members, session.accountId)) {
-        throw new Error("У получателя нет совместимого устройства для защищенных сообщений. Попросите его заново войти в приложение.");
+        throw new Error("РЈ РїРѕР»СѓС‡Р°С‚РµР»СЏ РЅРµС‚ СЃРѕРІРјРµСЃС‚РёРјРѕРіРѕ СѓСЃС‚СЂРѕР№СЃС‚РІР° РґР»СЏ Р·Р°С‰РёС‰РµРЅРЅС‹С… СЃРѕРѕР±С‰РµРЅРёР№. РџРѕРїСЂРѕСЃРёС‚Рµ РµРіРѕ Р·Р°РЅРѕРІРѕ РІРѕР№С‚Рё РІ РїСЂРёР»РѕР¶РµРЅРёРµ.");
       }
       const recipients = collectRecipients(details.members);
-      if (recipients.length === 0) throw new Error("Нет доступных устройств получателей.");
+      if (recipients.length === 0) throw new Error("РќРµС‚ РґРѕСЃС‚СѓРїРЅС‹С… СѓСЃС‚СЂРѕР№СЃС‚РІ РїРѕР»СѓС‡Р°С‚РµР»РµР№.");
       const attachmentSecrets = await uploadEncryptedAttachments(api, session.accessToken, uploads);
       const plaintextPayload = JSON.stringify({
         text,
@@ -1158,31 +1208,69 @@ function App() {
     }));
   };
 
-  const downloadAttachment = async (attachment: MessageAttachmentView) => {
-    if (!api || !session) return;
+  const decryptAttachmentToBlob = async (attachment: MessageAttachmentView): Promise<Blob> => {
+    if (!api || !session) {
+      throw new Error("Connect to server first.");
+    }
     if (!attachment.symmetricKey) {
-      setGlobalError("Для этого вложения не найден ключ расшифровки.");
-      return;
+      throw new Error("Missing attachment decryption key.");
     }
 
+    const response = await api.downloadAttachment(session.accessToken, attachment.id as never);
+    const ciphertextBytes = base64ToBytes(response.ciphertext);
+    if (attachment.checksumSha256) {
+      const checksum = await webCryptoProvider.hashBytesHex(ciphertextBytes);
+      if (checksum.toLowerCase() !== attachment.checksumSha256.toLowerCase()) {
+        throw new Error("Attachment integrity check failed.");
+      }
+    }
+    const decrypted = await webCryptoProvider.decryptAttachment({
+      ciphertext: response.ciphertext,
+      nonce: attachment.nonce,
+      symmetricKey: attachment.symmetricKey,
+    });
+    const blobBytes = new Uint8Array(decrypted.byteLength);
+    blobBytes.set(decrypted);
+    return new Blob([blobBytes.buffer], { type: attachment.mimeType || "application/octet-stream" });
+  };
+
+  const ensureAttachmentPreview = async (attachment: MessageAttachmentView) => {
+    if (attachment.kind !== "image") return;
+    if (attachmentPreviewUrlsRef.current.has(attachment.id)) return;
+    if (attachmentPreviewInFlightRef.current.has(attachment.id)) return;
+
+    attachmentPreviewInFlightRef.current.add(attachment.id);
+    setAttachmentPreviews((prev) => ({
+      ...prev,
+      [attachment.id]: { loading: true, src: null, error: "" },
+    }));
+
+    try {
+      const blob = await decryptAttachmentToBlob(attachment);
+      const url = URL.createObjectURL(blob);
+      const oldURL = attachmentPreviewUrlsRef.current.get(attachment.id);
+      if (oldURL) {
+        URL.revokeObjectURL(oldURL);
+      }
+      attachmentPreviewUrlsRef.current.set(attachment.id, url);
+      setAttachmentPreviews((prev) => ({
+        ...prev,
+        [attachment.id]: { loading: false, src: url, error: "" },
+      }));
+    } catch (error) {
+      setAttachmentPreviews((prev) => ({
+        ...prev,
+        [attachment.id]: { loading: false, src: null, error: toUserError(error) },
+      }));
+    } finally {
+      attachmentPreviewInFlightRef.current.delete(attachment.id);
+    }
+  };
+
+  const downloadAttachment = async (attachment: MessageAttachmentView) => {
     setAttachmentOps((prev) => ({ ...prev, [attachment.id]: { loading: true, error: "" } }));
     try {
-      const response = await api.downloadAttachment(session.accessToken, attachment.id as never);
-      const ciphertextBytes = base64ToBytes(response.ciphertext);
-      if (attachment.checksumSha256) {
-        const checksum = await webCryptoProvider.hashBytesHex(ciphertextBytes);
-        if (checksum.toLowerCase() !== attachment.checksumSha256.toLowerCase()) {
-          throw new Error("Контрольная сумма вложения не совпала.");
-        }
-      }
-      const decrypted = await webCryptoProvider.decryptAttachment({
-        ciphertext: response.ciphertext,
-        nonce: attachment.nonce,
-        symmetricKey: attachment.symmetricKey,
-      });
-      const blobBytes = new Uint8Array(decrypted.byteLength);
-      blobBytes.set(decrypted);
-      const blob = new Blob([blobBytes.buffer], { type: attachment.mimeType });
+      const blob = await decryptAttachmentToBlob(attachment);
       const url = URL.createObjectURL(blob);
       try {
         const element = document.createElement("a");
@@ -1202,7 +1290,6 @@ function App() {
       }));
     }
   };
-
   const searchUsers = async (query: string) => {
     if (!api || !session) return;
     setUserSearchQuery(query);
@@ -1235,7 +1322,7 @@ function App() {
     if (!api || !session) return;
     const title = groupTitle.trim();
     if (!title || groupMembers.length === 0) {
-      setGlobalError("Введите название группы и выберите участников.");
+      setGlobalError("Р’РІРµРґРёС‚Рµ РЅР°Р·РІР°РЅРёРµ РіСЂСѓРїРїС‹ Рё РІС‹Р±РµСЂРёС‚Рµ СѓС‡Р°СЃС‚РЅРёРєРѕРІ.");
       return;
     }
     const payload: CreateGroupConversationRequest = { title, memberAccountIds: groupMembers as never };
@@ -1375,7 +1462,7 @@ function App() {
   );
 
   const publishPost = async (payload: CreatePostPayload) => {
-    if (!api || !session) throw new Error("Сессия не активна.");
+    if (!api || !session) throw new Error("РЎРµСЃСЃРёСЏ РЅРµ Р°РєС‚РёРІРЅР°.");
     setPostMediaUpload(emptyUploadFeedback);
 
     let mediaId: string | undefined;
@@ -1384,7 +1471,7 @@ function App() {
         setPostMediaUpload({
           phase: "uploading",
           percent: 0,
-          message: "Загружаем медиа: 0%",
+          message: "Р—Р°РіСЂСѓР¶Р°РµРј РјРµРґРёР°: 0%",
         });
         const uploaded = await api.uploadMedia(session.accessToken, {
           file: payload.mediaFile,
@@ -1396,7 +1483,7 @@ function App() {
             setPostMediaUpload({
               phase: "uploading",
               percent: normalized,
-              message: `Загружаем медиа: ${normalized}%`,
+              message: `Р—Р°РіСЂСѓР¶Р°РµРј РјРµРґРёР°: ${normalized}%`,
             });
           },
         });
@@ -1416,7 +1503,7 @@ function App() {
         setPostMediaUpload({
           phase: "success",
           percent: 100,
-          message: "Медиа успешно загружено и опубликовано.",
+          message: "РњРµРґРёР° СѓСЃРїРµС€РЅРѕ Р·Р°РіСЂСѓР¶РµРЅРѕ Рё РѕРїСѓР±Р»РёРєРѕРІР°РЅРѕ.",
         });
       }
     } catch (error) {
@@ -1443,7 +1530,7 @@ function App() {
         websiteUrl: profileEdit.websiteUrl || null,
       });
       setMyProfile(response.profile);
-      setSettingsMessage("Профиль обновлён.");
+      setSettingsMessage("РџСЂРѕС„РёР»СЊ РѕР±РЅРѕРІР»С‘РЅ.");
     } catch (error) {
       setSettingsMessage(toUserError(error));
     }
@@ -1451,12 +1538,12 @@ function App() {
 
   const uploadProfileMedia = async (file: File, kind: "avatar" | "banner") => {
     if (!api || !session) return;
-    const uploadLabel = kind === "avatar" ? "аватар" : "обложку";
+    const uploadLabel = kind === "avatar" ? "Р°РІР°С‚Р°СЂ" : "РѕР±Р»РѕР¶РєСѓ";
     try {
       setProfileUploadState(kind, {
         phase: "uploading",
         percent: 0,
-        message: `Загружаем ${uploadLabel}: 0%`,
+        message: `Р—Р°РіСЂСѓР¶Р°РµРј ${uploadLabel}: 0%`,
       });
 
       const uploaded = await api.uploadMedia(session.accessToken, {
@@ -1469,7 +1556,7 @@ function App() {
           setProfileUploadState(kind, {
             phase: "uploading",
             percent: normalized,
-            message: `Загружаем ${uploadLabel}: ${normalized}%`,
+            message: `Р—Р°РіСЂСѓР¶Р°РµРј ${uploadLabel}: ${normalized}%`,
           });
         },
       });
@@ -1481,9 +1568,9 @@ function App() {
       setProfileUploadState(kind, {
         phase: "success",
         percent: 100,
-        message: kind === "avatar" ? "Аватар успешно загружен." : "Обложка успешно загружена.",
+        message: kind === "avatar" ? "РђРІР°С‚Р°СЂ СѓСЃРїРµС€РЅРѕ Р·Р°РіСЂСѓР¶РµРЅ." : "РћР±Р»РѕР¶РєР° СѓСЃРїРµС€РЅРѕ Р·Р°РіСЂСѓР¶РµРЅР°.",
       });
-      setSettingsMessage(kind === "avatar" ? "Аватар обновлён." : "Обложка обновлена.");
+      setSettingsMessage(kind === "avatar" ? "РђРІР°С‚Р°СЂ РѕР±РЅРѕРІР»С‘РЅ." : "РћР±Р»РѕР¶РєР° РѕР±РЅРѕРІР»РµРЅР°.");
     } catch (error) {
       setProfileUploadState(kind, {
         phase: "error",
@@ -1511,7 +1598,7 @@ function App() {
       setStoryCaption("");
       const feed = await api.listStoryFeed(session.accessToken, 60);
       setStories(feed.stories);
-      setSettingsMessage("История опубликована.");
+      setSettingsMessage("РСЃС‚РѕСЂРёСЏ РѕРїСѓР±Р»РёРєРѕРІР°РЅР°.");
     } catch (error) {
       setSettingsMessage(toUserError(error));
     }
@@ -1543,7 +1630,7 @@ function App() {
         const refreshed = await api.getUserProfile(session.accessToken, accountId);
         setProfileTarget(refreshed.profile);
       }
-      setSettingsMessage("Заявка в друзья отправлена.");
+      setSettingsMessage("Р—Р°СЏРІРєР° РІ РґСЂСѓР·СЊСЏ РѕС‚РїСЂР°РІР»РµРЅР°.");
     } catch (error) {
       setGlobalError(toUserError(error));
     }
@@ -1630,7 +1717,7 @@ function App() {
     try {
       const setup = await api.startTwoFA(session.accessToken);
       setTwoFASetup(setup);
-      setSettingsMessage("Секрет создан. Введите код из приложения-аутентификатора.");
+      setSettingsMessage("РЎРµРєСЂРµС‚ СЃРѕР·РґР°РЅ. Р’РІРµРґРёС‚Рµ РєРѕРґ РёР· РїСЂРёР»РѕР¶РµРЅРёСЏ-Р°СѓС‚РµРЅС‚РёС„РёРєР°С‚РѕСЂР°.");
     } catch (error) {
       setSettingsMessage(toUserError(error));
     }
@@ -1642,7 +1729,7 @@ function App() {
       await api.confirmTwoFA(session.accessToken, twoFAEnableCode.trim());
       setTwoFAEnableCode("");
       setTwoFASetup(null);
-      setSettingsMessage("2FA успешно включена.");
+      setSettingsMessage("2FA СѓСЃРїРµС€РЅРѕ РІРєР»СЋС‡РµРЅР°.");
       await loadSettingsData(api, session, setSessionInfo, setDeviceList, setSecurityEvents);
     } catch (error) {
       setSettingsMessage(toUserError(error));
@@ -1655,7 +1742,7 @@ function App() {
       await api.disableTwoFA(session.accessToken, twoFADisableCode.trim());
       setTwoFADisableCode("");
       setTwoFASetup(null);
-      setSettingsMessage("2FA отключена.");
+      setSettingsMessage("2FA РѕС‚РєР»СЋС‡РµРЅР°.");
       await loadSettingsData(api, session, setSessionInfo, setDeviceList, setSecurityEvents);
     } catch (error) {
       setSettingsMessage(toUserError(error));
@@ -1666,7 +1753,7 @@ function App() {
     if (!api || !session) return;
     try {
       await api.revokeDevice(session.accessToken, deviceId);
-      setSettingsMessage("Устройство отозвано.");
+      setSettingsMessage("РЈСЃС‚СЂРѕР№СЃС‚РІРѕ РѕС‚РѕР·РІР°РЅРѕ.");
       await loadSettingsData(api, session, setSessionInfo, setDeviceList, setSecurityEvents);
     } catch (error) {
       setSettingsMessage(toUserError(error));
@@ -1677,9 +1764,9 @@ function App() {
     if (!api || !server) return;
     try {
       await fetch(buildServerConfigEndpoint(server.config.apiBaseUrl), { method: "GET" });
-      setSettingsMessage("Соединение с сервером успешно.");
+      setSettingsMessage("РЎРѕРµРґРёРЅРµРЅРёРµ СЃ СЃРµСЂРІРµСЂРѕРј СѓСЃРїРµС€РЅРѕ.");
     } catch {
-      setSettingsMessage("Не удалось проверить соединение с сервером.");
+      setSettingsMessage("РќРµ СѓРґР°Р»РѕСЃСЊ РїСЂРѕРІРµСЂРёС‚СЊ СЃРѕРµРґРёРЅРµРЅРёРµ СЃ СЃРµСЂРІРµСЂРѕРј.");
     }
   };
 
@@ -1692,23 +1779,23 @@ function App() {
     }
 
     if (!enabled) {
-      setSettingsMessage("Браузерные уведомления отключены. In-app уведомления продолжают работать.");
+      setSettingsMessage("Р‘СЂР°СѓР·РµСЂРЅС‹Рµ СѓРІРµРґРѕРјР»РµРЅРёСЏ РѕС‚РєР»СЋС‡РµРЅС‹. In-app СѓРІРµРґРѕРјР»РµРЅРёСЏ РїСЂРѕРґРѕР»Р¶Р°СЋС‚ СЂР°Р±РѕС‚Р°С‚СЊ.");
       return;
     }
     if (typeof window === "undefined" || !("Notification" in window)) {
-      setSettingsMessage("Браузерные уведомления недоступны в текущем окружении.");
+      setSettingsMessage("Р‘СЂР°СѓР·РµСЂРЅС‹Рµ СѓРІРµРґРѕРјР»РµРЅРёСЏ РЅРµРґРѕСЃС‚СѓРїРЅС‹ РІ С‚РµРєСѓС‰РµРј РѕРєСЂСѓР¶РµРЅРёРё.");
       return;
     }
     if (Notification.permission === "granted") {
       setBrowserNotificationPermission("granted");
-      setSettingsMessage("Браузерные уведомления включены.");
+      setSettingsMessage("Р‘СЂР°СѓР·РµСЂРЅС‹Рµ СѓРІРµРґРѕРјР»РµРЅРёСЏ РІРєР»СЋС‡РµРЅС‹.");
       return;
     }
 
     const permission = await Notification.requestPermission();
     setBrowserNotificationPermission(permission);
     if (permission === "granted") {
-      setSettingsMessage("Браузерные уведомления включены.");
+      setSettingsMessage("Р‘СЂР°СѓР·РµСЂРЅС‹Рµ СѓРІРµРґРѕРјР»РµРЅРёСЏ РІРєР»СЋС‡РµРЅС‹.");
       return;
     }
     setPreferBrowserNotifications(false);
@@ -1717,7 +1804,7 @@ function App() {
     } catch {
       // noop
     }
-    setSettingsMessage("Разрешение на браузерные уведомления не выдано.");
+    setSettingsMessage("Р Р°Р·СЂРµС€РµРЅРёРµ РЅР° Р±СЂР°СѓР·РµСЂРЅС‹Рµ СѓРІРµРґРѕРјР»РµРЅРёСЏ РЅРµ РІС‹РґР°РЅРѕ.");
   };
 
   const resetServer = async () => {
@@ -1732,12 +1819,14 @@ function App() {
     setPending2fa(null);
     setUnreadByConversation({});
     setMessagesByConversation({});
+    clearAttachmentPreviews();
     setNotifications([]);
     setNotificationsUnreadTotal(0);
     setNotificationsError("");
     setNotificationsLoading(false);
     knownNotificationIDsRef.current = new Set();
     shownToastNotificationIDsRef.current = new Set();
+    readReceiptInFlightRef.current = new Set();
     setSummaries([]);
     setMyProfile(null);
     setProfileTarget(null);
@@ -1764,7 +1853,7 @@ function App() {
   const viewedProfile = profileTarget ?? myProfile;
 
   if (booting) {
-    return <StandaloneCard title="Запуск приложения" subtitle="Проверяем сервер и сессию..." />;
+    return <StandaloneCard title="Р—Р°РїСѓСЃРє РїСЂРёР»РѕР¶РµРЅРёСЏ" subtitle="РџСЂРѕРІРµСЂСЏРµРј СЃРµСЂРІРµСЂ Рё СЃРµСЃСЃРёСЋ..." />;
   }
 
   if (!server) {
@@ -1850,7 +1939,7 @@ function App() {
                   runtimeRef.current?.requestReconnect();
                 }}
               >
-                Переподключиться
+                РџРµСЂРµРїРѕРґРєР»СЋС‡РёС‚СЊСЃСЏ
               </button>
             </div>
           ) : null}
@@ -1927,6 +2016,10 @@ function App() {
                 return sendMessage(activeConversationId, retryText);
               }}
               onEditMessage={(messageId, nextText) => editMessage(messageId, nextText)}
+              onEnsureAttachmentPreview={(attachment) => {
+                void ensureAttachmentPreview(attachment);
+              }}
+              attachmentPreviewState={attachmentPreviews}
               onDownloadAttachment={downloadAttachment}
               onLoadOlderMessages={() => {
                 if (!activeConversationId) return;
@@ -2011,7 +2104,7 @@ function App() {
                         accessToken={session.accessToken}
                         apiBaseUrl={server.config.apiBaseUrl}
                         apiPrefix={server.config.apiPrefix}
-                        alt="Обложка профиля"
+                        alt="РћР±Р»РѕР¶РєР° РїСЂРѕС„РёР»СЏ"
                         className="absolute inset-0 w-full h-full object-cover"
                         fallbackClassName="absolute inset-0 w-full h-full"
                       />
@@ -2028,7 +2121,7 @@ function App() {
                       accessToken={session.accessToken}
                       apiBaseUrl={server.config.apiBaseUrl}
                       apiPrefix={server.config.apiPrefix}
-                      alt="Аватар профиля"
+                      alt="РђРІР°С‚Р°СЂ РїСЂРѕС„РёР»СЏ"
                       className="w-full h-full object-cover"
                       fallbackClassName="w-full h-full"
                     />
@@ -2047,7 +2140,7 @@ function App() {
                         style={outlineButtonStyle}
                         onClick={clearProfileTarget}
                       >
-                        Мой профиль
+                        РњРѕР№ РїСЂРѕС„РёР»СЊ
                       </button>
                       {profileTarget.existingDirectConversationId ? (
                         <button
@@ -2060,7 +2153,7 @@ function App() {
                             void openConversation(profileTarget.existingDirectConversationId as string);
                           }}
                         >
-                          Открыть чат
+                          РћС‚РєСЂС‹С‚СЊ С‡Р°С‚
                         </button>
                       ) : profileTarget.canStartDirectChat ? (
                         <button
@@ -2070,7 +2163,7 @@ function App() {
                           onClick={() => void createDirect(profileTarget.accountId as string)}
                         >
                           <MessageSquare className="w-4 h-4 inline mr-2" />
-                          Написать
+                          РќР°РїРёСЃР°С‚СЊ
                         </button>
                       ) : null}
                       {profileTarget.friendState === "none" && profileTarget.canSendFriendRequest ? (
@@ -2080,7 +2173,7 @@ function App() {
                           style={outlineButtonStyle}
                           onClick={() => void sendFriendRequest(profileTarget.accountId as string)}
                         >
-                          Добавить в друзья
+                          Р”РѕР±Р°РІРёС‚СЊ РІ РґСЂСѓР·СЊСЏ
                         </button>
                       ) : null}
                       {profileTarget.friendState === "incoming_request" ? (
@@ -2095,7 +2188,7 @@ function App() {
                             }
                           }}
                         >
-                          Принять заявку
+                          РџСЂРёРЅСЏС‚СЊ Р·Р°СЏРІРєСѓ
                         </button>
                       ) : null}
                       {profileTarget.friendState === "outgoing_request" ? (
@@ -2110,7 +2203,7 @@ function App() {
                             }
                           }}
                         >
-                          Отменить заявку
+                          РћС‚РјРµРЅРёС‚СЊ Р·Р°СЏРІРєСѓ
                         </button>
                       ) : null}
                       {profileTarget.friendState === "friends" ? (
@@ -2120,7 +2213,7 @@ function App() {
                           style={outlineButtonStyle}
                           onClick={() => void removeFriend(profileTarget.accountId as string)}
                         >
-                          Удалить из друзей
+                          РЈРґР°Р»РёС‚СЊ РёР· РґСЂСѓР·РµР№
                         </button>
                       ) : null}
                     </>
@@ -2136,21 +2229,21 @@ function App() {
               {!profileTarget ? (
                 <>
                   <div className="rounded-2xl border p-4 space-y-3 interactive-surface" style={cardStyle}>
-                    <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>Редактирование профиля</p>
+                    <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>Р РµРґР°РєС‚РёСЂРѕРІР°РЅРёРµ РїСЂРѕС„РёР»СЏ</p>
                     <div className="grid gap-3 md:grid-cols-2">
-                      <input value={profileEdit.displayName} onChange={(event) => setProfileEdit((prev) => ({ ...prev, displayName: event.target.value }))} placeholder="Отображаемое имя" className="w-full rounded-lg border bg-transparent px-3 py-2 outline-none" style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)" }} />
+                      <input value={profileEdit.displayName} onChange={(event) => setProfileEdit((prev) => ({ ...prev, displayName: event.target.value }))} placeholder="РћС‚РѕР±СЂР°Р¶Р°РµРјРѕРµ РёРјСЏ" className="w-full rounded-lg border bg-transparent px-3 py-2 outline-none" style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)" }} />
                       <input value={profileEdit.username} onChange={(event) => setProfileEdit((prev) => ({ ...prev, username: event.target.value }))} placeholder="@username" className="w-full rounded-lg border bg-transparent px-3 py-2 outline-none" style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)" }} />
-                      <input value={profileEdit.statusText} onChange={(event) => setProfileEdit((prev) => ({ ...prev, statusText: event.target.value }))} placeholder="Статус" className="w-full rounded-lg border bg-transparent px-3 py-2 outline-none" style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)" }} />
-                      <input value={profileEdit.location} onChange={(event) => setProfileEdit((prev) => ({ ...prev, location: event.target.value }))} placeholder="Локация" className="w-full rounded-lg border bg-transparent px-3 py-2 outline-none" style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)" }} />
-                      <input value={profileEdit.websiteUrl} onChange={(event) => setProfileEdit((prev) => ({ ...prev, websiteUrl: event.target.value }))} placeholder="Сайт" className="w-full rounded-lg border bg-transparent px-3 py-2 outline-none" style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)" }} />
+                      <input value={profileEdit.statusText} onChange={(event) => setProfileEdit((prev) => ({ ...prev, statusText: event.target.value }))} placeholder="РЎС‚Р°С‚СѓСЃ" className="w-full rounded-lg border bg-transparent px-3 py-2 outline-none" style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)" }} />
+                      <input value={profileEdit.location} onChange={(event) => setProfileEdit((prev) => ({ ...prev, location: event.target.value }))} placeholder="Р›РѕРєР°С†РёСЏ" className="w-full rounded-lg border bg-transparent px-3 py-2 outline-none" style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)" }} />
+                      <input value={profileEdit.websiteUrl} onChange={(event) => setProfileEdit((prev) => ({ ...prev, websiteUrl: event.target.value }))} placeholder="РЎР°Р№С‚" className="w-full rounded-lg border bg-transparent px-3 py-2 outline-none" style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)" }} />
                     </div>
-                    <textarea value={profileEdit.bio} onChange={(event) => setProfileEdit((prev) => ({ ...prev, bio: event.target.value }))} placeholder="О себе" className="w-full rounded-lg border bg-transparent px-3 py-2 outline-none resize-none" style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)", minHeight: 90 }} />
+                    <textarea value={profileEdit.bio} onChange={(event) => setProfileEdit((prev) => ({ ...prev, bio: event.target.value }))} placeholder="Рћ СЃРµР±Рµ" className="w-full rounded-lg border bg-transparent px-3 py-2 outline-none resize-none" style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)", minHeight: 90 }} />
                     <div className="flex gap-2 flex-wrap">
                       <button type="button" className="px-3 py-2 rounded-lg border" style={outlineButtonStyle} onClick={() => void saveProfile()}>
-                        Сохранить профиль
+                        РЎРѕС…СЂР°РЅРёС‚СЊ РїСЂРѕС„РёР»СЊ
                       </button>
                       <label className="px-3 py-2 rounded-lg border cursor-pointer interactive-surface-subtle" style={outlineButtonStyle}>
-                        Загрузить аватар
+                        Р—Р°РіСЂСѓР·РёС‚СЊ Р°РІР°С‚Р°СЂ
                         <input type="file" className="hidden" accept="image/*" onChange={(event) => {
                           const file = event.target.files?.[0];
                           if (file) void uploadProfileMedia(file, "avatar");
@@ -2158,7 +2251,7 @@ function App() {
                         }} />
                       </label>
                       <label className="px-3 py-2 rounded-lg border cursor-pointer interactive-surface-subtle" style={outlineButtonStyle}>
-                        Загрузить обложку
+                        Р—Р°РіСЂСѓР·РёС‚СЊ РѕР±Р»РѕР¶РєСѓ
                         <input type="file" className="hidden" accept="image/*" onChange={(event) => {
                           const file = event.target.files?.[0];
                           if (file) void uploadProfileMedia(file, "banner");
@@ -2167,8 +2260,8 @@ function App() {
                       </label>
                     </div>
                     <div className="grid gap-2 md:grid-cols-2">
-                      <UploadStatusPill label="Аватар" status={profileMediaUpload.avatar} />
-                      <UploadStatusPill label="Обложка" status={profileMediaUpload.banner} />
+                      <UploadStatusPill label="РђРІР°С‚Р°СЂ" status={profileMediaUpload.avatar} />
+                      <UploadStatusPill label="РћР±Р»РѕР¶РєР°" status={profileMediaUpload.banner} />
                     </div>
                   </div>
 
@@ -2177,12 +2270,12 @@ function App() {
                       <input
                         value={storyCaption}
                         onChange={(event) => setStoryCaption(event.target.value)}
-                        placeholder="Подпись к истории"
+                        placeholder="РџРѕРґРїРёСЃСЊ Рє РёСЃС‚РѕСЂРёРё"
                         className="flex-1 min-w-[220px] rounded-lg border bg-transparent px-3 py-2 outline-none"
                         style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)" }}
                       />
                       <label className="px-3 py-2 rounded-lg border cursor-pointer interactive-surface-subtle" style={outlineButtonStyle}>
-                        Добавить историю
+                        Р”РѕР±Р°РІРёС‚СЊ РёСЃС‚РѕСЂРёСЋ
                         <input
                           type="file"
                           className="hidden"
@@ -2196,12 +2289,12 @@ function App() {
                       </label>
                     </div>
                     <StoryFeed
-                      title="Истории"
-                      subtitle="Публикации, которые исчезают через 24 часа"
+                      title="РСЃС‚РѕСЂРёРё"
+                      subtitle="РџСѓР±Р»РёРєР°С†РёРё, РєРѕС‚РѕСЂС‹Рµ РёСЃС‡РµР·Р°СЋС‚ С‡РµСЂРµР· 24 С‡Р°СЃР°"
                       stories={stories.slice(0, 8)}
                       loading={false}
                       error=""
-                      emptyText="Историй пока нет."
+                      emptyText="РСЃС‚РѕСЂРёР№ РїРѕРєР° РЅРµС‚."
                       onDeleteStory={async (storyId) => {
                         if (!api || !session) return;
                         try {
@@ -2225,45 +2318,45 @@ function App() {
                   </div>
 
                   <div className="rounded-2xl border p-4 space-y-3 interactive-surface" style={cardStyle}>
-                    <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>Друзья и заявки</p>
+                    <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>Р”СЂСѓР·СЊСЏ Рё Р·Р°СЏРІРєРё</p>
                     <div className="grid gap-4 md:grid-cols-3">
                       <div>
-                        <p style={{ color: "var(--base-grey-light)", fontSize: 12, marginBottom: 8 }}>Друзья</p>
+                        <p style={{ color: "var(--base-grey-light)", fontSize: 12, marginBottom: 8 }}>Р”СЂСѓР·СЊСЏ</p>
                         <div className="space-y-2">
-                          {friends.length === 0 ? <InlineInfo text="Список друзей пуст." /> : friends.map((friend) => (
+                          {friends.length === 0 ? <InlineInfo text="РЎРїРёСЃРѕРє РґСЂСѓР·РµР№ РїСѓСЃС‚." /> : friends.map((friend) => (
                             <div key={friend.accountId as string} className="rounded-lg border p-2 interactive-surface-subtle" style={innerCardStyle}>
                               <p style={{ color: "var(--text-primary)" }}>{friend.displayName || friend.username}</p>
                               <p style={{ color: "var(--base-grey-light)", fontSize: 12 }}>@{friend.username}</p>
                               <div className="mt-2 flex gap-2">
-                                <button type="button" className="px-2 py-1 rounded-lg border text-xs" style={outlineButtonStyle} onClick={() => void createDirect(friend.accountId as string)}>Написать</button>
-                                <button type="button" className="px-2 py-1 rounded-lg border text-xs" style={outlineButtonStyle} onClick={() => void openUserProfile(friend.accountId as string)}>Профиль</button>
+                                <button type="button" className="px-2 py-1 rounded-lg border text-xs" style={outlineButtonStyle} onClick={() => void createDirect(friend.accountId as string)}>РќР°РїРёСЃР°С‚СЊ</button>
+                                <button type="button" className="px-2 py-1 rounded-lg border text-xs" style={outlineButtonStyle} onClick={() => void openUserProfile(friend.accountId as string)}>РџСЂРѕС„РёР»СЊ</button>
                               </div>
                             </div>
                           ))}
                         </div>
                       </div>
                       <div>
-                        <p style={{ color: "var(--base-grey-light)", fontSize: 12, marginBottom: 8 }}>Входящие</p>
+                        <p style={{ color: "var(--base-grey-light)", fontSize: 12, marginBottom: 8 }}>Р’С…РѕРґСЏС‰РёРµ</p>
                         <div className="space-y-2">
-                          {incomingRequests.length === 0 ? <InlineInfo text="Нет входящих заявок." /> : incomingRequests.map((request) => (
+                          {incomingRequests.length === 0 ? <InlineInfo text="РќРµС‚ РІС…РѕРґСЏС‰РёС… Р·Р°СЏРІРѕРє." /> : incomingRequests.map((request) => (
                             <div key={request.id as string} className="rounded-lg border p-2 interactive-surface-subtle" style={innerCardStyle}>
                               <p style={{ color: "var(--text-primary)" }}>{request.actor.displayName || request.actor.username}</p>
                               <div className="mt-2 flex gap-2">
-                                <button type="button" className="px-2 py-1 rounded-lg border text-xs" style={outlineButtonStyle} onClick={() => void processFriendRequest(request.id as string, "accept")}>Принять</button>
-                                <button type="button" className="px-2 py-1 rounded-lg border text-xs" style={outlineButtonStyle} onClick={() => void processFriendRequest(request.id as string, "reject")}>Отклонить</button>
+                                <button type="button" className="px-2 py-1 rounded-lg border text-xs" style={outlineButtonStyle} onClick={() => void processFriendRequest(request.id as string, "accept")}>РџСЂРёРЅСЏС‚СЊ</button>
+                                <button type="button" className="px-2 py-1 rounded-lg border text-xs" style={outlineButtonStyle} onClick={() => void processFriendRequest(request.id as string, "reject")}>РћС‚РєР»РѕРЅРёС‚СЊ</button>
                               </div>
                             </div>
                           ))}
                         </div>
                       </div>
                       <div>
-                        <p style={{ color: "var(--base-grey-light)", fontSize: 12, marginBottom: 8 }}>Исходящие</p>
+                        <p style={{ color: "var(--base-grey-light)", fontSize: 12, marginBottom: 8 }}>РСЃС…РѕРґСЏС‰РёРµ</p>
                         <div className="space-y-2">
-                          {outgoingRequests.length === 0 ? <InlineInfo text="Нет исходящих заявок." /> : outgoingRequests.map((request) => (
+                          {outgoingRequests.length === 0 ? <InlineInfo text="РќРµС‚ РёСЃС…РѕРґСЏС‰РёС… Р·Р°СЏРІРѕРє." /> : outgoingRequests.map((request) => (
                             <div key={request.id as string} className="rounded-lg border p-2 interactive-surface-subtle" style={innerCardStyle}>
                               <p style={{ color: "var(--text-primary)" }}>{request.target.displayName || request.target.username}</p>
                               <div className="mt-2 flex gap-2">
-                                <button type="button" className="px-2 py-1 rounded-lg border text-xs" style={outlineButtonStyle} onClick={() => void processFriendRequest(request.id as string, "cancel")}>Отменить</button>
+                                <button type="button" className="px-2 py-1 rounded-lg border text-xs" style={outlineButtonStyle} onClick={() => void processFriendRequest(request.id as string, "cancel")}>РћС‚РјРµРЅРёС‚СЊ</button>
                               </div>
                             </div>
                           ))}
@@ -2283,10 +2376,10 @@ function App() {
                   onOpenProfile={openUserProfile}
                   onToggleLike={toggleLike}
                   onDelete={deletePost}
-                  title={profileTarget ? "Публикации пользователя" : "Мои публикации"}
+                  title={profileTarget ? "РџСѓР±Р»РёРєР°С†РёРё РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ" : "РњРѕРё РїСѓР±Р»РёРєР°С†РёРё"}
                 />
               ) : (
-                <InlineInfo text="Публикации этого профиля скрыты настройками приватности." />
+                <InlineInfo text="РџСѓР±Р»РёРєР°С†РёРё СЌС‚РѕРіРѕ РїСЂРѕС„РёР»СЏ СЃРєСЂС‹С‚С‹ РЅР°СЃС‚СЂРѕР№РєР°РјРё РїСЂРёРІР°С‚РЅРѕСЃС‚Рё." />
               )}
             </section>
           ) : null}
@@ -2335,7 +2428,7 @@ function App() {
                       friendRequestsPolicy: privacy.friendRequestsPolicy,
                     });
                     setPrivacy(updated.privacy);
-                    setSettingsMessage("Настройки приватности сохранены.");
+                    setSettingsMessage("РќР°СЃС‚СЂРѕР№РєРё РїСЂРёРІР°С‚РЅРѕСЃС‚Рё СЃРѕС…СЂР°РЅРµРЅС‹.");
                   } catch (error) {
                     setSettingsMessage(toUserError(error));
                   }
@@ -2384,3 +2477,4 @@ function App() {
 }
 
 export default App;
+

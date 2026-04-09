@@ -271,7 +271,12 @@ export function toUserError(error: unknown): string {
     if (error.code === "network_error") return "Unable to connect to server.";
     return error.message || "Request failed.";
   }
-  if (error instanceof Error) return error.message || "Unexpected error.";
+  if (error instanceof Error) {
+    if (error.message === "sha256_unavailable") {
+      return "This browser cannot process attachment integrity checks. Please update your browser.";
+    }
+    return error.message || "Unexpected error.";
+  }
   return "Unexpected error.";
 }
 

@@ -54,6 +54,8 @@ type MessagesSectionProps = {
   onResendMessage: (retryText: string) => Promise<void>;
   onEditMessage: (messageId: string, nextText: string) => Promise<void>;
   onDownloadAttachment: (attachment: MessageAttachmentView) => Promise<void>;
+  onEnsureAttachmentPreview: (attachment: MessageAttachmentView) => void;
+  attachmentPreviewState: Record<string, { loading: boolean; src: string | null; error: string }>;
   onLoadOlderMessages: () => void;
   attachmentOps: MessageRowAttachmentState;
   transportState: RuntimeTransportState;
@@ -100,6 +102,8 @@ export function MessagesSection({
   onResendMessage,
   onEditMessage,
   onDownloadAttachment,
+  onEnsureAttachmentPreview,
+  attachmentPreviewState,
   onLoadOlderMessages,
   attachmentOps,
   transportState,
@@ -335,6 +339,8 @@ export function MessagesSection({
                   message={message}
                   onResend={message.localStatus === "failed" ? () => onResendMessage(message.retryText ?? "") : undefined}
                   onEditMessage={message.own ? onEditMessage : undefined}
+                  attachmentPreviewState={attachmentPreviewState}
+                  onEnsureAttachmentPreview={onEnsureAttachmentPreview}
                   onDownloadAttachment={onDownloadAttachment}
                   attachmentOpState={attachmentOps}
                 />

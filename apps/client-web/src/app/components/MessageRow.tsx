@@ -9,12 +9,16 @@ export function MessageRow({
   message,
   onResend,
   onEditMessage,
+  attachmentPreviewState,
+  onEnsureAttachmentPreview,
   onDownloadAttachment,
   attachmentOpState,
 }: {
   message: MessageView;
   onResend?: () => Promise<void>;
   onEditMessage?: (messageId: string, nextText: string) => Promise<void>;
+  attachmentPreviewState: Record<string, { loading: boolean; src: string | null; error: string }>;
+  onEnsureAttachmentPreview?: (attachment: MessageAttachmentView) => void;
   onDownloadAttachment: (attachment: MessageAttachmentView) => Promise<void>;
   attachmentOpState: MessageRowAttachmentState;
 }) {
@@ -49,6 +53,17 @@ export function MessageRow({
       setSavingEdit(false);
     }
   };
+
+  React.useEffect(() => {
+    if (!onEnsureAttachmentPreview) return;
+    for (const attachment of message.attachments) {
+      if (attachment.kind !== "image") continue;
+      const preview = attachmentPreviewState[attachment.id];
+      if (!preview || (!preview.loading && !preview.src && !preview.error)) {
+        onEnsureAttachmentPreview(attachment);
+      }
+    }
+  }, [message.attachments, attachmentPreviewState, onEnsureAttachmentPreview]);
 
   return (
     <div className={`flex message-row-enter ${message.own ? "justify-end" : "justify-start"}`}>
@@ -100,13 +115,31 @@ export function MessageRow({
           <div className="space-y-2">
             {message.attachments.map((attachment) => {
               const op = attachmentOpState[attachment.id];
+              const preview = attachmentPreviewState[attachment.id];
+              const isImage = attachment.kind === "image";
               return (
                 <div key={attachment.id} className="rounded-lg border px-3 py-2 space-y-2 interactive-surface-subtle" style={innerCardStyle}>
+                  {isImage ? (
+                    <div className="rounded-lg overflow-hidden border" style={{ borderColor: "var(--glass-border)" }}>
+                      {preview?.src ? (
+                        <img
+                          src={preview.src}
+                          alt={attachment.fileName}
+                          className="w-full max-h-[240px] object-cover cursor-pointer"
+                          onClick={() => void onDownloadAttachment(attachment)}
+                        />
+                      ) : (
+                        <div className="w-full h-32 flex items-center justify-center" style={{ color: "var(--base-grey-light)", fontSize: 12 }}>
+                          {preview?.loading ? "Loading image..." : preview?.error ? "Image preview unavailable" : "Preparing preview..."}
+                        </div>
+                      )}
+                    </div>
+                  ) : null}
                   <div className="flex items-center justify-between gap-2">
                     <div>
                       <p style={{ color: "var(--text-primary)" }}>{attachment.fileName}</p>
                       <p style={{ color: "var(--base-grey-light)", fontSize: 12 }}>
-                        {attachment.kind === "image" ? "Image" : "File"} · {formatBytes(attachment.sizeBytes)}
+                        {isImage ? "Image" : "File"} · {formatBytes(attachment.sizeBytes)}
                       </p>
                     </div>
                     <button
@@ -120,6 +153,7 @@ export function MessageRow({
                       {op?.loading ? "Downloading..." : "Download"}
                     </button>
                   </div>
+                  {preview?.error ? <p style={{ color: "#fca5a5", fontSize: 12 }}>{preview.error}</p> : null}
                   {op?.error ? <p style={{ color: "#fca5a5", fontSize: 12 }}>{op.error}</p> : null}
                 </div>
               );

@@ -7,6 +7,7 @@ const EXPECTED_NONCE_BYTES = 24;
 
 type SodiumLike = typeof sodium & {
   crypto_hash_sha256?: (input: Uint8Array) => Uint8Array;
+  crypto_generichash?: (outlen: number, input: Uint8Array) => Uint8Array;
 };
 
 export interface IdentityKeyPair {
@@ -55,6 +56,9 @@ function toBase64(value: Uint8Array, lib: typeof sodium): string {
 async function hashSha256(value: Uint8Array, lib: SodiumLike): Promise<Uint8Array> {
   if (typeof lib.crypto_hash_sha256 === "function") {
     return lib.crypto_hash_sha256(value);
+  }
+  if (typeof lib.crypto_generichash === "function") {
+    return lib.crypto_generichash(32, value);
   }
   if (typeof globalThis.crypto?.subtle?.digest === "function") {
     const bytes = new Uint8Array(value);
