@@ -1,10 +1,15 @@
 package media
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 	"io"
 	"log/slog"
 	"net/http"
@@ -20,6 +25,12 @@ import (
 	"github.com/example/secure-messenger/apps/relay-server/internal/service/auth"
 	"github.com/example/secure-messenger/apps/relay-server/internal/service/privacy"
 	"github.com/example/secure-messenger/apps/relay-server/internal/validation"
+	_ "golang.org/x/image/webp"
+)
+
+const (
+	maxImageDimensionPx = 8192
+	maxImagePixels      = 40_000_000
 )
 
 type Service struct {
@@ -87,17 +98,25 @@ func (s *Service) Upload(ctx context.Context, input UploadInput) (domain.MediaOb
 		return domain.MediaObject{}, service.NewError(service.ErrorCodeValidation, "file exceeds allowed size")
 	}
 
-	sniffedMime := detectMimeType(input.Payload)
+	sniffedMime := normalizeMediaMimeType(detectMimeType(input.Payload))
 	if !isAllowedMimeForKind(input.Kind, sniffedMime) {
 		return domain.MediaObject{}, service.NewError(service.ErrorCodeValidation, "file mime type is not allowed for this media kind")
 	}
 
-	normalizedMime := strings.ToLower(strings.TrimSpace(input.MimeType))
+	normalizedMime := normalizeMediaMimeType(input.MimeType)
 	if normalizedMime == "" {
 		normalizedMime = sniffedMime
 	}
 	if !isAllowedMimeForKind(input.Kind, normalizedMime) {
 		return domain.MediaObject{}, service.NewError(service.ErrorCodeValidation, "provided mime type is not allowed")
+	}
+	if normalizedMime != sniffedMime {
+		return domain.MediaObject{}, service.NewError(service.ErrorCodeValidation, "provided mime type does not match file content")
+	}
+
+	width, height, inspectErr := inspectMediaPayload(input.Payload, normalizedMime)
+	if inspectErr != nil {
+		return domain.MediaObject{}, inspectErr
 	}
 
 	checksum := checksumSHA256(input.Payload)
@@ -149,6 +168,12 @@ func (s *Service) Upload(ctx context.Context, input UploadInput) (domain.MediaOb
 		Visibility:     input.Visibility,
 		Status:         domain.MediaStatusActive,
 		CreatedAt:      time.Now().UTC(),
+	}
+	if width > 0 {
+		media.Width = &width
+	}
+	if height > 0 {
+		media.Height = &height
 	}
 	if strings.EqualFold(s.cfg.StorageBackend, "s3") {
 		bucket := strings.TrimSpace(s.cfg.S3Bucket)
@@ -296,6 +321,36 @@ func detectMimeType(payload []byte) string {
 	return strings.ToLower(strings.TrimSpace(http.DetectContentType(sample)))
 }
 
+func normalizeMediaMimeType(value string) string {
+	normalized := validation.NormalizeMimeType(value)
+	switch normalized {
+	case "image/jpg":
+		return "image/jpeg"
+	default:
+		return normalized
+	}
+}
+
+func inspectMediaPayload(payload []byte, mimeType string) (int, int, error) {
+	if !strings.HasPrefix(mimeType, "image/") {
+		return 0, 0, nil
+	}
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(payload))
+	if err != nil {
+		return 0, 0, service.NewError(service.ErrorCodeValidation, "malformed image payload")
+	}
+	if cfg.Width <= 0 || cfg.Height <= 0 {
+		return 0, 0, service.NewError(service.ErrorCodeValidation, "image dimensions are invalid")
+	}
+	if cfg.Width > maxImageDimensionPx || cfg.Height > maxImageDimensionPx {
+		return 0, 0, service.NewError(service.ErrorCodeValidation, "image dimensions exceed allowed limits")
+	}
+	if int64(cfg.Width)*int64(cfg.Height) > maxImagePixels {
+		return 0, 0, service.NewError(service.ErrorCodeValidation, "image resolution exceeds allowed limits")
+	}
+	return cfg.Width, cfg.Height, nil
+}
+
 func checksumSHA256(payload []byte) string {
 	sum := sha256.Sum256(payload)
 	return hex.EncodeToString(sum[:])
@@ -328,7 +383,7 @@ func sanitizeBaseName(fileName string) string {
 }
 
 func extensionForMime(mime string) string {
-	switch strings.ToLower(strings.TrimSpace(mime)) {
+	switch normalizeMediaMimeType(mime) {
 	case "image/jpeg":
 		return ".jpg"
 	case "image/png":
@@ -366,7 +421,7 @@ func isValidVisibility(value domain.VisibilityScope) bool {
 }
 
 func isAllowedMimeForKind(kind domain.MediaKind, mime string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(mime))
+	normalized := normalizeMediaMimeType(mime)
 	switch kind {
 	case domain.MediaKindAvatar, domain.MediaKindBanner, domain.MediaKindPhoto, domain.MediaKindStoryImage:
 		return normalized == "image/jpeg" || normalized == "image/png" || normalized == "image/webp" || normalized == "image/gif"

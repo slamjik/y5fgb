@@ -79,6 +79,14 @@ import {
   upsertMessageItems,
   uploadEncryptedAttachments,
 } from "./message-helpers";
+import {
+  classifyAttachmentForUpload,
+  mediaImageInputAccept,
+  mediaVideoInputAccept,
+  validatePostMediaFile,
+  validateProfileMediaFile,
+  validateStoryMediaFile,
+} from "./upload-security";
 import type {
   AuthMode,
   ChatFilter,
@@ -448,9 +456,9 @@ function App() {
       }
       shownToastNotificationIDsRef.current.add(toastID);
       toast(renderNotificationTitle(item), {
-        description: item.preview ?? "РћС‚РєСЂРѕР№С‚Рµ СѓРІРµРґРѕРјР»РµРЅРёРµ",
+        description: item.preview ?? "Откройте уведомление",
         action: {
-          label: "РћС‚РєСЂС‹С‚СЊ",
+          label: "Открыть",
           onClick: () => {
             void openNotification(item);
           },
@@ -464,7 +472,7 @@ function App() {
       ) {
         try {
           const browserNotification = new Notification(renderNotificationTitle(item), {
-            body: item.preview ?? "РћС‚РєСЂРѕР№С‚Рµ СѓРІРµРґРѕРјР»РµРЅРёРµ",
+            body: item.preview ?? "Откройте уведомление",
           });
           browserNotification.onclick = () => {
             window.focus();
@@ -519,10 +527,10 @@ function App() {
                 continue;
               }
               shownToastNotificationIDsRef.current.add(toastID);
-              toast("РќРѕРІРѕРµ СЃРѕРѕР±С‰РµРЅРёРµ", {
-                description: item.text || "РћС‚РєСЂРѕР№С‚Рµ С‡Р°С‚, С‡С‚РѕР±С‹ РїСЂРѕС‡РёС‚Р°С‚СЊ.",
+              toast("Новое сообщение", {
+                description: item.text || "Откройте чат, чтобы прочитать.",
                 action: {
-                  label: "РћС‚РєСЂС‹С‚СЊ",
+                  label: "Открыть",
                   onClick: () => {
                     setSection("messages");
                     setShowMobileConversationList(false);
@@ -537,8 +545,8 @@ function App() {
                 "Notification" in window
               ) {
                 try {
-                  const browserNotification = new Notification("РќРѕРІРѕРµ СЃРѕРѕР±С‰РµРЅРёРµ", {
-                    body: item.text || "РћС‚РєСЂРѕР№С‚Рµ С‡Р°С‚, С‡С‚РѕР±С‹ РїСЂРѕС‡РёС‚Р°С‚СЊ.",
+                  const browserNotification = new Notification("Новое сообщение", {
+                    body: item.text || "Откройте чат, чтобы прочитать.",
                   });
                   browserNotification.onclick = () => {
                     window.focus();
@@ -572,11 +580,11 @@ function App() {
     void startRuntime().catch(async (error) => {
       if (disposed) return;
       const message = toUserError(error);
-      if (message.toLowerCase().includes("РєР»СЋС‡ СѓСЃС‚СЂРѕР№СЃС‚РІР°")) {
+      if (message.toLowerCase().includes("ключ устройства")) {
         await clearAuthState();
         await clearPersistedDeviceMaterial();
         clearSignedInState();
-        setGlobalError("РЎРµСЃСЃРёСЏ С‚СЂРµР±СѓРµС‚ РїРѕРІС‚РѕСЂРЅРѕРіРѕ РІС…РѕРґР°. Р’РѕР№РґРёС‚Рµ СЃРЅРѕРІР°.");
+        setGlobalError("Сессия требует повторного входа. Войдите снова.");
         return;
       }
       setRuntimeError(message);
@@ -611,7 +619,7 @@ function App() {
       return restored;
     }
     if (expectedDeviceId) {
-      throw new Error("Р›РѕРєР°Р»СЊРЅС‹Р№ РєР»СЋС‡ СѓСЃС‚СЂРѕР№СЃС‚РІР° РЅРµ РЅР°Р№РґРµРЅ. Р’С‹Р№РґРёС‚Рµ Рё РІРѕР№РґРёС‚Рµ СЃРЅРѕРІР°.");
+      throw new Error("Локальный ключ устройства не найден. Выйдите и войдите снова.");
     }
     const pair = await webCryptoProvider.generateIdentityKeyPair();
     const device: DeviceMaterial = {
@@ -742,7 +750,7 @@ function App() {
       if (error instanceof ApiClientError && (error.status === 401 || error.code === "unauthorized")) {
         await clearAuthState();
         clearSignedInState();
-        setGlobalError("РЎРµСЃСЃРёСЏ РёСЃС‚РµРєР»Р°. Р’РѕР№РґРёС‚Рµ СЃРЅРѕРІР°.");
+        setGlobalError("Сессия истекла. Войдите снова.");
       }
       return false;
     }
@@ -818,7 +826,7 @@ function App() {
   };
 
   const submit2fa = async (code: string) => {
-    if (!api || !pending2fa) throw new Error("Р§РµР»Р»РµРЅРґР¶ 2FA РЅРµ РЅР°Р№РґРµРЅ.");
+    if (!api || !pending2fa) throw new Error("Челлендж 2FA не найден.");
     const device = await ensureDeviceMaterial();
     const response = await api.verifyWeb2FA({
       challengeId: pending2fa.challengeId,
@@ -1056,10 +1064,10 @@ function App() {
     try {
       const details = conversationDetails[conversationId] ?? (await api.getConversation(session.accessToken, conversationId)).conversation;
       if (!hasCompatibleRecipientDevices(details.members, session.accountId)) {
-        throw new Error("РЈ РїРѕР»СѓС‡Р°С‚РµР»СЏ РЅРµС‚ СЃРѕРІРјРµСЃС‚РёРјРѕРіРѕ СѓСЃС‚СЂРѕР№СЃС‚РІР° РґР»СЏ Р·Р°С‰РёС‰РµРЅРЅС‹С… СЃРѕРѕР±С‰РµРЅРёР№. РџРѕРїСЂРѕСЃРёС‚Рµ РµРіРѕ Р·Р°РЅРѕРІРѕ РІРѕР№С‚Рё РІ РїСЂРёР»РѕР¶РµРЅРёРµ.");
+        throw new Error("У получателя нет совместимого устройства для защищенных сообщений. Попросите его заново войти в приложение.");
       }
       const recipients = collectRecipients(details.members);
-      if (recipients.length === 0) throw new Error("РќРµС‚ РґРѕСЃС‚СѓРїРЅС‹С… СѓСЃС‚СЂРѕР№СЃС‚РІ РїРѕР»СѓС‡Р°С‚РµР»РµР№.");
+      if (recipients.length === 0) throw new Error("Нет доступных устройств получателей.");
       const attachmentSecrets = await uploadEncryptedAttachments(api, session.accessToken, uploads);
       for (const secret of attachmentSecrets) {
         attachmentSecretsByIdRef.current.set(secret.attachmentId, {
@@ -1213,10 +1221,21 @@ function App() {
 
   const addUpload = (conversationId: string, files: FileList | null) => {
     if (!files || files.length === 0) return;
-    const items = Array.from(files).slice(0, 4).map((file) => ({
-      id: `upload_${Date.now()}_${Math.random().toString(16).slice(2)}`,
-      file,
-    }));
+    const items: UploadDraft[] = [];
+    for (const file of Array.from(files).slice(0, 4)) {
+      const classification = classifyAttachmentForUpload(file);
+      if (!classification.ok) {
+        toast("Файл отклонён", { description: classification.error });
+        continue;
+      }
+      items.push({
+        id: `upload_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+        file,
+        uploadKind: classification.kind,
+        uploadMimeType: classification.mimeType,
+      });
+    }
+    if (items.length === 0) return;
     setUploadsByConversation((prev) => ({
       ...prev,
       [conversationId]: [...(prev[conversationId] ?? []), ...items].slice(0, 4),
@@ -1370,7 +1389,7 @@ function App() {
     if (!api || !session) return;
     const title = groupTitle.trim();
     if (!title || groupMembers.length === 0) {
-      setGlobalError("Р’РІРµРґРёС‚Рµ РЅР°Р·РІР°РЅРёРµ РіСЂСѓРїРїС‹ Рё РІС‹Р±РµСЂРёС‚Рµ СѓС‡Р°СЃС‚РЅРёРєРѕРІ.");
+      setGlobalError("Введите название группы и выберите участников.");
       return;
     }
     const payload: CreateGroupConversationRequest = { title, memberAccountIds: groupMembers as never };
@@ -1510,16 +1529,20 @@ function App() {
   );
 
   const publishPost = async (payload: CreatePostPayload) => {
-    if (!api || !session) throw new Error("РЎРµСЃСЃРёСЏ РЅРµ Р°РєС‚РёРІРЅР°.");
+    if (!api || !session) throw new Error("Сессия не активна.");
     setPostMediaUpload(emptyUploadFeedback);
 
     let mediaId: string | undefined;
     try {
       if (payload.mediaFile) {
+        const mediaValidationError = validatePostMediaFile(payload.mediaFile, payload.mediaType ?? "image");
+        if (mediaValidationError) {
+          throw new Error(mediaValidationError);
+        }
         setPostMediaUpload({
           phase: "uploading",
           percent: 0,
-          message: "Р—Р°РіСЂСѓР¶Р°РµРј РјРµРґРёР°: 0%",
+          message: "Загружаем медиа: 0%",
         });
         const uploaded = await api.uploadMedia(session.accessToken, {
           file: payload.mediaFile,
@@ -1531,7 +1554,7 @@ function App() {
             setPostMediaUpload({
               phase: "uploading",
               percent: normalized,
-              message: `Р—Р°РіСЂСѓР¶Р°РµРј РјРµРґРёР°: ${normalized}%`,
+              message: `Загружаем медиа: ${normalized}%`,
             });
           },
         });
@@ -1551,7 +1574,7 @@ function App() {
         setPostMediaUpload({
           phase: "success",
           percent: 100,
-          message: "РњРµРґРёР° СѓСЃРїРµС€РЅРѕ Р·Р°РіСЂСѓР¶РµРЅРѕ Рё РѕРїСѓР±Р»РёРєРѕРІР°РЅРѕ.",
+          message: "Медиа успешно загружено и опубликовано.",
         });
       }
     } catch (error) {
@@ -1578,7 +1601,7 @@ function App() {
         websiteUrl: profileEdit.websiteUrl || null,
       });
       setMyProfile(response.profile);
-      setSettingsMessage("РџСЂРѕС„РёР»СЊ РѕР±РЅРѕРІР»С‘РЅ.");
+      setSettingsMessage("Профиль обновлён.");
     } catch (error) {
       setSettingsMessage(toUserError(error));
     }
@@ -1586,12 +1609,17 @@ function App() {
 
   const uploadProfileMedia = async (file: File, kind: "avatar" | "banner") => {
     if (!api || !session) return;
-    const uploadLabel = kind === "avatar" ? "Р°РІР°С‚Р°СЂ" : "РѕР±Р»РѕР¶РєСѓ";
+    const mediaValidationError = validateProfileMediaFile(file, kind);
+    if (mediaValidationError) {
+      setSettingsMessage(mediaValidationError);
+      return;
+    }
+    const uploadLabel = kind === "avatar" ? "аватар" : "обложку";
     try {
       setProfileUploadState(kind, {
         phase: "uploading",
         percent: 0,
-        message: `Р—Р°РіСЂСѓР¶Р°РµРј ${uploadLabel}: 0%`,
+        message: `Загружаем ${uploadLabel}: 0%`,
       });
 
       const uploaded = await api.uploadMedia(session.accessToken, {
@@ -1604,7 +1632,7 @@ function App() {
           setProfileUploadState(kind, {
             phase: "uploading",
             percent: normalized,
-            message: `Р—Р°РіСЂСѓР¶Р°РµРј ${uploadLabel}: ${normalized}%`,
+            message: `Загружаем ${uploadLabel}: ${normalized}%`,
           });
         },
       });
@@ -1616,9 +1644,9 @@ function App() {
       setProfileUploadState(kind, {
         phase: "success",
         percent: 100,
-        message: kind === "avatar" ? "РђРІР°С‚Р°СЂ СѓСЃРїРµС€РЅРѕ Р·Р°РіСЂСѓР¶РµРЅ." : "РћР±Р»РѕР¶РєР° СѓСЃРїРµС€РЅРѕ Р·Р°РіСЂСѓР¶РµРЅР°.",
+        message: kind === "avatar" ? "Аватар успешно загружен." : "Обложка успешно загружена.",
       });
-      setSettingsMessage(kind === "avatar" ? "РђРІР°С‚Р°СЂ РѕР±РЅРѕРІР»С‘РЅ." : "РћР±Р»РѕР¶РєР° РѕР±РЅРѕРІР»РµРЅР°.");
+      setSettingsMessage(kind === "avatar" ? "Аватар обновлён." : "Обложка обновлена.");
     } catch (error) {
       setProfileUploadState(kind, {
         phase: "error",
@@ -1631,6 +1659,11 @@ function App() {
 
   const createStory = async (file: File) => {
     if (!api || !session) return;
+    const mediaValidationError = validateStoryMediaFile(file);
+    if (mediaValidationError) {
+      setSettingsMessage(mediaValidationError);
+      return;
+    }
     try {
       const uploaded = await api.uploadMedia(session.accessToken, {
         file,
@@ -1646,7 +1679,7 @@ function App() {
       setStoryCaption("");
       const feed = await api.listStoryFeed(session.accessToken, 60);
       setStories(feed.stories);
-      setSettingsMessage("РСЃС‚РѕСЂРёСЏ РѕРїСѓР±Р»РёРєРѕРІР°РЅР°.");
+      setSettingsMessage("История опубликована.");
     } catch (error) {
       setSettingsMessage(toUserError(error));
     }
@@ -1678,7 +1711,7 @@ function App() {
         const refreshed = await api.getUserProfile(session.accessToken, accountId);
         setProfileTarget(refreshed.profile);
       }
-      setSettingsMessage("Р—Р°СЏРІРєР° РІ РґСЂСѓР·СЊСЏ РѕС‚РїСЂР°РІР»РµРЅР°.");
+      setSettingsMessage("Заявка в друзья отправлена.");
     } catch (error) {
       setGlobalError(toUserError(error));
     }
@@ -1765,7 +1798,7 @@ function App() {
     try {
       const setup = await api.startTwoFA(session.accessToken);
       setTwoFASetup(setup);
-      setSettingsMessage("РЎРµРєСЂРµС‚ СЃРѕР·РґР°РЅ. Р’РІРµРґРёС‚Рµ РєРѕРґ РёР· РїСЂРёР»РѕР¶РµРЅРёСЏ-Р°СѓС‚РµРЅС‚РёС„РёРєР°С‚РѕСЂР°.");
+      setSettingsMessage("Секрет создан. Введите код из приложения-аутентификатора.");
     } catch (error) {
       setSettingsMessage(toUserError(error));
     }
@@ -1777,7 +1810,7 @@ function App() {
       await api.confirmTwoFA(session.accessToken, twoFAEnableCode.trim());
       setTwoFAEnableCode("");
       setTwoFASetup(null);
-      setSettingsMessage("2FA СѓСЃРїРµС€РЅРѕ РІРєР»СЋС‡РµРЅР°.");
+      setSettingsMessage("2FA успешно включена.");
       await loadSettingsData(api, session, setSessionInfo, setDeviceList, setSecurityEvents);
     } catch (error) {
       setSettingsMessage(toUserError(error));
@@ -1790,7 +1823,7 @@ function App() {
       await api.disableTwoFA(session.accessToken, twoFADisableCode.trim());
       setTwoFADisableCode("");
       setTwoFASetup(null);
-      setSettingsMessage("2FA РѕС‚РєР»СЋС‡РµРЅР°.");
+      setSettingsMessage("2FA отключена.");
       await loadSettingsData(api, session, setSessionInfo, setDeviceList, setSecurityEvents);
     } catch (error) {
       setSettingsMessage(toUserError(error));
@@ -1801,7 +1834,7 @@ function App() {
     if (!api || !session) return;
     try {
       await api.revokeDevice(session.accessToken, deviceId);
-      setSettingsMessage("РЈСЃС‚СЂРѕР№СЃС‚РІРѕ РѕС‚РѕР·РІР°РЅРѕ.");
+      setSettingsMessage("Устройство отозвано.");
       await loadSettingsData(api, session, setSessionInfo, setDeviceList, setSecurityEvents);
     } catch (error) {
       setSettingsMessage(toUserError(error));
@@ -1812,9 +1845,9 @@ function App() {
     if (!api || !server) return;
     try {
       await fetch(buildServerConfigEndpoint(server.config.apiBaseUrl), { method: "GET" });
-      setSettingsMessage("РЎРѕРµРґРёРЅРµРЅРёРµ СЃ СЃРµСЂРІРµСЂРѕРј СѓСЃРїРµС€РЅРѕ.");
+      setSettingsMessage("Соединение с сервером успешно.");
     } catch {
-      setSettingsMessage("РќРµ СѓРґР°Р»РѕСЃСЊ РїСЂРѕРІРµСЂРёС‚СЊ СЃРѕРµРґРёРЅРµРЅРёРµ СЃ СЃРµСЂРІРµСЂРѕРј.");
+      setSettingsMessage("Не удалось проверить соединение с сервером.");
     }
   };
 
@@ -1827,23 +1860,23 @@ function App() {
     }
 
     if (!enabled) {
-      setSettingsMessage("Р‘СЂР°СѓР·РµСЂРЅС‹Рµ СѓРІРµРґРѕРјР»РµРЅРёСЏ РѕС‚РєР»СЋС‡РµРЅС‹. In-app СѓРІРµРґРѕРјР»РµРЅРёСЏ РїСЂРѕРґРѕР»Р¶Р°СЋС‚ СЂР°Р±РѕС‚Р°С‚СЊ.");
+      setSettingsMessage("Браузерные уведомления отключены. In-app уведомления продолжают работать.");
       return;
     }
     if (typeof window === "undefined" || !("Notification" in window)) {
-      setSettingsMessage("Р‘СЂР°СѓР·РµСЂРЅС‹Рµ СѓРІРµРґРѕРјР»РµРЅРёСЏ РЅРµРґРѕСЃС‚СѓРїРЅС‹ РІ С‚РµРєСѓС‰РµРј РѕРєСЂСѓР¶РµРЅРёРё.");
+      setSettingsMessage("Браузерные уведомления недоступны в текущем окружении.");
       return;
     }
     if (Notification.permission === "granted") {
       setBrowserNotificationPermission("granted");
-      setSettingsMessage("Р‘СЂР°СѓР·РµСЂРЅС‹Рµ СѓРІРµРґРѕРјР»РµРЅРёСЏ РІРєР»СЋС‡РµРЅС‹.");
+      setSettingsMessage("Браузерные уведомления включены.");
       return;
     }
 
     const permission = await Notification.requestPermission();
     setBrowserNotificationPermission(permission);
     if (permission === "granted") {
-      setSettingsMessage("Р‘СЂР°СѓР·РµСЂРЅС‹Рµ СѓРІРµРґРѕРјР»РµРЅРёСЏ РІРєР»СЋС‡РµРЅС‹.");
+      setSettingsMessage("Браузерные уведомления включены.");
       return;
     }
     setPreferBrowserNotifications(false);
@@ -1852,7 +1885,7 @@ function App() {
     } catch {
       // noop
     }
-    setSettingsMessage("Р Р°Р·СЂРµС€РµРЅРёРµ РЅР° Р±СЂР°СѓР·РµСЂРЅС‹Рµ СѓРІРµРґРѕРјР»РµРЅРёСЏ РЅРµ РІС‹РґР°РЅРѕ.");
+    setSettingsMessage("Разрешение на браузерные уведомления не выдано.");
   };
 
   const resetServer = async () => {
@@ -1902,7 +1935,7 @@ function App() {
   const viewedProfile = profileTarget ?? myProfile;
 
   if (booting) {
-    return <StandaloneCard title="Р—Р°РїСѓСЃРє РїСЂРёР»РѕР¶РµРЅРёСЏ" subtitle="РџСЂРѕРІРµСЂСЏРµРј СЃРµСЂРІРµСЂ Рё СЃРµСЃСЃРёСЋ..." />;
+    return <StandaloneCard title="Запуск приложения" subtitle="Проверяем сервер и сессию..." />;
   }
 
   if (!server) {
@@ -1988,7 +2021,7 @@ function App() {
                   runtimeRef.current?.requestReconnect();
                 }}
               >
-                РџРµСЂРµРїРѕРґРєР»СЋС‡РёС‚СЊСЃСЏ
+                Переподключиться
               </button>
             </div>
           ) : null}
@@ -2153,7 +2186,7 @@ function App() {
                         accessToken={session.accessToken}
                         apiBaseUrl={server.config.apiBaseUrl}
                         apiPrefix={server.config.apiPrefix}
-                        alt="РћР±Р»РѕР¶РєР° РїСЂРѕС„РёР»СЏ"
+                        alt="Обложка профиля"
                         className="absolute inset-0 w-full h-full object-cover"
                         fallbackClassName="absolute inset-0 w-full h-full"
                       />
@@ -2170,7 +2203,7 @@ function App() {
                       accessToken={session.accessToken}
                       apiBaseUrl={server.config.apiBaseUrl}
                       apiPrefix={server.config.apiPrefix}
-                      alt="РђРІР°С‚Р°СЂ РїСЂРѕС„РёР»СЏ"
+                      alt="Аватар профиля"
                       className="w-full h-full object-cover"
                       fallbackClassName="w-full h-full"
                     />
@@ -2189,7 +2222,7 @@ function App() {
                         style={outlineButtonStyle}
                         onClick={clearProfileTarget}
                       >
-                        РњРѕР№ РїСЂРѕС„РёР»СЊ
+                        Мой профиль
                       </button>
                       {profileTarget.existingDirectConversationId ? (
                         <button
@@ -2202,7 +2235,7 @@ function App() {
                             void openConversation(profileTarget.existingDirectConversationId as string);
                           }}
                         >
-                          РћС‚РєСЂС‹С‚СЊ С‡Р°С‚
+                          Открыть чат
                         </button>
                       ) : profileTarget.canStartDirectChat ? (
                         <button
@@ -2212,7 +2245,7 @@ function App() {
                           onClick={() => void createDirect(profileTarget.accountId as string)}
                         >
                           <MessageSquare className="w-4 h-4 inline mr-2" />
-                          РќР°РїРёСЃР°С‚СЊ
+                          Написать
                         </button>
                       ) : null}
                       {profileTarget.friendState === "none" && profileTarget.canSendFriendRequest ? (
@@ -2222,7 +2255,7 @@ function App() {
                           style={outlineButtonStyle}
                           onClick={() => void sendFriendRequest(profileTarget.accountId as string)}
                         >
-                          Р”РѕР±Р°РІРёС‚СЊ РІ РґСЂСѓР·СЊСЏ
+                          Добавить в друзья
                         </button>
                       ) : null}
                       {profileTarget.friendState === "incoming_request" ? (
@@ -2237,7 +2270,7 @@ function App() {
                             }
                           }}
                         >
-                          РџСЂРёРЅСЏС‚СЊ Р·Р°СЏРІРєСѓ
+                          Принять заявку
                         </button>
                       ) : null}
                       {profileTarget.friendState === "outgoing_request" ? (
@@ -2252,7 +2285,7 @@ function App() {
                             }
                           }}
                         >
-                          РћС‚РјРµРЅРёС‚СЊ Р·Р°СЏРІРєСѓ
+                          Отменить заявку
                         </button>
                       ) : null}
                       {profileTarget.friendState === "friends" ? (
@@ -2262,7 +2295,7 @@ function App() {
                           style={outlineButtonStyle}
                           onClick={() => void removeFriend(profileTarget.accountId as string)}
                         >
-                          РЈРґР°Р»РёС‚СЊ РёР· РґСЂСѓР·РµР№
+                          Удалить из друзей
                         </button>
                       ) : null}
                     </>
@@ -2278,30 +2311,30 @@ function App() {
               {!profileTarget ? (
                 <>
                   <div className="rounded-2xl border p-4 space-y-3 interactive-surface" style={cardStyle}>
-                    <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>Р РµРґР°РєС‚РёСЂРѕРІР°РЅРёРµ РїСЂРѕС„РёР»СЏ</p>
+                    <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>Редактирование профиля</p>
                     <div className="grid gap-3 md:grid-cols-2">
-                      <input value={profileEdit.displayName} onChange={(event) => setProfileEdit((prev) => ({ ...prev, displayName: event.target.value }))} placeholder="РћС‚РѕР±СЂР°Р¶Р°РµРјРѕРµ РёРјСЏ" className="w-full rounded-lg border bg-transparent px-3 py-2 outline-none" style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)" }} />
+                      <input value={profileEdit.displayName} onChange={(event) => setProfileEdit((prev) => ({ ...prev, displayName: event.target.value }))} placeholder="Отображаемое имя" className="w-full rounded-lg border bg-transparent px-3 py-2 outline-none" style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)" }} />
                       <input value={profileEdit.username} onChange={(event) => setProfileEdit((prev) => ({ ...prev, username: event.target.value }))} placeholder="@username" className="w-full rounded-lg border bg-transparent px-3 py-2 outline-none" style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)" }} />
-                      <input value={profileEdit.statusText} onChange={(event) => setProfileEdit((prev) => ({ ...prev, statusText: event.target.value }))} placeholder="РЎС‚Р°С‚СѓСЃ" className="w-full rounded-lg border bg-transparent px-3 py-2 outline-none" style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)" }} />
-                      <input value={profileEdit.location} onChange={(event) => setProfileEdit((prev) => ({ ...prev, location: event.target.value }))} placeholder="Р›РѕРєР°С†РёСЏ" className="w-full rounded-lg border bg-transparent px-3 py-2 outline-none" style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)" }} />
-                      <input value={profileEdit.websiteUrl} onChange={(event) => setProfileEdit((prev) => ({ ...prev, websiteUrl: event.target.value }))} placeholder="РЎР°Р№С‚" className="w-full rounded-lg border bg-transparent px-3 py-2 outline-none" style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)" }} />
+                      <input value={profileEdit.statusText} onChange={(event) => setProfileEdit((prev) => ({ ...prev, statusText: event.target.value }))} placeholder="Статус" className="w-full rounded-lg border bg-transparent px-3 py-2 outline-none" style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)" }} />
+                      <input value={profileEdit.location} onChange={(event) => setProfileEdit((prev) => ({ ...prev, location: event.target.value }))} placeholder="Локация" className="w-full rounded-lg border bg-transparent px-3 py-2 outline-none" style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)" }} />
+                      <input value={profileEdit.websiteUrl} onChange={(event) => setProfileEdit((prev) => ({ ...prev, websiteUrl: event.target.value }))} placeholder="Сайт" className="w-full rounded-lg border bg-transparent px-3 py-2 outline-none" style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)" }} />
                     </div>
-                    <textarea value={profileEdit.bio} onChange={(event) => setProfileEdit((prev) => ({ ...prev, bio: event.target.value }))} placeholder="Рћ СЃРµР±Рµ" className="w-full rounded-lg border bg-transparent px-3 py-2 outline-none resize-none" style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)", minHeight: 90 }} />
+                    <textarea value={profileEdit.bio} onChange={(event) => setProfileEdit((prev) => ({ ...prev, bio: event.target.value }))} placeholder="О себе" className="w-full rounded-lg border bg-transparent px-3 py-2 outline-none resize-none" style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)", minHeight: 90 }} />
                     <div className="flex gap-2 flex-wrap">
                       <button type="button" className="px-3 py-2 rounded-lg border" style={outlineButtonStyle} onClick={() => void saveProfile()}>
-                        РЎРѕС…СЂР°РЅРёС‚СЊ РїСЂРѕС„РёР»СЊ
+                        Сохранить профиль
                       </button>
                       <label className="px-3 py-2 rounded-lg border cursor-pointer interactive-surface-subtle" style={outlineButtonStyle}>
-                        Р—Р°РіСЂСѓР·РёС‚СЊ Р°РІР°С‚Р°СЂ
-                        <input type="file" className="hidden" accept="image/*" onChange={(event) => {
+                        Загрузить аватар
+                        <input type="file" className="hidden" accept={mediaImageInputAccept} onChange={(event) => {
                           const file = event.target.files?.[0];
                           if (file) void uploadProfileMedia(file, "avatar");
                           event.currentTarget.value = "";
                         }} />
                       </label>
                       <label className="px-3 py-2 rounded-lg border cursor-pointer interactive-surface-subtle" style={outlineButtonStyle}>
-                        Р—Р°РіСЂСѓР·РёС‚СЊ РѕР±Р»РѕР¶РєСѓ
-                        <input type="file" className="hidden" accept="image/*" onChange={(event) => {
+                        Загрузить обложку
+                        <input type="file" className="hidden" accept={mediaImageInputAccept} onChange={(event) => {
                           const file = event.target.files?.[0];
                           if (file) void uploadProfileMedia(file, "banner");
                           event.currentTarget.value = "";
@@ -2309,8 +2342,8 @@ function App() {
                       </label>
                     </div>
                     <div className="grid gap-2 md:grid-cols-2">
-                      <UploadStatusPill label="РђРІР°С‚Р°СЂ" status={profileMediaUpload.avatar} />
-                      <UploadStatusPill label="РћР±Р»РѕР¶РєР°" status={profileMediaUpload.banner} />
+                      <UploadStatusPill label="Аватар" status={profileMediaUpload.avatar} />
+                      <UploadStatusPill label="Обложка" status={profileMediaUpload.banner} />
                     </div>
                   </div>
 
@@ -2319,16 +2352,16 @@ function App() {
                       <input
                         value={storyCaption}
                         onChange={(event) => setStoryCaption(event.target.value)}
-                        placeholder="РџРѕРґРїРёСЃСЊ Рє РёСЃС‚РѕСЂРёРё"
+                        placeholder="Подпись к истории"
                         className="flex-1 min-w-[220px] rounded-lg border bg-transparent px-3 py-2 outline-none"
                         style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)" }}
                       />
                       <label className="px-3 py-2 rounded-lg border cursor-pointer interactive-surface-subtle" style={outlineButtonStyle}>
-                        Р”РѕР±Р°РІРёС‚СЊ РёСЃС‚РѕСЂРёСЋ
+                        Добавить историю
                         <input
                           type="file"
                           className="hidden"
-                          accept="image/*,video/*"
+                          accept={`${mediaImageInputAccept},${mediaVideoInputAccept}`}
                           onChange={(event) => {
                             const file = event.target.files?.[0];
                             if (file) void createStory(file);
@@ -2338,12 +2371,12 @@ function App() {
                       </label>
                     </div>
                     <StoryFeed
-                      title="РСЃС‚РѕСЂРёРё"
-                      subtitle="РџСѓР±Р»РёРєР°С†РёРё, РєРѕС‚РѕСЂС‹Рµ РёСЃС‡РµР·Р°СЋС‚ С‡РµСЂРµР· 24 С‡Р°СЃР°"
+                      title="Истории"
+                      subtitle="Публикации, которые исчезают через 24 часа"
                       stories={stories.slice(0, 8)}
                       loading={false}
                       error=""
-                      emptyText="РСЃС‚РѕСЂРёР№ РїРѕРєР° РЅРµС‚."
+                      emptyText="Историй пока нет."
                       onDeleteStory={async (storyId) => {
                         if (!api || !session) return;
                         try {
@@ -2367,45 +2400,45 @@ function App() {
                   </div>
 
                   <div className="rounded-2xl border p-4 space-y-3 interactive-surface" style={cardStyle}>
-                    <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>Р”СЂСѓР·СЊСЏ Рё Р·Р°СЏРІРєРё</p>
+                    <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>Друзья и заявки</p>
                     <div className="grid gap-4 md:grid-cols-3">
                       <div>
-                        <p style={{ color: "var(--base-grey-light)", fontSize: 12, marginBottom: 8 }}>Р”СЂСѓР·СЊСЏ</p>
+                        <p style={{ color: "var(--base-grey-light)", fontSize: 12, marginBottom: 8 }}>Друзья</p>
                         <div className="space-y-2">
-                          {friends.length === 0 ? <InlineInfo text="РЎРїРёСЃРѕРє РґСЂСѓР·РµР№ РїСѓСЃС‚." /> : friends.map((friend) => (
+                          {friends.length === 0 ? <InlineInfo text="Список друзей пуст." /> : friends.map((friend) => (
                             <div key={friend.accountId as string} className="rounded-lg border p-2 interactive-surface-subtle" style={innerCardStyle}>
                               <p style={{ color: "var(--text-primary)" }}>{friend.displayName || friend.username}</p>
                               <p style={{ color: "var(--base-grey-light)", fontSize: 12 }}>@{friend.username}</p>
                               <div className="mt-2 flex gap-2">
-                                <button type="button" className="px-2 py-1 rounded-lg border text-xs" style={outlineButtonStyle} onClick={() => void createDirect(friend.accountId as string)}>РќР°РїРёСЃР°С‚СЊ</button>
-                                <button type="button" className="px-2 py-1 rounded-lg border text-xs" style={outlineButtonStyle} onClick={() => void openUserProfile(friend.accountId as string)}>РџСЂРѕС„РёР»СЊ</button>
+                                <button type="button" className="px-2 py-1 rounded-lg border text-xs" style={outlineButtonStyle} onClick={() => void createDirect(friend.accountId as string)}>Написать</button>
+                                <button type="button" className="px-2 py-1 rounded-lg border text-xs" style={outlineButtonStyle} onClick={() => void openUserProfile(friend.accountId as string)}>Профиль</button>
                               </div>
                             </div>
                           ))}
                         </div>
                       </div>
                       <div>
-                        <p style={{ color: "var(--base-grey-light)", fontSize: 12, marginBottom: 8 }}>Р’С…РѕРґСЏС‰РёРµ</p>
+                        <p style={{ color: "var(--base-grey-light)", fontSize: 12, marginBottom: 8 }}>Входящие</p>
                         <div className="space-y-2">
-                          {incomingRequests.length === 0 ? <InlineInfo text="РќРµС‚ РІС…РѕРґСЏС‰РёС… Р·Р°СЏРІРѕРє." /> : incomingRequests.map((request) => (
+                          {incomingRequests.length === 0 ? <InlineInfo text="Нет входящих заявок." /> : incomingRequests.map((request) => (
                             <div key={request.id as string} className="rounded-lg border p-2 interactive-surface-subtle" style={innerCardStyle}>
                               <p style={{ color: "var(--text-primary)" }}>{request.actor.displayName || request.actor.username}</p>
                               <div className="mt-2 flex gap-2">
-                                <button type="button" className="px-2 py-1 rounded-lg border text-xs" style={outlineButtonStyle} onClick={() => void processFriendRequest(request.id as string, "accept")}>РџСЂРёРЅСЏС‚СЊ</button>
-                                <button type="button" className="px-2 py-1 rounded-lg border text-xs" style={outlineButtonStyle} onClick={() => void processFriendRequest(request.id as string, "reject")}>РћС‚РєР»РѕРЅРёС‚СЊ</button>
+                                <button type="button" className="px-2 py-1 rounded-lg border text-xs" style={outlineButtonStyle} onClick={() => void processFriendRequest(request.id as string, "accept")}>Принять</button>
+                                <button type="button" className="px-2 py-1 rounded-lg border text-xs" style={outlineButtonStyle} onClick={() => void processFriendRequest(request.id as string, "reject")}>Отклонить</button>
                               </div>
                             </div>
                           ))}
                         </div>
                       </div>
                       <div>
-                        <p style={{ color: "var(--base-grey-light)", fontSize: 12, marginBottom: 8 }}>РСЃС…РѕРґСЏС‰РёРµ</p>
+                        <p style={{ color: "var(--base-grey-light)", fontSize: 12, marginBottom: 8 }}>Исходящие</p>
                         <div className="space-y-2">
-                          {outgoingRequests.length === 0 ? <InlineInfo text="РќРµС‚ РёСЃС…РѕРґСЏС‰РёС… Р·Р°СЏРІРѕРє." /> : outgoingRequests.map((request) => (
+                          {outgoingRequests.length === 0 ? <InlineInfo text="Нет исходящих заявок." /> : outgoingRequests.map((request) => (
                             <div key={request.id as string} className="rounded-lg border p-2 interactive-surface-subtle" style={innerCardStyle}>
                               <p style={{ color: "var(--text-primary)" }}>{request.target.displayName || request.target.username}</p>
                               <div className="mt-2 flex gap-2">
-                                <button type="button" className="px-2 py-1 rounded-lg border text-xs" style={outlineButtonStyle} onClick={() => void processFriendRequest(request.id as string, "cancel")}>РћС‚РјРµРЅРёС‚СЊ</button>
+                                <button type="button" className="px-2 py-1 rounded-lg border text-xs" style={outlineButtonStyle} onClick={() => void processFriendRequest(request.id as string, "cancel")}>Отменить</button>
                               </div>
                             </div>
                           ))}
@@ -2425,10 +2458,10 @@ function App() {
                   onOpenProfile={openUserProfile}
                   onToggleLike={toggleLike}
                   onDelete={deletePost}
-                  title={profileTarget ? "РџСѓР±Р»РёРєР°С†РёРё РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ" : "РњРѕРё РїСѓР±Р»РёРєР°С†РёРё"}
+                  title={profileTarget ? "Публикации пользователя" : "Мои публикации"}
                 />
               ) : (
-                <InlineInfo text="РџСѓР±Р»РёРєР°С†РёРё СЌС‚РѕРіРѕ РїСЂРѕС„РёР»СЏ СЃРєСЂС‹С‚С‹ РЅР°СЃС‚СЂРѕР№РєР°РјРё РїСЂРёРІР°С‚РЅРѕСЃС‚Рё." />
+                <InlineInfo text="Публикации этого профиля скрыты настройками приватности." />
               )}
             </section>
           ) : null}
@@ -2477,7 +2510,7 @@ function App() {
                       friendRequestsPolicy: privacy.friendRequestsPolicy,
                     });
                     setPrivacy(updated.privacy);
-                    setSettingsMessage("РќР°СЃС‚СЂРѕР№РєРё РїСЂРёРІР°С‚РЅРѕСЃС‚Рё СЃРѕС…СЂР°РЅРµРЅС‹.");
+                    setSettingsMessage("Настройки приватности сохранены.");
                   } catch (error) {
                     setSettingsMessage(toUserError(error));
                   }

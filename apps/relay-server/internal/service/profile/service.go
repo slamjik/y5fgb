@@ -11,6 +11,7 @@ import (
 	"github.com/example/secure-messenger/apps/relay-server/internal/service"
 	"github.com/example/secure-messenger/apps/relay-server/internal/service/auth"
 	"github.com/example/secure-messenger/apps/relay-server/internal/service/privacy"
+	"github.com/example/secure-messenger/apps/relay-server/internal/validation"
 )
 
 const (
@@ -248,6 +249,9 @@ func (s *Service) UpdateProfile(ctx context.Context, principal auth.AuthPrincipa
 		if len(displayName) == 0 || len(displayName) > maxDisplayNameLength {
 			return domain.UserProfile{}, service.NewError(service.ErrorCodeValidation, "display name length is invalid")
 		}
+		if validation.ContainsUnsafeControlChars(displayName, false) {
+			return domain.UserProfile{}, service.NewError(service.ErrorCodeValidation, "display name contains unsupported control symbols")
+		}
 		current.DisplayName = displayName
 	}
 
@@ -279,6 +283,9 @@ func (s *Service) UpdateProfile(ctx context.Context, principal auth.AuthPrincipa
 		if len(bio) > maxBioLength {
 			return domain.UserProfile{}, service.NewError(service.ErrorCodeValidation, "bio is too long")
 		}
+		if validation.ContainsUnsafeControlChars(bio, true) {
+			return domain.UserProfile{}, service.NewError(service.ErrorCodeValidation, "bio contains unsupported control symbols")
+		}
 		current.Bio = bio
 	}
 
@@ -286,6 +293,9 @@ func (s *Service) UpdateProfile(ctx context.Context, principal auth.AuthPrincipa
 		statusText := strings.TrimSpace(*input.StatusText)
 		if len(statusText) > maxStatusLength {
 			return domain.UserProfile{}, service.NewError(service.ErrorCodeValidation, "status text is too long")
+		}
+		if validation.ContainsUnsafeControlChars(statusText, false) {
+			return domain.UserProfile{}, service.NewError(service.ErrorCodeValidation, "status text contains unsupported control symbols")
 		}
 		current.StatusText = statusText
 	}
@@ -299,6 +309,9 @@ func (s *Service) UpdateProfile(ctx context.Context, principal auth.AuthPrincipa
 		if len(location) > maxLocationLength {
 			return domain.UserProfile{}, service.NewError(service.ErrorCodeValidation, "location is too long")
 		}
+		if validation.ContainsUnsafeControlChars(location, false) {
+			return domain.UserProfile{}, service.NewError(service.ErrorCodeValidation, "location contains unsupported control symbols")
+		}
 		if location == "" {
 			current.Location = nil
 		} else {
@@ -310,6 +323,9 @@ func (s *Service) UpdateProfile(ctx context.Context, principal auth.AuthPrincipa
 		url := strings.TrimSpace(*input.WebsiteURL)
 		if len(url) > maxWebsiteLength {
 			return domain.UserProfile{}, service.NewError(service.ErrorCodeValidation, "website url is too long")
+		}
+		if validation.ContainsUnsafeControlChars(url, false) {
+			return domain.UserProfile{}, service.NewError(service.ErrorCodeValidation, "website url contains unsupported control symbols")
 		}
 		if url == "" {
 			current.WebsiteURL = nil

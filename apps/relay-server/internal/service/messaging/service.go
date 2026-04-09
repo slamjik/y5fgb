@@ -36,7 +36,30 @@ const (
 	allowedMessageAlgorithm    = "xchacha20poly1305_ietf+sealedbox"
 	allowedKeyWrapAlgorithm    = "x25519-sealedbox"
 	allowedAttachmentAlgorithm = "xchacha20poly1305_ietf"
+	sha256HexLength            = 64
 )
+
+var attachmentImageMimeAllowlist = map[string]struct{}{
+	"image/jpeg":          {},
+	"image/png":           {},
+	"image/webp":          {},
+	"image/gif":           {},
+	"image/avif":          {},
+	"image/heic":          {},
+	"image/heif":          {},
+	"image/heic-sequence": {},
+	"image/heif-sequence": {},
+}
+
+var attachmentFileMimeAllowlist = map[string]struct{}{
+	"application/octet-stream": {},
+	"application/pdf":          {},
+	"application/zip":          {},
+	"text/plain":               {},
+	"video/mp4":                {},
+	"video/webm":               {},
+	"video/quicktime":          {},
+}
 
 type PushNotifier interface {
 	NotifyDeviceSync(deviceID string, cursor int64)
@@ -872,12 +895,17 @@ func (s *Service) UploadAttachment(ctx context.Context, input AttachmentUploadIn
 	if input.SizeBytes > s.cfg.Messaging.AttachmentMaxSizeBytes {
 		return domain.AttachmentObject{}, service.NewErrorWithDetails(service.ErrorCodeAttachmentUploadFailed, "attachment exceeds max size", map[string]any{"maxBytes": s.cfg.Messaging.AttachmentMaxSizeBytes})
 	}
-	if err := validation.MimeType(input.MimeType); err != nil {
+	normalizedMime := validation.NormalizeMimeType(input.MimeType)
+	if err := validation.MimeType(normalizedMime); err != nil {
 		return domain.AttachmentObject{}, service.NewError(service.ErrorCodeAttachmentUploadFailed, "attachment mime type is not allowed")
+	}
+	if !isAllowedAttachmentMimeForKind(input.Kind, normalizedMime) {
+		return domain.AttachmentObject{}, service.NewError(service.ErrorCodeAttachmentUploadFailed, "attachment mime type is not allowed for this kind")
 	}
 	if err := validation.FileName(input.FileName); err != nil {
 		return domain.AttachmentObject{}, service.NewError(service.ErrorCodeAttachmentUploadFailed, "attachment file name is invalid")
 	}
+	trimmedFileName := strings.TrimSpace(input.FileName)
 	if strings.TrimSpace(input.Algorithm) != allowedAttachmentAlgorithm {
 		return domain.AttachmentObject{}, service.NewError(service.ErrorCodeAttachmentUploadFailed, "attachment encryption algorithm is invalid")
 	}
@@ -897,6 +925,9 @@ func (s *Service) UploadAttachment(ctx context.Context, input AttachmentUploadIn
 		return domain.AttachmentObject{}, service.NewError(service.ErrorCodeAttachmentUploadFailed, "attachment size mismatch")
 	}
 	providedChecksum := strings.TrimSpace(strings.ToLower(input.ChecksumSHA256))
+	if !isValidHexDigest(providedChecksum, sha256HexLength) {
+		return domain.AttachmentObject{}, service.NewError(service.ErrorCodeAttachmentUploadFailed, "attachment checksum format is invalid")
+	}
 	sha256Checksum := sha256.Sum256(decoded)
 	serverChecksum := hex.EncodeToString(sha256Checksum[:])
 	if providedChecksum != serverChecksum {
@@ -929,8 +960,8 @@ func (s *Service) UploadAttachment(ctx context.Context, input AttachmentUploadIn
 		ID:             attachmentID,
 		AccountID:      input.Principal.AccountID,
 		Kind:           input.Kind,
-		FileName:       strings.TrimSpace(input.FileName),
-		MimeType:       strings.TrimSpace(input.MimeType),
+		FileName:       trimmedFileName,
+		MimeType:       normalizedMime,
 		SizeBytes:      input.SizeBytes,
 		ChecksumSHA256: serverChecksum,
 		Algorithm:      strings.TrimSpace(input.Algorithm),
@@ -1321,4 +1352,34 @@ func (s *Service) resolveAttachmentPath(path string) (string, error) {
 		return "", fmt.Errorf("path outside attachment root")
 	}
 	return filepath.Abs(filepath.Clean(path))
+}
+
+func isAllowedAttachmentMimeForKind(kind domain.AttachmentKind, mimeType string) bool {
+	normalized := validation.NormalizeMimeType(mimeType)
+	switch kind {
+	case domain.AttachmentKindImage:
+		_, ok := attachmentImageMimeAllowlist[normalized]
+		return ok
+	case domain.AttachmentKindFile:
+		if _, ok := attachmentFileMimeAllowlist[normalized]; ok {
+			return true
+		}
+		_, ok := attachmentImageMimeAllowlist[normalized]
+		return ok
+	default:
+		return false
+	}
+}
+
+func isValidHexDigest(value string, expectedLength int) bool {
+	if len(value) != expectedLength {
+		return false
+	}
+	for _, symbol := range value {
+		if (symbol >= '0' && symbol <= '9') || (symbol >= 'a' && symbol <= 'f') {
+			continue
+		}
+		return false
+	}
+	return true
 }

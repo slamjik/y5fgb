@@ -55,6 +55,8 @@ export type MessageAttachmentView = {
 export type UploadDraft = {
   id: string;
   file: File;
+  uploadKind: "image" | "file";
+  uploadMimeType: string;
 };
 
 export type MessageView = {

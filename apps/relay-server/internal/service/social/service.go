@@ -13,6 +13,7 @@ import (
 	"github.com/example/secure-messenger/apps/relay-server/internal/service"
 	"github.com/example/secure-messenger/apps/relay-server/internal/service/auth"
 	"github.com/example/secure-messenger/apps/relay-server/internal/service/privacy"
+	"github.com/example/secure-messenger/apps/relay-server/internal/validation"
 )
 
 const (
@@ -63,12 +64,17 @@ func (s *Service) ListPosts(ctx context.Context, principal auth.AuthPrincipal, i
 		onlyAuthor = &accountID
 	}
 
+	normalizedQuery := strings.TrimSpace(input.Query)
+	if validation.ContainsUnsafeControlChars(normalizedQuery, false) {
+		return nil, service.NewError(service.ErrorCodeValidation, "query contains unsupported control symbols")
+	}
+
 	rawItems, err := s.repo.ListSocialPosts(ctx, postgres.ListSocialPostsParams{
 		ViewerAccountID:   principal.AccountID,
 		Offset:            offset,
 		Limit:             limit,
 		MediaType:         input.MediaType,
-		Query:             strings.TrimSpace(input.Query),
+		Query:             normalizedQuery,
 		OnlyAuthorAccount: onlyAuthor,
 	})
 	if err != nil {
@@ -115,6 +121,9 @@ func (s *Service) CreatePost(ctx context.Context, principal auth.AuthPrincipal, 
 	}
 	if len(content) > maxPostContentLength {
 		return domain.SocialPostFeedItem{}, service.NewError(service.ErrorCodeValidation, "post content is too long")
+	}
+	if validation.ContainsUnsafeControlChars(content, true) {
+		return domain.SocialPostFeedItem{}, service.NewError(service.ErrorCodeValidation, "post content contains unsupported control symbols")
 	}
 
 	normalizedMediaType, normalizedMediaURL, normalizedMediaID, validationErr := s.normalizeMediaInput(ctx, principal, input.MediaType, input.MediaURL, input.MediaID)
@@ -359,6 +368,9 @@ func normalizeMood(mood *string) (*string, error) {
 	}
 	if len(trimmed) > maxMoodLength {
 		return nil, service.NewError(service.ErrorCodeValidation, "mood is too long")
+	}
+	if validation.ContainsUnsafeControlChars(trimmed, false) {
+		return nil, service.NewError(service.ErrorCodeValidation, "mood contains unsupported control symbols")
 	}
 	return &trimmed, nil
 }

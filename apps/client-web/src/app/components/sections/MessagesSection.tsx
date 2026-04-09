@@ -10,6 +10,7 @@ import type {
   MessageRowAttachmentState,
   UploadDraft,
 } from "../../types";
+import { chatAttachmentInputAccept } from "../../upload-security";
 import { formatBytes } from "../../view-utils";
 import { cardStyle, innerCardStyle, outlineButtonStyle, selectedCardStyle, solidButtonStyle } from "../../styles";
 import { MessageRow } from "../MessageRow";
@@ -351,6 +352,7 @@ export function MessagesSection({
                 ref={attachmentInputRef}
                 type="file"
                 className="hidden"
+                accept={chatAttachmentInputAccept}
                 multiple
                 onChange={(event) => {
                   onAddUpload(event.target.files);

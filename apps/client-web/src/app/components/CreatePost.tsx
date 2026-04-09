@@ -1,5 +1,6 @@
 import { Image, Smile, Upload, Video } from "lucide-react";
 import * as React from "react";
+import { mediaImageInputAccept, mediaVideoInputAccept, validatePostMediaFile } from "../upload-security";
 
 export type ComposerMediaType = "image" | "video";
 
@@ -24,7 +25,6 @@ interface CreatePostProps {
 }
 
 const moodOptions = ["Радость", "Вдохновение", "Спокойствие", "Идея", "Фокус"];
-const maxMediaSizeBytes = 25 * 1024 * 1024;
 
 export function CreatePost({ onSubmit, disabled = false, uploadStatus }: CreatePostProps) {
   const [postText, setPostText] = React.useState("");
@@ -52,18 +52,10 @@ export function CreatePost({ onSubmit, disabled = false, uploadStatus }: CreateP
     const file = files?.[0] ?? null;
     if (!file) return;
 
-    if (file.size > maxMediaSizeBytes) {
-      setError("Файл слишком большой. Максимум 25 МБ.");
-      return;
-    }
-
-    if (mediaType === "image" && !file.type.startsWith("image/")) {
-      setError("Для фото выберите изображение.");
-      return;
-    }
-
-    if (mediaType === "video" && !file.type.startsWith("video/")) {
-      setError("Для видео выберите видеофайл.");
+    const targetMediaType = mediaType ?? "image";
+    const mediaValidationError = validatePostMediaFile(file, targetMediaType);
+    if (mediaValidationError) {
+      setError(mediaValidationError);
       return;
     }
 
@@ -187,7 +179,7 @@ export function CreatePost({ onSubmit, disabled = false, uploadStatus }: CreateP
           <input
             ref={fileInputRef}
             type="file"
-            accept={mediaType === "image" ? "image/*" : "video/*"}
+            accept={mediaType === "image" ? mediaImageInputAccept : mediaVideoInputAccept}
             className="hidden"
             onChange={(event) => {
               onFileChange(event.target.files);

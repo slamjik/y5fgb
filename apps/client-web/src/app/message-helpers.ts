@@ -12,6 +12,7 @@ import type {
   SessionState,
   UploadDraft,
 } from "./types";
+import { classifyAttachmentForUpload } from "./upload-security";
 
 export async function decodeMessage(
   message: MessageDTO,
@@ -285,13 +286,17 @@ export async function uploadEncryptedAttachments(
 ): Promise<AttachmentSecret[]> {
   const result: AttachmentSecret[] = [];
   for (const item of uploads) {
+    const classification = classifyAttachmentForUpload(item.file);
+    if (!classification.ok) {
+      throw new Error(classification.error);
+    }
     const bytes = new Uint8Array(await item.file.arrayBuffer());
     const encrypted = await webCryptoProvider.encryptAttachment(bytes);
     const ciphertextBytes = base64ToBytes(encrypted.ciphertext);
     const payload: AttachmentUploadRequest = {
-      kind: item.file.type.startsWith("image/") ? "image" : "file",
+      kind: item.uploadKind ?? classification.kind,
       fileName: item.file.name,
-      mimeType: item.file.type || "application/octet-stream",
+      mimeType: item.uploadMimeType || classification.mimeType,
       sizeBytes: ciphertextBytes.byteLength,
       checksumSha256: encrypted.checksumSha256,
       algorithm: encrypted.algorithm,

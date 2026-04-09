@@ -1580,6 +1580,9 @@ func (h *Handler) handleMediaUpload(w http.ResponseWriter, r *http.Request) {
 		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "invalid multipart body"), http.StatusBadRequest)
 		return
 	}
+	if r.MultipartForm != nil {
+		defer r.MultipartForm.RemoveAll()
+	}
 	file, header, err := r.FormFile("file")
 	if err != nil {
 		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "file is required"), http.StatusBadRequest)
@@ -1594,6 +1597,10 @@ func (h *Handler) handleMediaUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(payload) == 0 {
 		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "empty file payload"), http.StatusBadRequest)
+		return
+	}
+	if int64(len(payload)) > maxAttachmentBodyBytes*2 {
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "file is too large"), http.StatusRequestEntityTooLarge)
 		return
 	}
 	mediaDomain := domain.MediaDomain(strings.ToLower(strings.TrimSpace(r.FormValue("domain"))))
@@ -1652,6 +1659,8 @@ func (h *Handler) handleMediaSubroutes(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Content-Type", result.Media.MimeType)
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Content-Disposition", mediaContentDisposition(mediaID, result.Media.MimeType))
 		w.Header().Set("Content-Length", strconv.FormatInt(int64(len(result.Content)), 10))
 		w.Header().Set("Cache-Control", "private, max-age=120")
 		w.WriteHeader(http.StatusOK)
@@ -2764,11 +2773,35 @@ func (h *Handler) enforceBodySize(w http.ResponseWriter, r *http.Request, maxByt
 	if maxBytes <= 0 {
 		return true
 	}
+	if r.Body != nil {
+		r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
+	}
 	if r.ContentLength > maxBytes {
 		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "request body too large"), http.StatusRequestEntityTooLarge)
 		return false
 	}
 	return true
+}
+
+func mediaContentDisposition(mediaID string, mimeType string) string {
+	ext := ".bin"
+	switch strings.ToLower(strings.TrimSpace(mimeType)) {
+	case "image/jpeg":
+		ext = ".jpg"
+	case "image/png":
+		ext = ".png"
+	case "image/webp":
+		ext = ".webp"
+	case "image/gif":
+		ext = ".gif"
+	case "video/mp4":
+		ext = ".mp4"
+	case "video/webm":
+		ext = ".webm"
+	case "video/quicktime":
+		ext = ".mov"
+	}
+	return fmt.Sprintf("inline; filename=\"media_%s%s\"", mediaID, ext)
 }
 
 func defaultSyncQueryLimit(raw string) int {

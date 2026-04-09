@@ -25,6 +25,10 @@ var allowedMimeTypes = map[string]struct{}{
 	"image/heif-sequence":      {},
 }
 
+var mimeAliases = map[string]string{
+	"image/jpg": "image/jpeg",
+}
+
 func Email(value string) error {
 	v := strings.TrimSpace(strings.ToLower(value))
 	if v == "" {
@@ -83,12 +87,38 @@ func FileName(value string) error {
 	if strings.Contains(trimmed, "..") || strings.Contains(trimmed, "/") || strings.Contains(trimmed, "\\") {
 		return errors.New("file name contains invalid path characters")
 	}
+	if strings.ContainsAny(trimmed, "<>:\"|?*") {
+		return errors.New("file name contains unsupported characters")
+	}
+	for _, symbol := range trimmed {
+		if symbol == 0 {
+			return errors.New("file name contains invalid null byte")
+		}
+		if symbol < 32 || symbol == 127 {
+			return errors.New("file name contains control characters")
+		}
+	}
 
 	return nil
 }
 
-func MimeType(value string) error {
+func NormalizeMimeType(value string) string {
 	trimmed := strings.ToLower(strings.TrimSpace(value))
+	if trimmed == "" {
+		return ""
+	}
+	withoutParams := strings.TrimSpace(strings.Split(trimmed, ";")[0])
+	if withoutParams == "" {
+		return ""
+	}
+	if alias, ok := mimeAliases[withoutParams]; ok {
+		return alias
+	}
+	return withoutParams
+}
+
+func MimeType(value string) error {
+	trimmed := NormalizeMimeType(value)
 	if trimmed == "" {
 		return errors.New("mime type is required")
 	}
@@ -103,4 +133,25 @@ func MimeType(value string) error {
 	}
 
 	return nil
+}
+
+func ContainsUnsafeControlChars(value string, allowMultiline bool) bool {
+	for _, symbol := range value {
+		if symbol == 0 {
+			return true
+		}
+		if symbol == '\r' || symbol == '\n' {
+			if allowMultiline {
+				continue
+			}
+			return true
+		}
+		if symbol == '\t' {
+			continue
+		}
+		if (symbol >= 0 && symbol < 32) || symbol == 127 {
+			return true
+		}
+	}
+	return false
 }

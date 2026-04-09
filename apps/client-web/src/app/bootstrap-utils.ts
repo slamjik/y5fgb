@@ -210,14 +210,14 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: 
 
 export function toUserError(error: unknown): string {
   if (error instanceof ApiClientError) {
-    if (error.code === "invalid_credentials") return "Invalid email or password.";
-    if (error.code === "two_fa_required") return "Two-factor authentication code is required.";
-    if (error.code === "account_already_exists") return "Account already exists.";
+    if (error.code === "invalid_credentials") return "Неверный email или пароль.";
+    if (error.code === "two_fa_required") return "Нужен код двухфакторной аутентификации.";
+    if (error.code === "account_already_exists") return "Аккаунт с таким email уже существует.";
     if (error.code === "fingerprint_mismatch") {
-      return "Device key conflict. Clear site data and sign in again.";
+      return "Конфликт ключа устройства. Очистите данные сайта и войдите снова.";
     }
     if (error.code === "device_not_approved") {
-      return "Device is not approved yet. Complete device approval and retry.";
+      return "Устройство пока не подтверждено. Подтвердите его и повторите попытку.";
     }
     if (error.code === "validation_error") {
       const details = error.details && typeof error.details === "object" ? error.details : null;
@@ -228,28 +228,34 @@ export function toUserError(error: unknown): string {
         details && typeof details.publicDeviceMaterial === "string" ? details.publicDeviceMaterial : "";
 
       if (passwordDetail.includes("at least 10")) {
-        return "Password must be at least 10 characters.";
+        return "Пароль должен быть не короче 10 символов.";
       }
       if (passwordDetail) {
-        return "Invalid password: " + passwordDetail;
+        return "Проверьте пароль: " + localizeServerDetail(passwordDetail);
       }
       if (emailDetail.includes("required")) {
-        return "Email is required.";
+        return "Введите email.";
       }
       if (emailDetail.includes("invalid")) {
-        return "Check email format.";
+        return "Проверьте формат email.";
       }
       if (emailDetail) {
-        return "Invalid email: " + emailDetail;
+        return "Проверьте email: " + localizeServerDetail(emailDetail);
       }
       if (deviceNameDetail || deviceMaterialDetail) {
-        return "Device payload is invalid. Refresh and try again.";
+        if (deviceNameDetail) {
+          return "Некорректное имя устройства. Проверьте данные и повторите.";
+        }
+        return "Не удалось подготовить ключ устройства. Обновите страницу и попробуйте снова.";
       }
 
       for (const value of Object.values(details ?? {})) {
-        if (typeof value === "string" && value.trim()) return value;
+        if (typeof value === "string" && value.trim()) return localizeServerDetail(value);
       }
-      return "Invalid registration data.";
+      if (error.message && error.message.trim()) {
+        return localizeServerDetail(error.message);
+      }
+      return "Проверьте данные регистрации.";
     }
     if (error.code === "attachment_upload_failed") {
       const details = error.details && typeof error.details === "object" ? error.details : null;
@@ -257,27 +263,60 @@ export function toUserError(error: unknown): string {
       const message = (error.message || "").toLowerCase();
       if (maxBytes && Number.isFinite(maxBytes) && maxBytes > 0) {
         const limitMB = Math.max(1, Math.round(maxBytes / (1024 * 1024)));
-        return `Attachment is too large. Maximum size is ${limitMB} MB.`;
+        return `Вложение слишком большое. Максимум ${limitMB} МБ.`;
       }
       if (message.includes("mime type")) {
-        return "Unsupported photo format. Try JPEG, PNG, WEBP, HEIC, or AVIF.";
+        return "Неподдерживаемый формат файла. Используйте безопасные форматы (JPEG, PNG, WEBP, GIF, PDF, ZIP, TXT).";
       }
       if (message.includes("checksum")) {
-        return "Upload integrity check failed. Please try attaching the file again.";
+        return "Проверка целостности не пройдена. Прикрепите файл заново.";
       }
-      return "Unable to upload attachment.";
+      return "Не удалось загрузить вложение.";
     }
-    if (error.code === "attachment_download_failed") return "Unable to download attachment.";
-    if (error.code === "network_error") return "Unable to connect to server.";
-    return error.message || "Request failed.";
+    if (error.code === "attachment_download_failed") return "Не удалось скачать вложение.";
+    if (error.code === "network_error") return "Не удалось подключиться к серверу.";
+    return localizeServerDetail(error.message || "Не удалось выполнить запрос.");
   }
   if (error instanceof Error) {
     if (error.message === "sha256_unavailable") {
-      return "This browser cannot process attachment integrity checks. Please update your browser.";
+      return "Браузер не поддерживает проверку целостности вложений. Обновите браузер.";
     }
-    return error.message || "Unexpected error.";
+    return localizeServerDetail(error.message || "Произошла непредвиденная ошибка.");
   }
-  return "Unexpected error.";
+  return "Произошла непредвиденная ошибка.";
+}
+
+function localizeServerDetail(detail: string): string {
+  const normalized = detail.trim();
+  const lower = normalized.toLowerCase();
+  if (!normalized) {
+    return "Произошла ошибка.";
+  }
+  if (lower === "invalid registration data") {
+    return "Проверьте данные регистрации.";
+  }
+  if (lower === "invalid request body") {
+    return "Некорректный запрос. Обновите страницу и повторите попытку.";
+  }
+  if (lower.includes("mime type")) {
+    return "Неподдерживаемый тип файла.";
+  }
+  if (lower.includes("checksum mismatch")) {
+    return "Нарушена целостность файла.";
+  }
+  if (lower.includes("password is required")) {
+    return "Введите пароль.";
+  }
+  if (lower.includes("email is required")) {
+    return "Введите email.";
+  }
+  if (lower.includes("email format is invalid")) {
+    return "Проверьте формат email.";
+  }
+  if (lower.includes("at least 10")) {
+    return "Пароль должен быть не короче 10 символов.";
+  }
+  return normalized;
 }
 
 function parseStoredDeviceMaterial(raw: string | null, expectedDeviceId?: string): DeviceMaterial | null {
