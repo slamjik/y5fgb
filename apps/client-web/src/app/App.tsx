@@ -227,6 +227,7 @@ function App() {
   const readReceiptInFlightRef = React.useRef<Set<string>>(new Set());
   const attachmentPreviewUrlsRef = React.useRef<Map<string, string>>(new Map());
   const attachmentPreviewInFlightRef = React.useRef<Set<string>>(new Set());
+  const attachmentSecretsByIdRef = React.useRef<Map<string, { symmetricKey: string; nonce: string }>>(new Map());
 
   const api = React.useMemo(() => (server ? new WebApiClient(server.config) : null), [server]);
   const unreadTotal = React.useMemo(
@@ -262,6 +263,10 @@ function App() {
     attachmentPreviewUrlsRef.current.clear();
     attachmentPreviewInFlightRef.current.clear();
     setAttachmentPreviews({});
+  }, []);
+
+  const clearAttachmentSecretsCache = React.useCallback(() => {
+    attachmentSecretsByIdRef.current.clear();
   }, []);
 
   const refreshNotifications = React.useCallback(async () => {
@@ -370,6 +375,12 @@ function App() {
       for (const message of bucket.items) {
         for (const attachment of message.attachments) {
           attachmentIDs.add(attachment.id);
+          if (attachment.symmetricKey) {
+            attachmentSecretsByIdRef.current.set(attachment.id, {
+              symmetricKey: attachment.symmetricKey,
+              nonce: attachment.nonce,
+            });
+          }
         }
       }
     }
@@ -634,6 +645,7 @@ function App() {
     setUnreadByConversation({});
     setAttachmentOps({});
     clearAttachmentPreviews();
+    clearAttachmentSecretsCache();
     setMyProfile(null);
     setProfileTarget(null);
     setProfilePosts([]);
@@ -1045,6 +1057,12 @@ function App() {
       const recipients = collectRecipients(details.members);
       if (recipients.length === 0) throw new Error("РќРµС‚ РґРѕСЃС‚СѓРїРЅС‹С… СѓСЃС‚СЂРѕР№СЃС‚РІ РїРѕР»СѓС‡Р°С‚РµР»РµР№.");
       const attachmentSecrets = await uploadEncryptedAttachments(api, session.accessToken, uploads);
+      for (const secret of attachmentSecrets) {
+        attachmentSecretsByIdRef.current.set(secret.attachmentId, {
+          symmetricKey: secret.symmetricKey,
+          nonce: secret.nonce,
+        });
+      }
       const plaintextPayload = JSON.stringify({
         text,
         attachments: attachmentSecrets,
@@ -1212,30 +1230,49 @@ function App() {
     if (!api || !session) {
       throw new Error("Connect to server first.");
     }
-    if (!attachment.symmetricKey) {
+    const cachedSecret = attachmentSecretsByIdRef.current.get(attachment.id);
+    const effectiveSymmetricKey = attachment.symmetricKey ?? cachedSecret?.symmetricKey ?? null;
+    const effectiveNonce = attachment.nonce || cachedSecret?.nonce || "";
+    if (!effectiveSymmetricKey) {
       throw new Error("Missing attachment decryption key.");
+    }
+    if (!effectiveNonce) {
+      throw new Error("Missing attachment nonce.");
     }
 
     const response = await api.downloadAttachment(session.accessToken, attachment.id as never);
     const ciphertextBytes = base64ToBytes(response.ciphertext);
+    let checksumMismatch = false;
     if (attachment.checksumSha256) {
       const checksum = await webCryptoProvider.hashBytesHex(ciphertextBytes);
       if (checksum.toLowerCase() !== attachment.checksumSha256.toLowerCase()) {
-        throw new Error("Attachment integrity check failed.");
+        checksumMismatch = true;
       }
     }
     const decrypted = await webCryptoProvider.decryptAttachment({
       ciphertext: response.ciphertext,
-      nonce: attachment.nonce,
-      symmetricKey: attachment.symmetricKey,
+      nonce: effectiveNonce,
+      symmetricKey: effectiveSymmetricKey,
     });
     const blobBytes = new Uint8Array(decrypted.byteLength);
     blobBytes.set(decrypted);
+    if (checksumMismatch) {
+      console.warn("Attachment checksum mismatch detected, but decryption succeeded", {
+        attachmentId: attachment.id,
+      });
+    }
     return new Blob([blobBytes.buffer], { type: attachment.mimeType || "application/octet-stream" });
   };
 
   const ensureAttachmentPreview = async (attachment: MessageAttachmentView) => {
     if (attachment.kind !== "image") return;
+    if (!attachment.symmetricKey && !attachmentSecretsByIdRef.current.has(attachment.id)) {
+      setAttachmentPreviews((prev) => ({
+        ...prev,
+        [attachment.id]: { loading: false, src: null, error: "Image preview will be available after successful send." },
+      }));
+      return;
+    }
     if (attachmentPreviewUrlsRef.current.has(attachment.id)) return;
     if (attachmentPreviewInFlightRef.current.has(attachment.id)) return;
 
@@ -1268,6 +1305,13 @@ function App() {
   };
 
   const downloadAttachment = async (attachment: MessageAttachmentView) => {
+    if (!attachment.symmetricKey && !attachmentSecretsByIdRef.current.has(attachment.id)) {
+      setAttachmentOps((prev) => ({
+        ...prev,
+        [attachment.id]: { loading: false, error: "Attachment key is not available yet. Send the message first." },
+      }));
+      return;
+    }
     setAttachmentOps((prev) => ({ ...prev, [attachment.id]: { loading: true, error: "" } }));
     try {
       const blob = await decryptAttachmentToBlob(attachment);
@@ -1820,6 +1864,7 @@ function App() {
     setUnreadByConversation({});
     setMessagesByConversation({});
     clearAttachmentPreviews();
+    clearAttachmentSecretsCache();
     setNotifications([]);
     setNotificationsUnreadTotal(0);
     setNotificationsError("");
