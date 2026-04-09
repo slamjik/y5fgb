@@ -74,7 +74,7 @@ function WallState({
 }) {
   return (
     <div
-      className="rounded-2xl border p-4"
+      className="rounded-2xl border p-4 interactive-surface-subtle"
       style={{
         backgroundColor: "var(--glass-fill-base)",
         borderColor: "var(--glass-border)",

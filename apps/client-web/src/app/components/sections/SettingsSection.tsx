@@ -6,7 +6,6 @@
   TwoFactorSetupStartResponse,
 } from "@project/protocol";
 import { Shield } from "lucide-react";
-import * as React from "react";
 
 import { cardStyle, innerCardStyle, outlineButtonStyle, solidButtonStyle } from "../../styles";
 import type { SessionMode, SettingsSection as SettingsSectionKey } from "../../types";
@@ -73,7 +72,7 @@ export function SettingsSection({
   onResetServer,
 }: SettingsSectionProps) {
   return (
-    <section className="rounded-2xl border p-4 space-y-4" style={cardStyle}>
+    <section className="rounded-2xl border p-4 space-y-4 app-section-transition" style={cardStyle}>
       <h3 style={{ color: "var(--text-primary)", fontWeight: 600 }}>Настройки</h3>
       <div className="flex gap-2 flex-wrap">
         {([
@@ -100,7 +99,7 @@ export function SettingsSection({
       {settingsMessage ? <InlineInfo text={settingsMessage} /> : null}
 
       {settingsSection === "account" ? (
-        <div className="rounded-xl border p-3 space-y-3" style={innerCardStyle}>
+        <div className="rounded-xl border p-3 space-y-3 interactive-surface" style={innerCardStyle}>
           <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>Аккаунт</p>
           <p style={{ color: "var(--base-grey-light)" }}>Email: {sessionEmail}</p>
           <p style={{ color: "var(--base-grey-light)" }}>
@@ -130,7 +129,7 @@ export function SettingsSection({
       ) : null}
 
       {settingsSection === "sessions" ? (
-        <div className="rounded-xl border p-3 space-y-2" style={innerCardStyle}>
+        <div className="rounded-xl border p-3 space-y-2 interactive-surface" style={innerCardStyle}>
           <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>Текущая сессия</p>
           <p style={{ color: "var(--base-grey-light)" }}>Платформа: {sessionInfo?.session.clientPlatform ?? "web-browser"}</p>
           <p style={{ color: "var(--base-grey-light)" }}>Класс: {sessionInfo?.session.sessionClass ?? "browser"}</p>
@@ -142,13 +141,13 @@ export function SettingsSection({
       ) : null}
 
       {settingsSection === "devices" ? (
-        <div className="rounded-xl border p-3 space-y-2" style={innerCardStyle}>
+        <div className="rounded-xl border p-3 space-y-2 interactive-surface" style={innerCardStyle}>
           <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>Устройства</p>
           {(deviceList?.devices ?? []).map((device) => {
             const id = device.id as string;
             const isCurrent = deviceList?.currentDeviceId === device.id;
             return (
-              <div key={id} className="rounded-lg border px-3 py-2 flex items-center justify-between" style={innerCardStyle}>
+              <div key={id} className="rounded-lg border px-3 py-2 flex items-center justify-between interactive-surface-subtle" style={innerCardStyle}>
                 <div>
                   <p style={{ color: "var(--text-primary)" }}>{device.name}</p>
                   <p style={{ color: "var(--base-grey-light)", fontSize: 12 }}>
@@ -171,14 +170,14 @@ export function SettingsSection({
       ) : null}
 
       {settingsSection === "security" ? (
-        <div className="rounded-xl border p-3 space-y-3" style={innerCardStyle}>
+        <div className="rounded-xl border p-3 space-y-3 interactive-surface" style={innerCardStyle}>
           <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>2FA и события безопасности</p>
           <button type="button" className="px-3 py-2 rounded-lg border" style={outlineButtonStyle} onClick={onStartTwoFactorSetup}>
             <Shield className="w-4 h-4 inline mr-2" />
             Начать настройку 2FA
           </button>
           {twoFASetup ? (
-            <div className="space-y-2 rounded-lg border p-3" style={innerCardStyle}>
+            <div className="space-y-2 rounded-lg border p-3 interactive-surface-subtle" style={innerCardStyle}>
               <p style={{ color: "var(--base-grey-light)", fontSize: 12, wordBreak: "break-all" }}>Секрет: {twoFASetup.secret}</p>
               <p style={{ color: "var(--base-grey-light)", fontSize: 12, wordBreak: "break-all" }}>
                 URI: {twoFASetup.provisioningUri}
@@ -209,7 +208,7 @@ export function SettingsSection({
           </div>
           <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>События</p>
           {securityEvents.slice(0, 10).map((event) => (
-            <div key={event.id as string} className="rounded-lg border px-3 py-2" style={innerCardStyle}>
+            <div key={event.id as string} className="rounded-lg border px-3 py-2 interactive-surface-subtle" style={innerCardStyle}>
               <p style={{ color: "var(--text-primary)" }}>{event.eventType}</p>
               <p style={{ color: "var(--base-grey-light)", fontSize: 12 }}>
                 {new Date(event.createdAt as string).toLocaleString("ru-RU")}
@@ -220,7 +219,7 @@ export function SettingsSection({
       ) : null}
 
       {settingsSection === "privacy" ? (
-        <div className="rounded-xl border p-3 space-y-3" style={innerCardStyle}>
+        <div className="rounded-xl border p-3 space-y-3 interactive-surface" style={innerCardStyle}>
           <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>Приватность профиля</p>
           {!privacy ? (
             <InlineInfo text="Настройки приватности загружаются..." />
@@ -270,7 +269,7 @@ export function SettingsSection({
       ) : null}
 
       {settingsSection === "app" ? (
-        <div className="rounded-xl border p-3 space-y-2" style={innerCardStyle}>
+        <div className="rounded-xl border p-3 space-y-2 interactive-surface" style={innerCardStyle}>
           <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>Приложение</p>
           <p style={{ color: "var(--base-grey-light)" }}>Тема: Темная</p>
           <p style={{ color: "var(--base-grey-light)" }}>Язык: Русский</p>
@@ -291,7 +290,7 @@ export function SettingsSection({
       ) : null}
 
       {settingsSection === "connection" ? (
-        <div className="rounded-xl border p-3 space-y-3" style={innerCardStyle}>
+        <div className="rounded-xl border p-3 space-y-3 interactive-surface" style={innerCardStyle}>
           <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>Сервер и подключение</p>
           <p style={{ color: "var(--base-grey-light)" }}>Текущий сервер: {serverInput}</p>
           <div className="flex gap-2 flex-wrap">

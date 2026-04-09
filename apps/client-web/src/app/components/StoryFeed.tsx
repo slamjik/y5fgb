@@ -25,7 +25,7 @@ export function StoryFeed({
 }: StoryFeedProps) {
   return (
     <section className="space-y-4">
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
         <h3 style={{ color: "var(--text-primary)", fontSize: 22, fontWeight: 700 }}>{title}</h3>
         <p style={{ color: "var(--base-grey-light)" }}>{subtitle}</p>
       </div>
@@ -61,7 +61,7 @@ function StoryCard({
 
   return (
     <article
-      className="rounded-2xl border p-4 space-y-4 relative overflow-hidden"
+      className="rounded-2xl border p-4 space-y-4 relative overflow-hidden interactive-surface app-section-transition"
       style={{
         background:
           "linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01))",
@@ -93,7 +93,7 @@ function StoryCard({
             }
           }}
           disabled={isDeleting}
-          className="px-3 py-2 rounded-lg border text-sm transition-all"
+          className="px-3 py-2 rounded-lg border text-sm transition-all interactive-surface-subtle"
           style={{ borderColor: "var(--glass-border)", color: "#fda4af" }}
         >
           <Trash2 className="w-4 h-4 inline mr-1" />

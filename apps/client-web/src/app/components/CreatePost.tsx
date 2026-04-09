@@ -134,7 +134,7 @@ export function CreatePost({ onSubmit, disabled = false, uploadStatus }: CreateP
 
   return (
     <div
-      className="rounded-2xl p-5 border transition-all"
+      className="rounded-2xl p-5 border transition-all interactive-surface app-section-transition"
       style={{
         backgroundColor: "var(--glass-fill-base)",
         borderColor: "var(--glass-border)",
@@ -197,7 +197,7 @@ export function CreatePost({ onSubmit, disabled = false, uploadStatus }: CreateP
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              className="px-4 py-2 rounded-lg border"
+              className="px-4 py-2 rounded-lg border interactive-surface-subtle"
               style={{
                 borderColor: "var(--accent-brown)",
                 color: "var(--accent-brown)",
@@ -209,7 +209,7 @@ export function CreatePost({ onSubmit, disabled = false, uploadStatus }: CreateP
             </button>
             <button
               type="button"
-              className="px-4 py-2 rounded-lg border text-sm"
+              className="px-4 py-2 rounded-lg border text-sm interactive-surface-subtle"
               style={{
                 borderColor: "var(--glass-border)",
                 color: "var(--base-grey-light)",
@@ -271,7 +271,7 @@ export function CreatePost({ onSubmit, disabled = false, uploadStatus }: CreateP
               key={option}
               type="button"
               onClick={() => setMood(option)}
-              className="px-3 py-1.5 rounded-lg text-sm transition-all border"
+              className="px-3 py-1.5 rounded-lg text-sm transition-all border interactive-surface-subtle"
               style={{
                 borderColor: "var(--accent-brown)",
                 color: mood === option ? "var(--core-background)" : "var(--accent-brown)",
@@ -332,7 +332,7 @@ export function CreatePost({ onSubmit, disabled = false, uploadStatus }: CreateP
           type="button"
           onClick={handleSubmit}
           disabled={submitDisabled}
-          className="px-5 py-2 rounded-lg border transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+          className="px-5 py-2 rounded-lg border transition-all disabled:opacity-50 disabled:cursor-not-allowed interactive-surface-subtle"
           style={{
             borderColor: "var(--accent-brown)",
             color: "var(--accent-brown)",
@@ -357,20 +357,16 @@ function ActionButton({
   active: boolean;
   onClick: () => void;
 }) {
-  const [isHovered, setIsHovered] = React.useState(false);
-
   return (
     <button
       type="button"
-      className="flex items-center gap-2 px-4 py-2 rounded-lg transition-all"
+      className="flex items-center gap-2 px-4 py-2 rounded-lg transition-all interactive-surface-subtle"
       style={{
-        backgroundColor: active || isHovered ? "var(--glass-fill-hover)" : "transparent",
+        backgroundColor: active ? "var(--glass-fill-hover)" : "transparent",
         backdropFilter: "blur(10px)",
-        color: active || isHovered ? "var(--accent-brown)" : "var(--base-grey-light)",
+        color: active ? "var(--accent-brown)" : "var(--base-grey-light)",
       }}
       onClick={onClick}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
     >
       {icon}
       <span style={{ color: "var(--accent-brown)" }}>{label}</span>

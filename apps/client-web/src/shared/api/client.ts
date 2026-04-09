@@ -60,6 +60,7 @@ type ApiErrorPayload = {
   error?: {
     code?: string;
     message?: string;
+    details?: Record<string, unknown>;
   };
 };
 
@@ -78,11 +79,13 @@ type UploadProgressHandler = (progress: UploadProgress) => void;
 export class ApiClientError extends Error {
   readonly code: string;
   readonly status: number;
+  readonly details?: Record<string, unknown>;
 
-  constructor(message: string, status = 0, code = "network_error") {
+  constructor(message: string, status = 0, code = "network_error", details?: Record<string, unknown>) {
     super(message);
     this.code = code;
     this.status = status;
+    this.details = details;
   }
 }
 
@@ -716,7 +719,8 @@ export class WebApiClient {
     const source = payload as ApiErrorPayload;
     const message = source.error?.message?.trim() || fallback;
     const code = source.error?.code?.trim() || "request_failed";
-    return new ApiClientError(message, status, code);
+    const details = source.error?.details && typeof source.error.details === "object" ? source.error.details : undefined;
+    return new ApiClientError(message, status, code, details);
   }
 }
 

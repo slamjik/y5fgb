@@ -109,11 +109,11 @@ export function MessagesSection({
   );
 
   return (
-    <section className="grid gap-3 lg:grid-cols-[320px_1fr_280px] lg:h-[calc(100vh-170px)] min-h-[420px]">
+    <section className="mobile-screen-shell grid gap-3 lg:grid-cols-[320px_1fr_280px] h-[calc(100dvh-216px)] lg:h-[calc(100vh-170px)] min-h-[420px] app-section-transition">
       <aside
         className={`${
           activeConversationId && !showConversationListOnMobile ? "hidden lg:flex" : "flex"
-        } rounded-2xl border p-4 overflow-hidden flex-col`}
+        } rounded-2xl border p-4 overflow-hidden flex-col chat-panel-transition`}
         style={cardStyle}
       >
         <div className="flex items-center gap-2 mb-3">
@@ -168,7 +168,7 @@ export function MessagesSection({
         </button>
 
         {showNewChat ? (
-          <div className="rounded-xl border p-3 mb-3 space-y-3" style={innerCardStyle}>
+          <div className="rounded-xl border p-3 mb-3 space-y-3 interactive-surface-subtle" style={innerCardStyle}>
             <input
               data-testid="messages-new-chat-search-input"
               value={userSearchQuery}
@@ -182,7 +182,7 @@ export function MessagesSection({
                 const accountId = user.accountId as string;
                 const selected = groupMembers.includes(accountId);
                 return (
-                  <div key={accountId} className="rounded-lg border p-2" style={innerCardStyle}>
+                  <div key={accountId} className="rounded-lg border p-2 interactive-surface-subtle" style={innerCardStyle}>
                     <p style={{ color: "var(--text-primary)", fontSize: 13 }}>
                       {user.displayName || user.username || "Пользователь"}
                     </p>
@@ -242,7 +242,7 @@ export function MessagesSection({
                 key={id}
                 type="button"
                 data-testid={`conversation-item-${id}`}
-                className="w-full text-left rounded-xl border p-3"
+                className="w-full text-left rounded-xl border p-3 interactive-surface"
                 style={selected ? selectedCardStyle : innerCardStyle}
                 onClick={() => onOpenConversation(id)}
               >
@@ -269,7 +269,7 @@ export function MessagesSection({
       <section
         className={`${
           !activeConversationId || showConversationListOnMobile ? "hidden lg:flex" : "flex"
-        } rounded-2xl border overflow-hidden flex-col min-h-[420px]`}
+        } rounded-2xl border overflow-hidden flex-col min-h-[420px] chat-panel-transition`}
         style={cardStyle}
       >
         {!activeConversationId ? (
@@ -277,7 +277,7 @@ export function MessagesSection({
             <InlineInfo text="Выберите чат слева" />
           </div>
         ) : (
-          <>
+          <React.Fragment key={activeConversationId}>
             <header className="px-3 lg:px-4 py-3 border-b flex items-center justify-between gap-2" style={{ borderColor: "var(--glass-border)" }}>
               <div className="min-w-0 flex items-center gap-2">
                 <button
@@ -365,7 +365,7 @@ export function MessagesSection({
               {uploads.length > 0 ? (
                 <div className="space-y-2 max-h-32 overflow-auto">
                   {uploads.map((upload) => (
-                    <div key={upload.id} className="flex items-center justify-between rounded-lg border px-3 py-2" style={innerCardStyle}>
+                    <div key={upload.id} className="flex items-center justify-between rounded-lg border px-3 py-2 interactive-surface-subtle" style={innerCardStyle}>
                       <div className="min-w-0">
                         <p className="truncate" style={{ color: "var(--text-primary)" }}>{upload.file.name}</p>
                         <p style={{ color: "var(--base-grey-light)", fontSize: 12 }}>{formatBytes(upload.file.size)}</p>
@@ -400,11 +400,11 @@ export function MessagesSection({
                 </button>
               </div>
             </footer>
-          </>
+          </React.Fragment>
         )}
       </section>
 
-      <aside className="hidden lg:block rounded-2xl border p-4 space-y-3" style={cardStyle}>
+      <aside className="hidden lg:block rounded-2xl border p-4 space-y-3 interactive-surface chat-panel-transition" style={cardStyle}>
         <h3 style={{ color: "var(--text-primary)", fontWeight: 600 }}>Подключение</h3>
         <TransportCard state={transportState} />
         <div className="rounded-xl border p-3" style={innerCardStyle}>

@@ -81,8 +81,8 @@ export function NotificationsSection({
   };
 
   return (
-    <section className="space-y-3">
-      <div className="rounded-2xl border p-3 space-y-3" style={cardStyle}>
+    <section className="space-y-3 app-section-transition">
+      <div className="rounded-2xl border p-3 space-y-3 interactive-surface" style={cardStyle}>
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>
             Непрочитанные: {unreadTotal}
@@ -164,7 +164,7 @@ export function NotificationsSection({
           <div
             key={`${item.id}_${item.createdAt as string}`}
             data-testid={`notification-item-${id}`}
-            className="rounded-xl border p-3 space-y-2"
+            className="rounded-xl border p-3 space-y-2 interactive-surface"
             style={cardStyle}
           >
             <div className="flex items-start justify-between gap-3">
@@ -214,7 +214,7 @@ export function NotificationsSection({
         );
       })}
 
-      <div className="rounded-xl border p-3" style={innerCardStyle}>
+      <div className="rounded-xl border p-3 interactive-surface-subtle" style={innerCardStyle}>
         <p style={{ color: "var(--base-grey-light)", fontSize: 12 }}>
           Клик по уведомлению откроет связанный раздел: профиль, пост, заявки или чат.
         </p>

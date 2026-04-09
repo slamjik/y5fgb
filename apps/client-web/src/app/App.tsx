@@ -690,7 +690,16 @@ function App() {
   }, [api, session?.refreshToken, refreshSessionTokens]);
 
   const submitAuth = async (mode: AuthMode, email: string, password: string) => {
-    if (!api) throw new Error("Сначала подключитесь к серверу.");
+    if (!api) throw new Error("Connect to server first.");
+
+    const normalizedEmail = email.trim();
+    if (!normalizedEmail) {
+      throw new Error("Email is required.");
+    }
+    if (mode === "register" && password.length < 10) {
+      throw new Error("Password must be at least 10 characters.");
+    }
+
     const execute = async () => {
       const device = await ensureDeviceMaterial();
       const payload: WebDevicePayload = {
@@ -700,17 +709,27 @@ function App() {
       };
 
       if (mode === "register") {
-        const response = await api.registerWeb({ email, password, device: payload, sessionPersistence: sessionMode });
-        await applySession(response, email);
+        const response = await api.registerWeb({
+          email: normalizedEmail,
+          password,
+          device: payload,
+          sessionPersistence: sessionMode,
+        });
+        await applySession(response, normalizedEmail);
         return;
       }
 
-      const response = await api.loginWeb({ email, password, device: payload, sessionPersistence: sessionMode });
+      const response = await api.loginWeb({
+        email: normalizedEmail,
+        password,
+        device: payload,
+        sessionPersistence: sessionMode,
+      });
       if ("challengeId" in response) {
         setPending2fa(response);
         return;
       }
-      await applySession(response, email);
+      await applySession(response, normalizedEmail);
     };
 
     try {
@@ -1645,8 +1664,8 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen pb-[88px] lg:pb-0" style={{ backgroundColor: "var(--core-background)" }}>
-      <div className="mx-auto max-w-[1440px] px-3 lg:px-5 py-3 lg:py-5 lg:grid lg:grid-cols-[280px_1fr] gap-5">
+    <div className="min-h-screen pb-[calc(88px+env(safe-area-inset-bottom))] lg:pb-0" style={{ backgroundColor: "var(--core-background)" }}>
+      <div className="mx-auto max-w-[1440px] px-3 lg:px-5 py-3 lg:py-5 lg:grid lg:grid-cols-[280px_1fr] gap-5 overflow-x-hidden">
         <div className="hidden lg:block">
           <Sidebar
             activeSection={section}
@@ -1655,7 +1674,7 @@ function App() {
           />
         </div>
 
-        <main className="space-y-3 lg:space-y-4 app-section-transition">
+        <main key={section} className="space-y-3 lg:space-y-4 app-route-transition">
           <header className="flex items-center justify-between rounded-2xl border px-4 py-3" style={cardStyle}>
             <div>
               <h1 style={{ color: "var(--text-primary)", fontSize: 26, fontWeight: 600 }}>{sectionTitle(section)}</h1>
@@ -1826,7 +1845,7 @@ function App() {
           ) : null}
 
 {section === "profile" ? (
-            <section className="space-y-4">
+            <section key={profileTarget?.accountId ? `profile-${profileTarget.accountId as string}` : "profile-self"} className="space-y-4 app-section-transition">
               <ProfileHeader
                 profile={viewedProfile}
                 banner={
@@ -1961,7 +1980,7 @@ function App() {
 
               {!profileTarget ? (
                 <>
-                  <div className="rounded-2xl border p-4 space-y-3" style={cardStyle}>
+                  <div className="rounded-2xl border p-4 space-y-3 interactive-surface" style={cardStyle}>
                     <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>Редактирование профиля</p>
                     <div className="grid gap-3 md:grid-cols-2">
                       <input value={profileEdit.displayName} onChange={(event) => setProfileEdit((prev) => ({ ...prev, displayName: event.target.value }))} placeholder="Отображаемое имя" className="w-full rounded-lg border bg-transparent px-3 py-2 outline-none" style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)" }} />
@@ -1975,7 +1994,7 @@ function App() {
                       <button type="button" className="px-3 py-2 rounded-lg border" style={outlineButtonStyle} onClick={() => void saveProfile()}>
                         Сохранить профиль
                       </button>
-                      <label className="px-3 py-2 rounded-lg border cursor-pointer" style={outlineButtonStyle}>
+                      <label className="px-3 py-2 rounded-lg border cursor-pointer interactive-surface-subtle" style={outlineButtonStyle}>
                         Загрузить аватар
                         <input type="file" className="hidden" accept="image/*" onChange={(event) => {
                           const file = event.target.files?.[0];
@@ -1983,7 +2002,7 @@ function App() {
                           event.currentTarget.value = "";
                         }} />
                       </label>
-                      <label className="px-3 py-2 rounded-lg border cursor-pointer" style={outlineButtonStyle}>
+                      <label className="px-3 py-2 rounded-lg border cursor-pointer interactive-surface-subtle" style={outlineButtonStyle}>
                         Загрузить обложку
                         <input type="file" className="hidden" accept="image/*" onChange={(event) => {
                           const file = event.target.files?.[0];
@@ -1998,7 +2017,7 @@ function App() {
                     </div>
                   </div>
 
-                  <div className="rounded-2xl border p-4 space-y-3" style={cardStyle}>
+                  <div className="rounded-2xl border p-4 space-y-3 interactive-surface" style={cardStyle}>
                     <div className="flex items-center gap-2 flex-wrap">
                       <input
                         value={storyCaption}
@@ -2007,7 +2026,7 @@ function App() {
                         className="flex-1 min-w-[220px] rounded-lg border bg-transparent px-3 py-2 outline-none"
                         style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)" }}
                       />
-                      <label className="px-3 py-2 rounded-lg border cursor-pointer" style={outlineButtonStyle}>
+                      <label className="px-3 py-2 rounded-lg border cursor-pointer interactive-surface-subtle" style={outlineButtonStyle}>
                         Добавить историю
                         <input
                           type="file"
@@ -2050,14 +2069,14 @@ function App() {
                     />
                   </div>
 
-                  <div className="rounded-2xl border p-4 space-y-3" style={cardStyle}>
+                  <div className="rounded-2xl border p-4 space-y-3 interactive-surface" style={cardStyle}>
                     <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>Друзья и заявки</p>
                     <div className="grid gap-4 md:grid-cols-3">
                       <div>
                         <p style={{ color: "var(--base-grey-light)", fontSize: 12, marginBottom: 8 }}>Друзья</p>
                         <div className="space-y-2">
                           {friends.length === 0 ? <InlineInfo text="Список друзей пуст." /> : friends.map((friend) => (
-                            <div key={friend.accountId as string} className="rounded-lg border p-2" style={innerCardStyle}>
+                            <div key={friend.accountId as string} className="rounded-lg border p-2 interactive-surface-subtle" style={innerCardStyle}>
                               <p style={{ color: "var(--text-primary)" }}>{friend.displayName || friend.username}</p>
                               <p style={{ color: "var(--base-grey-light)", fontSize: 12 }}>@{friend.username}</p>
                               <div className="mt-2 flex gap-2">
@@ -2072,7 +2091,7 @@ function App() {
                         <p style={{ color: "var(--base-grey-light)", fontSize: 12, marginBottom: 8 }}>Входящие</p>
                         <div className="space-y-2">
                           {incomingRequests.length === 0 ? <InlineInfo text="Нет входящих заявок." /> : incomingRequests.map((request) => (
-                            <div key={request.id as string} className="rounded-lg border p-2" style={innerCardStyle}>
+                            <div key={request.id as string} className="rounded-lg border p-2 interactive-surface-subtle" style={innerCardStyle}>
                               <p style={{ color: "var(--text-primary)" }}>{request.actor.displayName || request.actor.username}</p>
                               <div className="mt-2 flex gap-2">
                                 <button type="button" className="px-2 py-1 rounded-lg border text-xs" style={outlineButtonStyle} onClick={() => void processFriendRequest(request.id as string, "accept")}>Принять</button>
@@ -2086,7 +2105,7 @@ function App() {
                         <p style={{ color: "var(--base-grey-light)", fontSize: 12, marginBottom: 8 }}>Исходящие</p>
                         <div className="space-y-2">
                           {outgoingRequests.length === 0 ? <InlineInfo text="Нет исходящих заявок." /> : outgoingRequests.map((request) => (
-                            <div key={request.id as string} className="rounded-lg border p-2" style={innerCardStyle}>
+                            <div key={request.id as string} className="rounded-lg border p-2 interactive-surface-subtle" style={innerCardStyle}>
                               <p style={{ color: "var(--text-primary)" }}>{request.target.displayName || request.target.username}</p>
                               <div className="mt-2 flex gap-2">
                                 <button type="button" className="px-2 py-1 rounded-lg border text-xs" style={outlineButtonStyle} onClick={() => void processFriendRequest(request.id as string, "cancel")}>Отменить</button>

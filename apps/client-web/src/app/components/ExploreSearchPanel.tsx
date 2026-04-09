@@ -35,8 +35,8 @@ export function ExploreSearchPanel({
   onDeletePost,
 }: ExploreSearchPanelProps) {
   return (
-    <section className="space-y-4">
-      <div className="rounded-2xl border p-4 space-y-3" style={panelStyle}>
+    <section className="space-y-4 app-section-transition">
+      <div className="rounded-2xl border p-4 space-y-3 interactive-surface" style={panelStyle}>
         <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>Поиск людей и публикаций</p>
         <div className="flex gap-2">
           <input
@@ -69,7 +69,7 @@ export function ExploreSearchPanel({
       {loading ? <StateCard text="Ищем результаты..." /> : null}
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <div className="rounded-2xl border p-4 space-y-3" style={panelStyle}>
+        <div className="rounded-2xl border p-4 space-y-3 interactive-surface" style={panelStyle}>
           <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>Люди</p>
           {!hasSearched ? <StateCard text="Введите запрос, чтобы найти пользователей." /> : null}
           {hasSearched && !loading && users.length === 0 ? <StateCard text="Пользователи не найдены." /> : null}
@@ -77,7 +77,7 @@ export function ExploreSearchPanel({
             <div
               key={item.accountId as string}
               data-testid={`explore-user-${item.accountId as string}`}
-              className="rounded-xl border p-3 space-y-2"
+              className="rounded-xl border p-3 space-y-2 interactive-surface-subtle"
               style={innerPanelStyle}
             >
               <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>
@@ -122,7 +122,7 @@ export function ExploreSearchPanel({
           ))}
         </div>
 
-        <div className="rounded-2xl border p-4 space-y-3" style={panelStyle}>
+        <div className="rounded-2xl border p-4 space-y-3 interactive-surface" style={panelStyle}>
           <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>Публикации</p>
           {!hasSearched ? <StateCard text="Введите запрос для публикаций." /> : null}
           {hasSearched && !loading && posts.length === 0 ? <StateCard text="Публикации не найдены." /> : null}

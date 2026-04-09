@@ -210,16 +210,52 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: 
 
 export function toUserError(error: unknown): string {
   if (error instanceof ApiClientError) {
-    if (error.code === "invalid_credentials") return "Неверный email или пароль.";
-    if (error.code === "two_fa_required") return "Нужен код двухфакторной аутентификации.";
-    if (error.code === "account_already_exists") return "Аккаунт уже существует.";
-    if (error.code === "fingerprint_mismatch") return "Конфликт ключа устройства. Очистите данные сайта и войдите снова.";
-    if (error.code === "device_not_approved") return "Устройство не подтверждено. Завершите подтверждение входа.";
-    if (error.code === "network_error") return "Не удалось подключиться к серверу.";
-    return error.message || "Ошибка запроса.";
+    if (error.code === "invalid_credentials") return "Invalid email or password.";
+    if (error.code === "two_fa_required") return "Two-factor authentication code is required.";
+    if (error.code === "account_already_exists") return "Account already exists.";
+    if (error.code === "fingerprint_mismatch") {
+      return "Device key conflict. Clear site data and sign in again.";
+    }
+    if (error.code === "device_not_approved") {
+      return "Device is not approved yet. Complete device approval and retry.";
+    }
+    if (error.code === "validation_error") {
+      const details = error.details && typeof error.details === "object" ? error.details : null;
+      const passwordDetail = details && typeof details.password === "string" ? details.password : "";
+      const emailDetail = details && typeof details.email === "string" ? details.email : "";
+      const deviceNameDetail = details && typeof details.deviceName === "string" ? details.deviceName : "";
+      const deviceMaterialDetail =
+        details && typeof details.publicDeviceMaterial === "string" ? details.publicDeviceMaterial : "";
+
+      if (passwordDetail.includes("at least 10")) {
+        return "Password must be at least 10 characters.";
+      }
+      if (passwordDetail) {
+        return "Invalid password: " + passwordDetail;
+      }
+      if (emailDetail.includes("required")) {
+        return "Email is required.";
+      }
+      if (emailDetail.includes("invalid")) {
+        return "Check email format.";
+      }
+      if (emailDetail) {
+        return "Invalid email: " + emailDetail;
+      }
+      if (deviceNameDetail || deviceMaterialDetail) {
+        return "Device payload is invalid. Refresh and try again.";
+      }
+
+      for (const value of Object.values(details ?? {})) {
+        if (typeof value === "string" && value.trim()) return value;
+      }
+      return "Invalid registration data.";
+    }
+    if (error.code === "network_error") return "Unable to connect to server.";
+    return error.message || "Request failed.";
   }
-  if (error instanceof Error) return error.message || "Произошла ошибка.";
-  return "Произошла ошибка.";
+  if (error instanceof Error) return error.message || "Unexpected error.";
+  return "Unexpected error.";
 }
 
 function parseStoredDeviceMaterial(raw: string | null, expectedDeviceId?: string): DeviceMaterial | null {

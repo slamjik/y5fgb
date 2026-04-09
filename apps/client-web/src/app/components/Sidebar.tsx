@@ -1,5 +1,5 @@
-﻿import { Bell, Compass, MessageSquare, Newspaper, Settings, User } from "lucide-react";
-import * as React from "react";
+import { Bell, Compass, MessageSquare, Newspaper, Settings, User } from "lucide-react";
+import type { ComponentType } from "react";
 
 export type SidebarSection = "messages" | "feed" | "explore" | "notifications" | "profile" | "settings";
 
@@ -12,7 +12,7 @@ interface SidebarProps {
 export function Sidebar({ activeSection, onChange, badges }: SidebarProps) {
   const navItems: Array<{
     id: SidebarSection;
-    icon: React.ComponentType<{ className?: string }>;
+    icon: ComponentType<{ className?: string }>;
     label: string;
   }> = [
     { id: "messages", icon: MessageSquare, label: "Сообщения" },
@@ -25,7 +25,7 @@ export function Sidebar({ activeSection, onChange, badges }: SidebarProps) {
 
   return (
     <div
-      className="rounded-2xl p-5 border h-fit sticky top-6"
+      className="rounded-2xl p-5 border h-fit sticky top-6 interactive-surface"
       style={{
         backgroundColor: "var(--glass-fill-base)",
         borderColor: "var(--glass-border)",
@@ -58,26 +58,22 @@ function NavItem({
   onClick,
 }: {
   id: SidebarSection;
-  icon: React.ComponentType<{ className?: string }>;
+  icon: ComponentType<{ className?: string }>;
   label: string;
   active: boolean;
   badge?: number;
   onClick: () => void;
 }) {
-  const [isHovered, setIsHovered] = React.useState(false);
-
   return (
     <button
       type="button"
       data-testid={`sidebar-nav-${id}`}
-      className="w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all"
+      className="w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all interactive-surface-subtle"
       style={{
-        backgroundColor: active || isHovered ? "var(--glass-fill-hover)" : "transparent",
+        backgroundColor: active ? "var(--glass-fill-hover)" : "transparent",
         color: active ? "var(--accent-brown)" : "var(--base-grey-light)",
       }}
       onClick={onClick}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
     >
       <Icon className="w-5 h-5" />
       <span className="flex-1 text-left">{label}</span>

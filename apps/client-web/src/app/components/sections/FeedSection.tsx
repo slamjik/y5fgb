@@ -1,5 +1,4 @@
 import type { CreateSocialPostResponse } from "@project/protocol";
-import * as React from "react";
 
 import type { CreatePostPayload } from "../CreatePost";
 import { CreatePost } from "../CreatePost";
@@ -31,7 +30,7 @@ export function FeedSection({
   onOpenProfile,
 }: FeedSectionProps) {
   return (
-    <section className="space-y-4">
+    <section className="space-y-4 app-section-transition">
       <CreatePost onSubmit={onSubmit} uploadStatus={uploadStatus} />
       {postsLoading ? <InlineInfo text="Загрузка ленты..." /> : null}
       {postsError ? <InlineInfo tone="error" text={postsError} /> : null}

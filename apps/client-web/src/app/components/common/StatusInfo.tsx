@@ -7,7 +7,7 @@ import { innerCardStyle } from "../../styles";
 export function InlineInfo({ text, tone = "default" }: { text: string; tone?: "default" | "error" | "warning" }) {
   const color = tone === "error" ? "#fca5a5" : tone === "warning" ? "#fde68a" : "var(--text-primary)";
   return (
-    <div className="rounded-xl border px-3 py-2" style={innerCardStyle}>
+    <div className="rounded-xl border px-3 py-2 interactive-surface-subtle" style={innerCardStyle}>
       <p style={{ color }}>{text}</p>
     </div>
   );
@@ -26,7 +26,7 @@ export function UploadStatusPill({ label, status }: { label: string; status: Upl
         : "var(--accent-brown)";
 
   return (
-    <div className="rounded-lg border px-3 py-2 space-y-2" style={innerCardStyle}>
+    <div className="rounded-lg border px-3 py-2 space-y-2 interactive-surface-subtle" style={innerCardStyle}>
       <div className="flex items-center justify-between text-xs">
         <span style={{ color: "var(--base-grey-light)" }}>{label}</span>
         <span style={{ color: accentColor }}>
@@ -77,7 +77,7 @@ export function StatusChip({ state }: { state: RuntimeTransportState["status"] }
 
 export function TransportCard({ state }: { state: RuntimeTransportState }) {
   return (
-    <div className="rounded-xl border p-3 space-y-1" style={innerCardStyle}>
+    <div className="rounded-xl border p-3 space-y-1 interactive-surface-subtle" style={innerCardStyle}>
       <p style={{ color: "var(--base-grey-light)", fontSize: 12 }}>Режим: {state.mode}</p>
       <p style={{ color: "var(--base-grey-light)", fontSize: 12 }}>Статус: {state.status}</p>
       <p style={{ color: "var(--base-grey-light)", fontSize: 12 }}>Курсор: {state.lastCursor}</p>

@@ -82,6 +82,12 @@ export function AuthScreen(props: {
           </div>
           <input
             data-testid="auth-email-input"
+            type="email"
+            inputMode="email"
+            autoComplete="email"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="Email"
@@ -91,12 +97,18 @@ export function AuthScreen(props: {
           <input
             data-testid="auth-password-input"
             type="password"
+            autoComplete={authMode === "register" ? "new-password" : "current-password"}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            placeholder="Пароль"
+            placeholder="Password"
             className="w-full rounded-lg border bg-transparent px-3 py-2 outline-none"
             style={{ borderColor: "var(--glass-border)", color: "var(--text-primary)" }}
           />
+          {authMode === "register" ? (
+            <p className="text-xs" style={{ color: "var(--base-grey-light)" }}>
+              Password must contain at least 10 characters.
+            </p>
+          ) : null}
           <select
             data-testid="auth-session-mode"
             value={props.mode}

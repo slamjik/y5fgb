@@ -81,7 +81,7 @@ export function PostCard({
 
   return (
     <article
-      className="rounded-2xl p-5 border transition-all"
+      className="rounded-2xl p-5 border transition-all interactive-surface app-section-transition"
       style={{
         backgroundColor: "var(--glass-fill-base)",
         borderColor: "var(--glass-border)",
@@ -92,7 +92,7 @@ export function PostCard({
         <div className="flex items-center gap-3">
           <button
             type="button"
-            className="w-10 h-10 rounded-full flex items-center justify-center border"
+            className="w-10 h-10 rounded-full flex items-center justify-center border interactive-surface-subtle"
             style={{
               background: "rgba(12,12,12,0.45)",
               borderColor: "var(--glass-border)",
@@ -122,7 +122,7 @@ export function PostCard({
           <div className="relative">
             <button
               type="button"
-              className="p-2 rounded-lg transition-colors"
+              className="p-2 rounded-lg transition-colors interactive-surface-subtle"
               style={{ color: "var(--base-grey-light)" }}
               onClick={() => setIsMenuOpen((current) => !current)}
             >
@@ -130,7 +130,7 @@ export function PostCard({
             </button>
             {isMenuOpen ? (
               <div
-                className="absolute right-0 mt-1 rounded-lg border p-1"
+                className="absolute right-0 mt-1 rounded-lg border p-1 menu-popover-motion"
                 style={{
                   backgroundColor: "var(--glass-fill-hover)",
                   borderColor: "var(--glass-border)",
@@ -141,7 +141,7 @@ export function PostCard({
                   type="button"
                   onClick={handleDelete}
                   disabled={isDeleting}
-                  className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-all"
+                  className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-all interactive-surface-subtle"
                   style={{ color: "#fda4af" }}
                 >
                   <Trash2 className="w-4 h-4" />
@@ -181,7 +181,7 @@ export function PostCard({
 
       <button
         type="button"
-        className="flex items-center gap-2 transition-colors"
+        className="flex items-center gap-2 transition-colors interactive-surface-subtle rounded-lg px-2 py-1 -ml-2"
         style={{ color: likeState ? "var(--accent-brown)" : "var(--base-grey-light)" }}
         onClick={handleLike}
       >

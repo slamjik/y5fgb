@@ -8,7 +8,7 @@ export function ProfileStats({ postsCount, storiesCount, friendsCount = 0 }: Pro
   return (
     <section className="grid gap-4 md:grid-cols-3">
       <article
-        className="rounded-2xl border p-5"
+        className="rounded-2xl border p-5 interactive-surface app-section-transition"
         style={{
           backgroundColor: "var(--glass-fill-base)",
           borderColor: "var(--glass-border)",
@@ -21,7 +21,7 @@ export function ProfileStats({ postsCount, storiesCount, friendsCount = 0 }: Pro
       </article>
 
       <article
-        className="rounded-2xl border p-5"
+        className="rounded-2xl border p-5 interactive-surface app-section-transition"
         style={{
           backgroundColor: "var(--glass-fill-base)",
           borderColor: "var(--glass-border)",
@@ -34,7 +34,7 @@ export function ProfileStats({ postsCount, storiesCount, friendsCount = 0 }: Pro
       </article>
 
       <article
-        className="rounded-2xl border p-5"
+        className="rounded-2xl border p-5 interactive-surface app-section-transition"
         style={{
           backgroundColor: "var(--glass-fill-base)",
           borderColor: "var(--glass-border)",

@@ -1,5 +1,4 @@
 import { Download } from "lucide-react";
-import React from "react";
 
 import { innerCardStyle, outlineButtonStyle, selectedCardStyle } from "../styles";
 import type { MessageAttachmentView, MessageRowAttachmentState, MessageView } from "../types";
@@ -17,9 +16,9 @@ export function MessageRow({
   attachmentOpState: MessageRowAttachmentState;
 }) {
   return (
-    <div className={`flex ${message.own ? "justify-end" : "justify-start"}`}>
+    <div className={`flex message-row-enter ${message.own ? "justify-end" : "justify-start"}`}>
       <div
-        className="max-w-[78%] rounded-2xl border px-3 py-2 space-y-1"
+        className="max-w-[78%] rounded-2xl border px-3 py-2 space-y-1 interactive-surface-subtle"
         style={message.own ? { ...selectedCardStyle, borderColor: "var(--accent-brown)" } : innerCardStyle}
       >
         <p style={{ color: "var(--text-primary)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
@@ -30,7 +29,7 @@ export function MessageRow({
             {message.attachments.map((attachment) => {
               const op = attachmentOpState[attachment.id];
               return (
-                <div key={attachment.id} className="rounded-lg border px-3 py-2 space-y-2" style={innerCardStyle}>
+                <div key={attachment.id} className="rounded-lg border px-3 py-2 space-y-2 interactive-surface-subtle" style={innerCardStyle}>
                   <div className="flex items-center justify-between gap-2">
                     <div>
                       <p style={{ color: "var(--text-primary)" }}>{attachment.fileName}</p>

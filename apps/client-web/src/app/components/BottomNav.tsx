@@ -1,5 +1,5 @@
 import { Bell, Compass, MessageSquare, Newspaper, Settings, User } from "lucide-react";
-import * as React from "react";
+import type { ComponentType } from "react";
 
 import type { SidebarSection } from "./Sidebar";
 
@@ -11,7 +11,7 @@ type BottomNavProps = {
 
 const items: Array<{
   id: SidebarSection;
-  icon: React.ComponentType<{ className?: string }>;
+  icon: ComponentType<{ className?: string }>;
   label: string;
 }> = [
   { id: "messages", icon: MessageSquare, label: "Чаты" },
@@ -25,7 +25,7 @@ const items: Array<{
 export function BottomNav({ activeSection, onChange, badges }: BottomNavProps) {
   return (
     <nav
-      className="lg:hidden fixed bottom-0 left-0 right-0 z-40 border-t px-2 py-2 backdrop-blur-xl"
+      className="lg:hidden fixed bottom-0 left-0 right-0 z-40 border-t px-2 py-2 backdrop-blur-xl app-section-transition"
       style={{
         backgroundColor: "rgba(17, 17, 17, 0.9)",
         borderColor: "var(--glass-border)",
@@ -42,7 +42,7 @@ export function BottomNav({ activeSection, onChange, badges }: BottomNavProps) {
               key={item.id}
               type="button"
               data-testid={`bottom-nav-${item.id}`}
-              className="relative rounded-lg py-2 px-1 text-center"
+              className="relative rounded-lg py-2 px-1 text-center interactive-surface-subtle"
               style={{
                 color: active ? "var(--accent-brown)" : "var(--base-grey-light)",
                 backgroundColor: active ? "rgba(120,120,120,0.12)" : "transparent",
