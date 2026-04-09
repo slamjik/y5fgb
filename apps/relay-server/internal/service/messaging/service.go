@@ -21,6 +21,7 @@ import (
 	"github.com/example/secure-messenger/apps/relay-server/internal/service/auth"
 	"github.com/example/secure-messenger/apps/relay-server/internal/service/securityevents"
 	"github.com/example/secure-messenger/apps/relay-server/internal/validation"
+	"golang.org/x/crypto/blake2b"
 )
 
 const (
@@ -895,10 +896,15 @@ func (s *Service) UploadAttachment(ctx context.Context, input AttachmentUploadIn
 	if int64(len(decoded)) != input.SizeBytes {
 		return domain.AttachmentObject{}, service.NewError(service.ErrorCodeAttachmentUploadFailed, "attachment size mismatch")
 	}
-	checksum := strings.TrimSpace(strings.ToLower(input.ChecksumSHA256))
-	decodedChecksum := sha256.Sum256(decoded)
-	if hex.EncodeToString(decodedChecksum[:]) != checksum {
-		return domain.AttachmentObject{}, service.NewError(service.ErrorCodeAttachmentUploadFailed, "attachment checksum mismatch")
+	providedChecksum := strings.TrimSpace(strings.ToLower(input.ChecksumSHA256))
+	sha256Checksum := sha256.Sum256(decoded)
+	serverChecksum := hex.EncodeToString(sha256Checksum[:])
+	if providedChecksum != serverChecksum {
+		blakeDigest := blake2b.Sum256(decoded)
+		blakeChecksum := hex.EncodeToString(blakeDigest[:])
+		if providedChecksum != blakeChecksum {
+			return domain.AttachmentObject{}, service.NewError(service.ErrorCodeAttachmentUploadFailed, "attachment checksum mismatch")
+		}
 	}
 
 	attachmentRoot, rootErr := filepath.Abs(s.cfg.Messaging.AttachmentsDir)
@@ -926,7 +932,7 @@ func (s *Service) UploadAttachment(ctx context.Context, input AttachmentUploadIn
 		FileName:       strings.TrimSpace(input.FileName),
 		MimeType:       strings.TrimSpace(input.MimeType),
 		SizeBytes:      input.SizeBytes,
-		ChecksumSHA256: checksum,
+		ChecksumSHA256: serverChecksum,
 		Algorithm:      strings.TrimSpace(input.Algorithm),
 		Nonce:          strings.TrimSpace(input.Nonce),
 		StoragePath:    storagePath,

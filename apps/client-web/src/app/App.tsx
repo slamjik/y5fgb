@@ -1014,11 +1014,15 @@ function App() {
     const optimisticId = `local_${Date.now()}_${Math.random().toString(16).slice(2)}`;
     setMessagesByConversation((prev) => {
       const bucket = prev[conversationId] ?? { loading: false, error: "", items: [] };
+      const baseItems =
+        retryText !== undefined
+          ? bucket.items.filter((item) => !(item.localStatus === "failed" && (item.retryText ?? "") === text))
+          : bucket.items;
       return {
         ...prev,
         [conversationId]: {
           ...bucket,
-          items: upsertMessageItems(bucket.items, [
+          items: upsertMessageItems(baseItems, [
             {
               id: optimisticId,
               conversationId,
