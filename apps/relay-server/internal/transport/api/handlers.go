@@ -2066,32 +2066,75 @@ func (h *Handler) handleMessageSubroutes(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if action != "receipts" || r.Method != http.MethodPost {
-		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "method not allowed"), http.StatusMethodNotAllowed)
-		return
-	}
+	switch action {
+	case "receipts":
+		if r.Method != http.MethodPost {
+			WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "method not allowed"), http.StatusMethodNotAllowed)
+			return
+		}
 
-	var req messageReceiptRequest
-	if err := middleware.DecodeJSON(r, &req); err != nil {
-		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "invalid request body"), http.StatusBadRequest)
-		return
-	}
+		var req messageReceiptRequest
+		if err := middleware.DecodeJSON(r, &req); err != nil {
+			WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "invalid request body"), http.StatusBadRequest)
+			return
+		}
 
-	receipt, err := h.messagingService.CreateReceipt(r.Context(), principal, messageID, domain.ReceiptType(req.ReceiptType))
-	if err != nil {
-		WriteServiceError(w, r, err, http.StatusBadRequest)
-		return
-	}
+		receipt, err := h.messagingService.CreateReceipt(r.Context(), principal, messageID, domain.ReceiptType(req.ReceiptType))
+		if err != nil {
+			WriteServiceError(w, r, err, http.StatusBadRequest)
+			return
+		}
 
-	WriteJSON(w, http.StatusCreated, map[string]any{
-		"receipt": map[string]any{
-			"id":          receipt.ID,
-			"messageId":   receipt.MessageID,
-			"deviceId":    receipt.DeviceID,
-			"receiptType": receipt.ReceiptType,
-			"createdAt":   receipt.CreatedAt.UTC().Format(time.RFC3339),
-		},
-	})
+		WriteJSON(w, http.StatusCreated, map[string]any{
+			"receipt": map[string]any{
+				"id":          receipt.ID,
+				"messageId":   receipt.MessageID,
+				"deviceId":    receipt.DeviceID,
+				"receiptType": receipt.ReceiptType,
+				"createdAt":   receipt.CreatedAt.UTC().Format(time.RFC3339),
+			},
+		})
+	case "":
+		if r.Method != http.MethodPatch {
+			WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "method not allowed"), http.StatusMethodNotAllowed)
+			return
+		}
+		if !h.enforceRateLimit(w, r, h.messageRateLimiter) {
+			return
+		}
+		if !h.enforceBodySize(w, r, maxMessageBodyBytes) {
+			return
+		}
+		var req editMessageRequest
+		if err := middleware.DecodeJSON(r, &req); err != nil {
+			WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "invalid request body"), http.StatusBadRequest)
+			return
+		}
+		recipients := make([]messaging.RecipientInput, 0, len(req.Recipients))
+		for _, recipient := range req.Recipients {
+			recipients = append(recipients, messaging.RecipientInput{
+				RecipientDeviceID: recipient.RecipientDeviceID,
+				WrappedKey:        recipient.WrappedKey,
+				KeyAlgorithm:      recipient.KeyAlgorithm,
+			})
+		}
+		message, err := h.messagingService.EditMessage(r.Context(), messaging.EditMessageInput{
+			Principal:     principal,
+			MessageID:     messageID,
+			Algorithm:     req.Algorithm,
+			CryptoVersion: req.CryptoVersion,
+			Nonce:         req.Nonce,
+			Ciphertext:    req.Ciphertext,
+			Recipients:    recipients,
+		})
+		if err != nil {
+			WriteServiceError(w, r, err, http.StatusBadRequest)
+			return
+		}
+		WriteJSON(w, http.StatusOK, map[string]any{"message": mapMessage(message)})
+	default:
+		WriteServiceError(w, r, service.NewError(service.ErrorCodeNotFound, "route not found"), http.StatusNotFound)
+	}
 }
 
 func (h *Handler) handleAttachmentUpload(w http.ResponseWriter, r *http.Request) {
@@ -2521,8 +2564,11 @@ func parseMessageRoute(path string) (string, string, error) {
 	}
 	tail := strings.Trim(path[index+len(anchor):], "/")
 	parts := strings.Split(tail, "/")
-	if len(parts) < 2 {
+	if len(parts) == 0 || parts[0] == "" {
 		return "", "", fmt.Errorf("invalid message route")
+	}
+	if len(parts) == 1 {
+		return parts[0], "", nil
 	}
 	return parts[0], parts[1], nil
 }

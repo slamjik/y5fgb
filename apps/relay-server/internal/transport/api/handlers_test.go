@@ -37,6 +37,19 @@ func TestParseMessageRoute(t *testing.T) {
 	}
 }
 
+func TestParseMessageRouteWithoutAction(t *testing.T) {
+	messageID, action, err := parseMessageRoute("/api/v1/messages/22222222-2222-2222-2222-222222222222")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if messageID != "22222222-2222-2222-2222-222222222222" {
+		t.Fatalf("unexpected message id: %s", messageID)
+	}
+	if action != "" {
+		t.Fatalf("unexpected action: %s", action)
+	}
+}
+
 func TestDefaultSyncQueryLimit(t *testing.T) {
 	if got := defaultSyncQueryLimit(""); got != 100 {
 		t.Fatalf("expected default 100, got %d", got)

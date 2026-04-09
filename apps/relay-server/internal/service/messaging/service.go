@@ -92,6 +92,16 @@ type SendMessageInput struct {
 	TTLSeconds       *int
 }
 
+type EditMessageInput struct {
+	Principal     auth.AuthPrincipal
+	MessageID     string
+	Algorithm     string
+	CryptoVersion int
+	Nonce         string
+	Ciphertext    string
+	Recipients    []RecipientInput
+}
+
 type MessageView struct {
 	Envelope    domain.MessageEnvelope
 	Recipient   *domain.MessageRecipient
@@ -596,6 +606,162 @@ func (s *Service) SendMessage(ctx context.Context, input SendMessageInput) (Mess
 		"messageId":      createdMessage.ID,
 		"recipientCount": len(recipients),
 	})
+
+	return messageView, nil
+}
+
+func (s *Service) EditMessage(ctx context.Context, input EditMessageInput) (MessageView, error) {
+	if strings.TrimSpace(input.MessageID) == "" {
+		return MessageView{}, service.NewError(service.ErrorCodeValidation, "messageId is required")
+	}
+	if strings.TrimSpace(input.Algorithm) != allowedMessageAlgorithm {
+		return MessageView{}, service.NewError(service.ErrorCodeValidation, "unsupported message algorithm")
+	}
+	if input.CryptoVersion <= 0 {
+		return MessageView{}, service.NewError(service.ErrorCodeValidation, "cryptoVersion must be positive")
+	}
+	if input.CryptoVersion != 1 {
+		return MessageView{}, service.NewError(service.ErrorCodeValidation, "unsupported cryptoVersion")
+	}
+	if strings.TrimSpace(input.Nonce) == "" || strings.TrimSpace(input.Ciphertext) == "" {
+		return MessageView{}, service.NewError(service.ErrorCodeValidation, "nonce and ciphertext are required")
+	}
+	if len(input.Ciphertext) > maxCiphertextLength {
+		return MessageView{}, service.NewError(service.ErrorCodeValidation, "ciphertext is too large")
+	}
+	if len(input.Nonce) > maxNonceLength {
+		return MessageView{}, service.NewError(service.ErrorCodeValidation, "nonce is too large")
+	}
+	nonceBytes, decodeNonceErr := base64.StdEncoding.DecodeString(strings.TrimSpace(input.Nonce))
+	if decodeNonceErr != nil || len(nonceBytes) != expectedNonceBytes {
+		return MessageView{}, service.NewError(service.ErrorCodeValidation, "invalid message nonce")
+	}
+	ciphertextBytes, decodeCiphertextErr := base64.StdEncoding.DecodeString(strings.TrimSpace(input.Ciphertext))
+	if decodeCiphertextErr != nil {
+		return MessageView{}, service.NewError(service.ErrorCodeValidation, "invalid ciphertext encoding")
+	}
+	if len(ciphertextBytes) == 0 || len(ciphertextBytes) > maxMessageBytes {
+		return MessageView{}, service.NewError(service.ErrorCodeValidation, "ciphertext size is invalid")
+	}
+	if len(input.Recipients) == 0 {
+		return MessageView{}, service.NewError(service.ErrorCodeValidation, "at least one recipient is required")
+	}
+	if len(input.Recipients) > maxMessageRecipients {
+		return MessageView{}, service.NewError(service.ErrorCodeValidation, "too many recipients")
+	}
+
+	existing, err := s.repo.GetMessageByID(ctx, input.MessageID)
+	if err != nil {
+		if err == postgres.ErrNotFound {
+			return MessageView{}, service.NewError(service.ErrorCodeNotFound, "message not found")
+		}
+		return MessageView{}, service.NewError(service.ErrorCodeInternal, "failed to load message")
+	}
+	if existing.DeletedAt != nil {
+		return MessageView{}, service.NewError(service.ErrorCodeValidation, "cannot edit deleted message")
+	}
+	if existing.SenderAccountID != input.Principal.AccountID {
+		return MessageView{}, service.NewError(service.ErrorCodeForbidden, "cannot edit someone else's message")
+	}
+	if existing.SenderDeviceID != input.Principal.DeviceID {
+		return MessageView{}, service.NewError(service.ErrorCodeForbidden, "message can be edited only from the sender device")
+	}
+
+	conversationWithMembers, err := s.loadConversationWithMembers(ctx, existing.ConversationID)
+	if err != nil {
+		return MessageView{}, err
+	}
+	if !hasActiveMember(conversationWithMembers.Members, input.Principal.AccountID) {
+		return MessageView{}, service.NewError(service.ErrorCodeMembershipDenied, "membership denied")
+	}
+
+	allowedDevices := make(map[string]string)
+	for _, member := range conversationWithMembers.Members {
+		if !member.Member.IsActive {
+			continue
+		}
+		for _, device := range member.TrustedDevices {
+			allowedDevices[device.ID] = device.AccountID
+		}
+	}
+
+	seenRecipients := make(map[string]struct{})
+	recipients := make([]domain.MessageRecipient, 0, len(input.Recipients))
+	for _, recipient := range input.Recipients {
+		deviceID := strings.TrimSpace(recipient.RecipientDeviceID)
+		if deviceID == "" {
+			return MessageView{}, service.NewError(service.ErrorCodeValidation, "recipient device id is required")
+		}
+		if _, exists := seenRecipients[deviceID]; exists {
+			continue
+		}
+		accountID, allowed := allowedDevices[deviceID]
+		if !allowed {
+			return MessageView{}, service.NewErrorWithDetails(service.ErrorCodeMembershipDenied, "recipient device is not eligible", map[string]any{"recipientDeviceId": deviceID})
+		}
+		if strings.TrimSpace(recipient.WrappedKey) == "" || strings.TrimSpace(recipient.KeyAlgorithm) == "" {
+			return MessageView{}, service.NewError(service.ErrorCodeValidation, "recipient wrapped key is required")
+		}
+		if len(recipient.WrappedKey) > maxWrappedKeyLength {
+			return MessageView{}, service.NewError(service.ErrorCodeValidation, "recipient wrapped key is too large")
+		}
+		if strings.TrimSpace(recipient.KeyAlgorithm) != allowedKeyWrapAlgorithm {
+			return MessageView{}, service.NewError(service.ErrorCodeValidation, "recipient key algorithm is invalid")
+		}
+		wrappedKeyBytes, decodeWrappedErr := base64.StdEncoding.DecodeString(strings.TrimSpace(recipient.WrappedKey))
+		if decodeWrappedErr != nil {
+			return MessageView{}, service.NewError(service.ErrorCodeValidation, "recipient wrapped key encoding is invalid")
+		}
+		if len(wrappedKeyBytes) == 0 || len(wrappedKeyBytes) > maxWrappedKeyBytes {
+			return MessageView{}, service.NewError(service.ErrorCodeValidation, "recipient wrapped key size is invalid")
+		}
+		seenRecipients[deviceID] = struct{}{}
+		recipients = append(recipients, domain.MessageRecipient{
+			MessageID:          existing.ID,
+			RecipientAccountID: accountID,
+			RecipientDeviceID:  deviceID,
+			WrappedKey:         recipient.WrappedKey,
+			KeyAlgorithm:       recipient.KeyAlgorithm,
+			DeliveryState:      domain.DeliveryStateQueued,
+			QueuedAt:           time.Now().UTC(),
+		})
+	}
+
+	if len(recipients) == 0 {
+		return MessageView{}, service.NewError(service.ErrorCodeValidation, "no valid recipients provided")
+	}
+	if _, ok := seenRecipients[input.Principal.DeviceID]; !ok {
+		return MessageView{}, service.NewError(service.ErrorCodeValidation, "sender device recipient is required")
+	}
+
+	updatedMessage, err := s.repo.UpdateMessageWithRecipients(
+		ctx,
+		existing.ID,
+		input.Algorithm,
+		input.CryptoVersion,
+		input.Nonce,
+		input.Ciphertext,
+		recipients,
+	)
+	if err != nil {
+		return MessageView{}, service.NewError(service.ErrorCodeInternal, "failed to edit message")
+	}
+
+	for _, recipient := range recipients {
+		if recipient.RecipientDeviceID == input.Principal.DeviceID {
+			if markErr := s.repo.MarkMessageDelivered(ctx, updatedMessage.ID, recipient.RecipientDeviceID); markErr != nil {
+				s.logger.Warn("failed to mark edited message as delivered for sender device", "message_id", updatedMessage.ID, "device_id", recipient.RecipientDeviceID, "error", markErr)
+			}
+		}
+		if s.notifier != nil {
+			s.notifier.NotifyDeviceSync(recipient.RecipientDeviceID, updatedMessage.ServerSequence)
+		}
+	}
+
+	messageView, err := s.loadMessageViewByID(ctx, input.Principal.DeviceID, updatedMessage.ID)
+	if err != nil {
+		return MessageView{}, err
+	}
 
 	return messageView, nil
 }

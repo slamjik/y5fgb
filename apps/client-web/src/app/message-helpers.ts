@@ -18,6 +18,13 @@ export async function decodeMessage(
   session: SessionState,
   device: DeviceMaterial | null,
 ): Promise<MessageView> {
+  const readReceipts = message.receipts.filter((item) => item.receiptType === "read");
+  const readByMe = readReceipts.some((item) => (item.deviceId as string) === session.deviceId);
+  const readByOthers = readReceipts
+    .filter((item) => (item.deviceId as string) !== session.deviceId)
+    .map((item) => item.createdAt as string)
+    .sort();
+  const readByOthersAt = readByOthers.length > 0 ? readByOthers[0] : null;
   const recipient = message.envelope.recipients.find((item) => (item.recipientDeviceId as string) === session.deviceId);
   let text = "Зашифрованное сообщение";
   let attachmentSecrets: AttachmentSecret[] = [];
@@ -39,17 +46,21 @@ export async function decodeMessage(
   }
 
   const attachments = mapMessageAttachments(message.envelope.attachments, attachmentSecrets);
+  const own = (message.envelope.senderAccountId as string) === session.accountId;
 
   return {
     id: message.envelope.id as string,
     conversationId: message.envelope.conversationId as string,
     senderAccountId: message.envelope.senderAccountId as string,
     createdAt: message.envelope.createdAt as string,
+    editedAt: message.envelope.editedAt ?? null,
     serverSequence: message.envelope.serverSequence,
     text,
     attachments,
-    own: (message.envelope.senderAccountId as string) === session.accountId,
-    deliveryState: message.deliveryState,
+    own,
+    deliveryState: own && readByOthersAt ? "read" : message.deliveryState,
+    readByMe,
+    readByOthersAt,
   };
 }
 
@@ -82,6 +93,7 @@ export async function applySyncBatch(
   session: SessionState,
   device: DeviceMaterial | null,
   activeConversationId: string | null,
+  currentMessages: Record<string, MessageBucket>,
   setMessages: React.Dispatch<React.SetStateAction<Record<string, MessageBucket>>>,
   setUnread: React.Dispatch<React.SetStateAction<Record<string, number>>>,
 ): Promise<MessageView[]> {
@@ -94,6 +106,10 @@ export async function applySyncBatch(
 
   if (mapped.length === 0) return [];
 
+  const newlyInserted = mapped.filter((item) => {
+    const bucket = currentMessages[item.conversationId];
+    return !bucket?.items.some((existing) => existing.id === item.id);
+  });
   setMessages((current) => {
     const next = { ...current };
     for (const item of mapped) {
@@ -111,7 +127,7 @@ export async function applySyncBatch(
 
   setUnread((current) => {
     const next = { ...current };
-    for (const item of mapped) {
+    for (const item of newlyInserted) {
       if (item.own) {
         continue;
       }
@@ -243,6 +259,15 @@ export function mergeMessageView(existing: MessageView | undefined, incoming: Me
     if (existing.attachments.length > 0) {
       merged.attachments = existing.attachments;
     }
+  }
+  if (existing.readByMe && !incoming.readByMe) {
+    merged.readByMe = true;
+  }
+  if (existing.readByOthersAt && !incoming.readByOthersAt) {
+    merged.readByOthersAt = existing.readByOthersAt;
+  }
+  if (existing.editedAt && !incoming.editedAt) {
+    merged.editedAt = existing.editedAt;
   }
 
   return merged;

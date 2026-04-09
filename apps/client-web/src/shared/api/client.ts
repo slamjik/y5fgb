@@ -11,6 +11,8 @@
   CreateSocialPostResponse,
   CreateStoryRequest,
   DeviceListResponse,
+  EditMessageRequest,
+  EditMessageResponse,
   FriendListResponse,
   FriendRequestActionResponse,
   FriendRequestsResponse,
@@ -252,6 +254,10 @@ export class WebApiClient {
 
   async createReceipt(accessToken: string, messageId: string, receiptType: "delivered" | "read"): Promise<void> {
     await this.request(`/messages/${messageId}/receipts`, "POST", { receiptType }, accessToken);
+  }
+
+  async editMessage(accessToken: string, messageId: string, body: EditMessageRequest): Promise<EditMessageResponse> {
+    return this.request<EditMessageResponse>(`/messages/${messageId}`, "PATCH", body, accessToken);
   }
 
   async syncBootstrap(accessToken: string, limit = 100): Promise<SyncBootstrapResponse> {

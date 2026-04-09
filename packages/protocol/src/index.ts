@@ -508,6 +508,7 @@ export interface EncryptedMessageEnvelopeDTO {
   replyToMessageId: MessageID | null;
   ttlSeconds: number | null;
   createdAt: ISO8601Timestamp;
+  editedAt: ISO8601Timestamp | null;
   expiresAt: ISO8601Timestamp | null;
   serverSequence: number;
 }
@@ -906,6 +907,18 @@ export interface SendMessageRequest {
 }
 
 export interface SendMessageResponse {
+  message: MessageDTO;
+}
+
+export interface EditMessageRequest {
+  algorithm: string;
+  cryptoVersion: number;
+  nonce: string;
+  ciphertext: string;
+  recipients: EncryptedRecipientKeyDTO[];
+}
+
+export interface EditMessageResponse {
   message: MessageDTO;
 }
 

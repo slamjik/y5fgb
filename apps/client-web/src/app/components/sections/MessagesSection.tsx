@@ -52,6 +52,7 @@ type MessagesSectionProps = {
   onRemoveUpload: (uploadId: string) => void;
   onSendMessage: () => void;
   onResendMessage: (retryText: string) => Promise<void>;
+  onEditMessage: (messageId: string, nextText: string) => Promise<void>;
   onDownloadAttachment: (attachment: MessageAttachmentView) => Promise<void>;
   onLoadOlderMessages: () => void;
   attachmentOps: MessageRowAttachmentState;
@@ -97,6 +98,7 @@ export function MessagesSection({
   onRemoveUpload,
   onSendMessage,
   onResendMessage,
+  onEditMessage,
   onDownloadAttachment,
   onLoadOlderMessages,
   attachmentOps,
@@ -332,6 +334,7 @@ export function MessagesSection({
                   key={message.id}
                   message={message}
                   onResend={message.localStatus === "failed" ? () => onResendMessage(message.retryText ?? "") : undefined}
+                  onEditMessage={message.own ? onEditMessage : undefined}
                   onDownloadAttachment={onDownloadAttachment}
                   attachmentOpState={attachmentOps}
                 />

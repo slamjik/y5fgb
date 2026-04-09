@@ -213,6 +213,7 @@ function App() {
   const runtimeRef = React.useRef<WebMessagingRuntime | null>(null);
   const deviceMaterialRef = React.useRef<DeviceMaterial | null>(null);
   const activeConversationIdRef = React.useRef<string | null>(null);
+  const messagesByConversationRef = React.useRef<Record<string, MessageBucket>>({});
   const shownToastNotificationIDsRef = React.useRef<Set<string>>(new Set());
   const knownNotificationIDsRef = React.useRef<Set<string>>(new Set());
   const preferBrowserNotificationsRef = React.useRef(false);
@@ -220,6 +221,7 @@ function App() {
   const messageScrollRef = React.useRef<HTMLDivElement | null>(null);
   const attachmentInputRef = React.useRef<HTMLInputElement | null>(null);
   const sendingConversationsRef = React.useRef<Set<string>>(new Set());
+  const readReceiptInFlightRef = React.useRef<Set<string>>(new Set());
 
   const api = React.useMemo(() => (server ? new WebApiClient(server.config) : null), [server]);
   const unreadTotal = React.useMemo(
@@ -345,6 +347,10 @@ function App() {
   }, [activeConversationId]);
 
   React.useEffect(() => {
+    messagesByConversationRef.current = messagesByConversation;
+  }, [messagesByConversation]);
+
+  React.useEffect(() => {
     preferBrowserNotificationsRef.current = preferBrowserNotifications;
   }, [preferBrowserNotifications]);
 
@@ -440,6 +446,7 @@ function App() {
               session,
               deviceMaterialRef.current,
               activeConversationIdRef.current,
+              messagesByConversationRef.current,
               setMessagesByConversation,
               setUnreadByConversation,
             );
@@ -527,13 +534,14 @@ function App() {
     setUnreadByConversation((current) => ({ ...current, [activeConversationId]: 0 }));
     const bucket = messagesByConversation[activeConversationId];
     if (!bucket || bucket.items.length === 0) return;
+    void markConversationMessagesRead(activeConversationId, bucket.items);
     const el = messageScrollRef.current;
     if (!el) return;
     const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 140;
     if (nearBottom) {
       el.scrollTop = el.scrollHeight;
     }
-  }, [activeConversationId, messagesByConversation]);
+  }, [activeConversationId, messagesByConversation, api, session?.accessToken]);
 
   async function ensureDeviceMaterial(expectedDeviceId?: string): Promise<DeviceMaterial> {
     if (deviceMaterialRef.current) return deviceMaterialRef.current;
@@ -571,6 +579,7 @@ function App() {
     setSummaries([]);
     setConversationDetails({});
     setMessagesByConversation({});
+    messagesByConversationRef.current = {};
     setDrafts({});
     setUploadsByConversation({});
     setUnreadByConversation({});
@@ -589,6 +598,7 @@ function App() {
     setNotificationsLoading(false);
     knownNotificationIDsRef.current = new Set();
     shownToastNotificationIDsRef.current = new Set();
+    readReceiptInFlightRef.current = new Set();
     setSection("messages");
   }
 
@@ -775,6 +785,57 @@ function App() {
     clearSignedInState();
   };
 
+  async function markConversationMessagesRead(
+    conversationId: string,
+    items: Array<{ id: string; own: boolean; readByMe: boolean }>,
+  ): Promise<void> {
+    if (!api || !session) return;
+    const candidates = items
+      .filter((item) => !item.own && !item.readByMe)
+      .map((item) => item.id)
+      .filter((id) => !readReceiptInFlightRef.current.has(id));
+    if (candidates.length === 0) return;
+
+    for (const id of candidates) {
+      readReceiptInFlightRef.current.add(id);
+    }
+
+    const succeeded = new Set<string>();
+    try {
+      await Promise.all(
+        candidates.map(async (id) => {
+          try {
+            await api.createReceipt(session.accessToken, id, "read");
+            succeeded.add(id);
+          } catch {
+            // keep processing other messages; failed ones can be retried later
+          }
+        }),
+      );
+    } finally {
+      for (const id of candidates) {
+        readReceiptInFlightRef.current.delete(id);
+      }
+    }
+
+    if (succeeded.size > 0) {
+      setMessagesByConversation((prev) => {
+        const bucket = prev[conversationId];
+        if (!bucket) return prev;
+        const nextItems = bucket.items.map((item) =>
+          succeeded.has(item.id) ? { ...item, readByMe: true } : item,
+        );
+        return {
+          ...prev,
+          [conversationId]: {
+            ...bucket,
+            items: nextItems,
+          },
+        };
+      });
+    }
+  }
+
   const openConversation = async (conversationId: string) => {
     setActiveConversationId(conversationId);
     setShowMobileConversationList(false);
@@ -809,12 +870,15 @@ function App() {
             loadingMore: false,
           },
         }));
+        void markConversationMessagesRead(conversationId, decoded);
       } catch (error) {
         setMessagesByConversation((prev) => ({
           ...prev,
           [conversationId]: { loading: false, error: toUserError(error), items: [], hasMore: false, nextCursor: 0, loadingMore: false },
         }));
       }
+    } else {
+      void markConversationMessagesRead(conversationId, existingBucket.items);
     }
   };
 
@@ -898,6 +962,7 @@ function App() {
               conversationId,
               senderAccountId: session.accountId,
               createdAt: new Date().toISOString(),
+              editedAt: null,
               serverSequence: Number.MAX_SAFE_INTEGER,
               text,
               attachments: uploads.map((item) => ({
@@ -913,6 +978,8 @@ function App() {
               })),
               own: true,
               deliveryState: "pending",
+              readByMe: true,
+              readByOthersAt: null,
               localStatus: "sending",
             },
           ]),
@@ -974,7 +1041,7 @@ function App() {
             ...bucket,
             items: bucket.items.map((item) =>
               item.id === optimisticId
-                ? { ...item, localStatus: "failed", retryText: text, deliveryState: "failed", attachments: [] }
+                ? { ...item, localStatus: "failed", retryText: text, deliveryState: "failed" }
                 : item,
             ),
           },
@@ -982,6 +1049,93 @@ function App() {
       });
     } finally {
       sendingConversationsRef.current.delete(conversationId);
+    }
+  };
+
+  const editMessage = async (messageId: string, nextText: string) => {
+    if (!api || !session || !activeConversationId) return;
+    const conversationId = activeConversationId;
+    const bucket = messagesByConversation[conversationId];
+    const source = bucket?.items.find((item) => item.id === messageId);
+    if (!source || !source.own || source.localStatus === "sending") {
+      return;
+    }
+
+    const normalizedText = nextText.trimEnd();
+    if (normalizedText === source.text) {
+      return;
+    }
+
+    try {
+      const detailsResponse = conversationDetails[conversationId]
+        ? { conversation: conversationDetails[conversationId] }
+        : await api.getConversation(session.accessToken, conversationId);
+      const details = detailsResponse.conversation;
+      if (!conversationDetails[conversationId]) {
+        setConversationDetails((prev) => ({ ...prev, [conversationId]: details }));
+      }
+
+      if (!hasCompatibleRecipientDevices(details.members, session.accountId)) {
+        throw new Error("No compatible recipient devices were found for this conversation.");
+      }
+
+      const recipients = collectRecipients(details.members);
+      if (recipients.length === 0) {
+        throw new Error("No available recipient devices were found.");
+      }
+
+      const attachmentSecrets = source.attachments.map((attachment) => {
+        if (!attachment.symmetricKey) {
+          throw new Error("Unable to edit a message with attachments that have no local decryption key.");
+        }
+        return {
+          attachmentId: attachment.id,
+          fileName: attachment.fileName,
+          mimeType: attachment.mimeType,
+          sizeBytes: attachment.sizeBytes,
+          symmetricKey: attachment.symmetricKey,
+          nonce: attachment.nonce,
+          checksumSha256: attachment.checksumSha256,
+          algorithm: attachment.algorithm,
+        };
+      });
+
+      const plaintextPayload = JSON.stringify({
+        text: normalizedText,
+        attachments: attachmentSecrets,
+        editedAt: new Date().toISOString(),
+      });
+      const encrypted = await webCryptoProvider.encryptMessage(plaintextPayload, recipients);
+      const response = await api.editMessage(session.accessToken, messageId, {
+        algorithm: encrypted.algorithm,
+        cryptoVersion: encrypted.cryptoVersion,
+        nonce: encrypted.nonce,
+        ciphertext: encrypted.ciphertext,
+        recipients: encrypted.recipients as never,
+      });
+
+      const mapped = await decodeMessage(response.message, session, deviceMaterialRef.current);
+      const mappedWithFallback = applyOwnMessageFallback(
+        mapped,
+        normalizedText,
+        response.message.envelope.attachments,
+        attachmentSecrets,
+      );
+
+      setMessagesByConversation((prev) => {
+        const currentBucket = prev[conversationId];
+        if (!currentBucket) return prev;
+        return {
+          ...prev,
+          [conversationId]: {
+            ...currentBucket,
+            items: upsertMessageItems(currentBucket.items, [mappedWithFallback]),
+          },
+        };
+      });
+      void loadSummaries(api, session, setSummaries, setSummariesLoading, setSummariesError, setActiveConversationId);
+    } catch (error) {
+      setRuntimeError(toUserError(error));
     }
   };
 
@@ -1772,6 +1926,7 @@ function App() {
                 if (!activeConversationId) return Promise.resolve();
                 return sendMessage(activeConversationId, retryText);
               }}
+              onEditMessage={(messageId, nextText) => editMessage(messageId, nextText)}
               onDownloadAttachment={downloadAttachment}
               onLoadOlderMessages={() => {
                 if (!activeConversationId) return;

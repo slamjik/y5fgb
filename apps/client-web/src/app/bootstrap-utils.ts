@@ -251,6 +251,23 @@ export function toUserError(error: unknown): string {
       }
       return "Invalid registration data.";
     }
+    if (error.code === "attachment_upload_failed") {
+      const details = error.details && typeof error.details === "object" ? error.details : null;
+      const maxBytes = details && typeof details.maxBytes === "number" ? details.maxBytes : null;
+      const message = (error.message || "").toLowerCase();
+      if (maxBytes && Number.isFinite(maxBytes) && maxBytes > 0) {
+        const limitMB = Math.max(1, Math.round(maxBytes / (1024 * 1024)));
+        return `Attachment is too large. Maximum size is ${limitMB} MB.`;
+      }
+      if (message.includes("mime type")) {
+        return "Unsupported photo format. Try JPEG, PNG, WEBP, HEIC, or AVIF.";
+      }
+      if (message.includes("checksum")) {
+        return "Upload integrity check failed. Please try attaching the file again.";
+      }
+      return "Unable to upload attachment.";
+    }
+    if (error.code === "attachment_download_failed") return "Unable to download attachment.";
     if (error.code === "network_error") return "Unable to connect to server.";
     return error.message || "Request failed.";
   }

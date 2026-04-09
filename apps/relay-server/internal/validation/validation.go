@@ -1,4 +1,4 @@
-﻿package validation
+package validation
 
 import (
 	"errors"
@@ -15,8 +15,14 @@ var allowedMimeTypes = map[string]struct{}{
 	"text/plain":               {},
 	"image/png":                {},
 	"image/jpeg":               {},
+	"image/jpg":                {},
 	"image/webp":               {},
 	"image/gif":                {},
+	"image/avif":               {},
+	"image/heic":               {},
+	"image/heif":               {},
+	"image/heic-sequence":      {},
+	"image/heif-sequence":      {},
 }
 
 func Email(value string) error {

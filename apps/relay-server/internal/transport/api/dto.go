@@ -260,6 +260,18 @@ type sendMessageRequest struct {
 	TTLSeconds       *int     `json:"ttlSeconds,omitempty"`
 }
 
+type editMessageRequest struct {
+	Algorithm     string `json:"algorithm"`
+	CryptoVersion int    `json:"cryptoVersion"`
+	Nonce         string `json:"nonce"`
+	Ciphertext    string `json:"ciphertext"`
+	Recipients    []struct {
+		RecipientDeviceID string `json:"recipientDeviceId"`
+		WrappedKey        string `json:"wrappedKey"`
+		KeyAlgorithm      string `json:"keyAlgorithm"`
+	} `json:"recipients"`
+}
+
 type messageReceiptRequest struct {
 	ReceiptType string `json:"receiptType"`
 }
@@ -357,6 +369,7 @@ type encryptedEnvelopeDTO struct {
 	ReplyToMessageID *string             `json:"replyToMessageId"`
 	TTLSeconds       *int                `json:"ttlSeconds"`
 	CreatedAt        string              `json:"createdAt"`
+	EditedAt         *string             `json:"editedAt"`
 	ExpiresAt        *string             `json:"expiresAt"`
 	ServerSequence   int64               `json:"serverSequence"`
 }
@@ -853,6 +866,7 @@ func mapMessage(payload messaging.MessageView) messageDTO {
 			ReplyToMessageID: payload.Envelope.ReplyToMessageID,
 			TTLSeconds:       payload.Envelope.TTLSeconds,
 			CreatedAt:        payload.Envelope.CreatedAt.UTC().Format(time.RFC3339),
+			EditedAt:         formatNullableTime(payload.Envelope.EditedAt),
 			ExpiresAt:        formatNullableTime(payload.Envelope.ExpiresAt),
 			ServerSequence:   payload.Envelope.ServerSequence,
 		},

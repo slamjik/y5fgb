@@ -62,11 +62,14 @@ export type MessageView = {
   conversationId: string;
   senderAccountId: string;
   createdAt: string;
+  editedAt: string | null;
   serverSequence: number;
   text: string;
   attachments: MessageAttachmentView[];
   own: boolean;
   deliveryState: string;
+  readByMe: boolean;
+  readByOthersAt: string | null;
   localStatus?: "sending" | "failed";
   retryText?: string;
 };

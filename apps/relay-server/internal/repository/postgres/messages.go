@@ -177,6 +177,100 @@ func (s *Store) InsertMessageWithRecipients(ctx context.Context, message domain.
 	return message, nil
 }
 
+func (s *Store) UpdateMessageWithRecipients(
+	ctx context.Context,
+	messageID string,
+	algorithm string,
+	cryptoVersion int,
+	nonce string,
+	ciphertext string,
+	recipients []domain.MessageRecipient,
+) (domain.MessageEnvelope, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return domain.MessageEnvelope{}, fmt.Errorf("failed to begin tx: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+
+	var message domain.MessageEnvelope
+	if err := tx.QueryRow(ctx, `
+		UPDATE message_envelopes
+		SET algorithm = $2,
+			crypto_version = $3,
+			nonce = $4,
+			ciphertext = $5,
+			edited_at = NOW(),
+			server_sequence = nextval(pg_get_serial_sequence('message_envelopes', 'server_sequence'))
+		WHERE id = $1
+		RETURNING id, conversation_id, sender_account_id, sender_device_id, client_message_id, algorithm, crypto_version, nonce, ciphertext, reply_to_message_id, ttl_seconds, expires_at, server_sequence, created_at, edited_at, deleted_at
+	`, messageID, algorithm, cryptoVersion, nonce, ciphertext).Scan(
+		&message.ID,
+		&message.ConversationID,
+		&message.SenderAccountID,
+		&message.SenderDeviceID,
+		&message.ClientMessageID,
+		&message.Algorithm,
+		&message.CryptoVersion,
+		&message.Nonce,
+		&message.Ciphertext,
+		&message.ReplyToMessageID,
+		&message.TTLSeconds,
+		&message.ExpiresAt,
+		&message.ServerSequence,
+		&message.CreatedAt,
+		&message.EditedAt,
+		&message.DeletedAt,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.MessageEnvelope{}, ErrNotFound
+		}
+		return domain.MessageEnvelope{}, fmt.Errorf("failed to update message envelope: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx, `DELETE FROM message_recipients WHERE message_id = $1`, messageID); err != nil {
+		return domain.MessageEnvelope{}, fmt.Errorf("failed to reset message recipients: %w", err)
+	}
+
+	queuedAt := time.Now().UTC()
+	for _, recipient := range recipients {
+		recipientQueuedAt := recipient.QueuedAt
+		if recipientQueuedAt.IsZero() {
+			recipientQueuedAt = queuedAt
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO message_recipients (
+				message_id,
+				recipient_account_id,
+				recipient_device_id,
+				wrapped_key,
+				key_algorithm,
+				delivery_state,
+				queued_at
+			)
+			VALUES ($1,$2,$3,$4,$5,$6,$7)
+		`, messageID, recipient.RecipientAccountID, recipient.RecipientDeviceID, recipient.WrappedKey, recipient.KeyAlgorithm, recipient.DeliveryState, recipientQueuedAt); err != nil {
+			return domain.MessageEnvelope{}, fmt.Errorf("failed to upsert message recipient: %w", err)
+		}
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE conversations
+		SET last_server_sequence = GREATEST(last_server_sequence, $2),
+			updated_at = NOW()
+		WHERE id = $1
+	`, message.ConversationID, message.ServerSequence); err != nil {
+		return domain.MessageEnvelope{}, fmt.Errorf("failed to update conversation sequence: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return domain.MessageEnvelope{}, fmt.Errorf("failed to commit message update tx: %w", err)
+	}
+
+	return message, nil
+}
+
 func (s *Store) ListConversationMessagesForDevice(ctx context.Context, conversationID string, deviceID string, limit int, beforeSequence int64) ([]MessageWithRecipient, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
