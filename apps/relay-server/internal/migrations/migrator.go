@@ -97,6 +97,8 @@ func Down(ctx context.Context, pool *pgxpool.Pool) error {
 	}()
 
 	statements := []string{
+		`DROP TABLE IF EXISTS message_hidden_for_accounts`,
+		`DROP TABLE IF EXISTS message_reactions`,
 		`DROP TABLE IF EXISTS account_notification_read_marks`,
 		`DROP TABLE IF EXISTS account_notification_state`,
 		`DROP TABLE IF EXISTS stories`,

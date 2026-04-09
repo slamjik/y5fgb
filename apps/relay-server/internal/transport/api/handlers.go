@@ -2014,6 +2014,7 @@ func (h *Handler) handleConversationSubroutes(w http.ResponseWriter, r *http.Req
 				Recipients:       recipients,
 				AttachmentIDs:    req.AttachmentIDs,
 				ReplyToMessageID: req.ReplyToMessageID,
+				ForwardedFromID:  req.ForwardedFromID,
 				TTLSeconds:       req.TTLSeconds,
 			})
 			if err != nil {
@@ -2057,6 +2058,28 @@ func (h *Handler) handleConversationSubroutes(w http.ResponseWriter, r *http.Req
 			return
 		}
 		WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "method not allowed"), http.StatusMethodNotAllowed)
+	case "typing":
+		if r.Method != http.MethodPost {
+			WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "method not allowed"), http.StatusMethodNotAllowed)
+			return
+		}
+		if !h.enforceRateLimit(w, r, h.messageRateLimiter) {
+			return
+		}
+		if !h.enforceBodySize(w, r, maxAuthBodyBytes) {
+			return
+		}
+
+		var req conversationTypingRequest
+		if err := middleware.DecodeJSON(r, &req); err != nil {
+			WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "invalid request body"), http.StatusBadRequest)
+			return
+		}
+		if err := h.messagingService.PublishTyping(r.Context(), principal, conversationID, req.IsTyping); err != nil {
+			WriteServiceError(w, r, err, http.StatusBadRequest)
+			return
+		}
+		WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 	default:
 		WriteServiceError(w, r, service.NewError(service.ErrorCodeNotFound, "route not found"), http.StatusNotFound)
 	}
@@ -2103,7 +2126,59 @@ func (h *Handler) handleMessageSubroutes(w http.ResponseWriter, r *http.Request)
 				"createdAt":   receipt.CreatedAt.UTC().Format(time.RFC3339),
 			},
 		})
+	case "reactions":
+		if r.Method != http.MethodPost {
+			WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "method not allowed"), http.StatusMethodNotAllowed)
+			return
+		}
+		if !h.enforceRateLimit(w, r, h.messageRateLimiter) {
+			return
+		}
+		if !h.enforceBodySize(w, r, maxAuthBodyBytes) {
+			return
+		}
+		var req messageReactionRequest
+		if err := middleware.DecodeJSON(r, &req); err != nil {
+			WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "invalid request body"), http.StatusBadRequest)
+			return
+		}
+		updated, active, err := h.messagingService.ToggleMessageReaction(r.Context(), principal, messageID, req.Emoji)
+		if err != nil {
+			WriteServiceError(w, r, err, http.StatusBadRequest)
+			return
+		}
+		WriteJSON(w, http.StatusOK, map[string]any{
+			"message": mapMessage(updated),
+			"active":  active,
+		})
 	case "":
+		if r.Method == http.MethodDelete {
+			if !h.enforceRateLimit(w, r, h.messageRateLimiter) {
+				return
+			}
+			if !h.enforceBodySize(w, r, maxAuthBodyBytes) {
+				return
+			}
+			var req deleteMessageRequest
+			if err := middleware.DecodeJSON(r, &req); err != nil {
+				WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "invalid request body"), http.StatusBadRequest)
+				return
+			}
+			view, mode, err := h.messagingService.DeleteMessage(r.Context(), principal, messageID, req.Mode)
+			if err != nil {
+				WriteServiceError(w, r, err, http.StatusBadRequest)
+				return
+			}
+			payload := map[string]any{
+				"ok":   true,
+				"mode": mode,
+			}
+			if mode == "all" {
+				payload["message"] = mapMessage(view)
+			}
+			WriteJSON(w, http.StatusOK, payload)
+			return
+		}
 		if r.Method != http.MethodPatch {
 			WriteServiceError(w, r, service.NewError(service.ErrorCodeValidation, "method not allowed"), http.StatusMethodNotAllowed)
 			return

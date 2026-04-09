@@ -257,6 +257,7 @@ type sendMessageRequest struct {
 	} `json:"recipients"`
 	AttachmentIDs    []string `json:"attachmentIds,omitempty"`
 	ReplyToMessageID *string  `json:"replyToMessageId,omitempty"`
+	ForwardedFromID  *string  `json:"forwardedFromMessageId,omitempty"`
 	TTLSeconds       *int     `json:"ttlSeconds,omitempty"`
 }
 
@@ -274,6 +275,18 @@ type editMessageRequest struct {
 
 type messageReceiptRequest struct {
 	ReceiptType string `json:"receiptType"`
+}
+
+type messageReactionRequest struct {
+	Emoji string `json:"emoji"`
+}
+
+type deleteMessageRequest struct {
+	Mode string `json:"mode"`
+}
+
+type conversationTypingRequest struct {
+	IsTyping bool `json:"isTyping"`
 }
 
 type attachmentUploadRequest struct {
@@ -352,6 +365,7 @@ type messageDTO struct {
 	DeliveredAt   *string              `json:"deliveredAt"`
 	FailedReason  *string              `json:"failedReason"`
 	Receipts      []messageReceiptDTO  `json:"receipts"`
+	Reactions     []messageReactionDTO `json:"reactions"`
 }
 
 type encryptedEnvelopeDTO struct {
@@ -367,11 +381,19 @@ type encryptedEnvelopeDTO struct {
 	Recipients       []recipientKeyDTO   `json:"recipients"`
 	Attachments      []attachmentMetaDTO `json:"attachments"`
 	ReplyToMessageID *string             `json:"replyToMessageId"`
+	ForwardedFromID  *string             `json:"forwardedFromMessageId"`
 	TTLSeconds       *int                `json:"ttlSeconds"`
 	CreatedAt        string              `json:"createdAt"`
 	EditedAt         *string             `json:"editedAt"`
+	DeletedAt        *string             `json:"deletedAt"`
 	ExpiresAt        *string             `json:"expiresAt"`
 	ServerSequence   int64               `json:"serverSequence"`
+}
+
+type messageReactionDTO struct {
+	Emoji   string   `json:"emoji"`
+	UserIDs []string `json:"userIds"`
+	Count   int      `json:"count"`
 }
 
 type recipientKeyDTO struct {
@@ -850,6 +872,24 @@ func mapMessage(payload messaging.MessageView) messageDTO {
 		})
 	}
 
+	reactionOrder := make([]string, 0)
+	reactionUsers := make(map[string][]string)
+	for _, reaction := range payload.Reactions {
+		if _, exists := reactionUsers[reaction.Emoji]; !exists {
+			reactionOrder = append(reactionOrder, reaction.Emoji)
+		}
+		reactionUsers[reaction.Emoji] = append(reactionUsers[reaction.Emoji], reaction.AccountID)
+	}
+	reactions := make([]messageReactionDTO, 0, len(reactionOrder))
+	for _, emoji := range reactionOrder {
+		userIDs := reactionUsers[emoji]
+		reactions = append(reactions, messageReactionDTO{
+			Emoji:   emoji,
+			UserIDs: userIDs,
+			Count:   len(userIDs),
+		})
+	}
+
 	return messageDTO{
 		Envelope: encryptedEnvelopeDTO{
 			ID:               payload.Envelope.ID,
@@ -864,9 +904,11 @@ func mapMessage(payload messaging.MessageView) messageDTO {
 			Recipients:       recipients,
 			Attachments:      attachments,
 			ReplyToMessageID: payload.Envelope.ReplyToMessageID,
+			ForwardedFromID:  payload.Envelope.ForwardedFromID,
 			TTLSeconds:       payload.Envelope.TTLSeconds,
 			CreatedAt:        payload.Envelope.CreatedAt.UTC().Format(time.RFC3339),
 			EditedAt:         formatNullableTime(payload.Envelope.EditedAt),
+			DeletedAt:        formatNullableTime(payload.Envelope.DeletedAt),
 			ExpiresAt:        formatNullableTime(payload.Envelope.ExpiresAt),
 			ServerSequence:   payload.Envelope.ServerSequence,
 		},
@@ -874,6 +916,7 @@ func mapMessage(payload messaging.MessageView) messageDTO {
 		DeliveredAt:   deliveredAt,
 		FailedReason:  failedReason,
 		Receipts:      receipts,
+		Reactions:     reactions,
 	}
 }
 

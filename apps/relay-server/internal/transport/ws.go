@@ -104,6 +104,43 @@ func (n *WSNotifier) NotifyDeviceSync(deviceID string, cursor int64) {
 	}
 }
 
+func (n *WSNotifier) NotifyDeviceTyping(deviceID string, conversationID string, accountID string, isTyping bool) {
+	n.mu.RLock()
+	deviceClients, ok := n.byDevice[deviceID]
+	if !ok {
+		n.mu.RUnlock()
+		return
+	}
+	clients := make([]*wsClient, 0, len(deviceClients))
+	for client := range deviceClients {
+		clients = append(clients, client)
+	}
+	n.mu.RUnlock()
+
+	payload := map[string]any{
+		"direction": "server_to_client",
+		"envelope": map[string]any{
+			"id":        uuid.NewString(),
+			"type":      "server.notice",
+			"timestamp": time.Now().UTC().Format(time.RFC3339),
+			"payload": map[string]any{
+				"noticeType":     "typing",
+				"conversationId": conversationID,
+				"accountId":      accountID,
+				"isTyping":       isTyping,
+			},
+		},
+	}
+
+	for _, client := range clients {
+		if err := client.writeJSON(payload); err != nil {
+			n.logger.Debug("websocket typing notification write failed", "device_id", deviceID, "error", err)
+			n.unregister(deviceID, client)
+			_ = client.conn.Close()
+		}
+	}
+}
+
 type webSocketHandler struct {
 	logger                  *slog.Logger
 	authService             *auth.Service

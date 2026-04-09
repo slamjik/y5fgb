@@ -306,12 +306,26 @@ type MessageEnvelope struct {
 	Nonce            string
 	Ciphertext       string
 	ReplyToMessageID *string
+	ForwardedFromID  *string
 	TTLSeconds       *int
 	ExpiresAt        *time.Time
 	ServerSequence   int64
 	CreatedAt        time.Time
 	EditedAt         *time.Time
 	DeletedAt        *time.Time
+}
+
+type MessageReaction struct {
+	MessageID string
+	Emoji     string
+	AccountID string
+	CreatedAt time.Time
+}
+
+type MessageHiddenForAccount struct {
+	MessageID string
+	AccountID string
+	HiddenAt  time.Time
 }
 
 type MessageRecipient struct {

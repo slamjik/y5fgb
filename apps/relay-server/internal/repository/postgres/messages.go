@@ -18,7 +18,7 @@ type MessageWithRecipient struct {
 func (s *Store) GetMessageBySenderClientID(ctx context.Context, senderDeviceID string, clientMessageID string) (domain.MessageEnvelope, error) {
 	var message domain.MessageEnvelope
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, conversation_id, sender_account_id, sender_device_id, client_message_id, algorithm, crypto_version, nonce, ciphertext, reply_to_message_id, ttl_seconds, expires_at, server_sequence, created_at, edited_at, deleted_at
+		SELECT id, conversation_id, sender_account_id, sender_device_id, client_message_id, algorithm, crypto_version, nonce, ciphertext, reply_to_message_id, forwarded_from_message_id, ttl_seconds, expires_at, server_sequence, created_at, edited_at, deleted_at
 		FROM message_envelopes
 		WHERE sender_device_id = $1 AND client_message_id = $2
 	`, senderDeviceID, clientMessageID).Scan(
@@ -32,6 +32,7 @@ func (s *Store) GetMessageBySenderClientID(ctx context.Context, senderDeviceID s
 		&message.Nonce,
 		&message.Ciphertext,
 		&message.ReplyToMessageID,
+		&message.ForwardedFromID,
 		&message.TTLSeconds,
 		&message.ExpiresAt,
 		&message.ServerSequence,
@@ -51,7 +52,7 @@ func (s *Store) GetMessageBySenderClientID(ctx context.Context, senderDeviceID s
 func (s *Store) GetMessageByID(ctx context.Context, messageID string) (domain.MessageEnvelope, error) {
 	var message domain.MessageEnvelope
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, conversation_id, sender_account_id, sender_device_id, client_message_id, algorithm, crypto_version, nonce, ciphertext, reply_to_message_id, ttl_seconds, expires_at, server_sequence, created_at, edited_at, deleted_at
+		SELECT id, conversation_id, sender_account_id, sender_device_id, client_message_id, algorithm, crypto_version, nonce, ciphertext, reply_to_message_id, forwarded_from_message_id, ttl_seconds, expires_at, server_sequence, created_at, edited_at, deleted_at
 		FROM message_envelopes
 		WHERE id = $1
 	`, messageID).Scan(
@@ -65,6 +66,7 @@ func (s *Store) GetMessageByID(ctx context.Context, messageID string) (domain.Me
 		&message.Nonce,
 		&message.Ciphertext,
 		&message.ReplyToMessageID,
+		&message.ForwardedFromID,
 		&message.TTLSeconds,
 		&message.ExpiresAt,
 		&message.ServerSequence,
@@ -106,13 +108,14 @@ func (s *Store) InsertMessageWithRecipients(ctx context.Context, message domain.
 			nonce,
 			ciphertext,
 			reply_to_message_id,
+			forwarded_from_message_id,
 			ttl_seconds,
 			expires_at,
 			created_at
 		)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 		RETURNING server_sequence, created_at
-	`, message.ID, message.ConversationID, message.SenderAccountID, message.SenderDeviceID, message.ClientMessageID, message.Algorithm, message.CryptoVersion, message.Nonce, message.Ciphertext, message.ReplyToMessageID, message.TTLSeconds, message.ExpiresAt, message.CreatedAt).Scan(
+	`, message.ID, message.ConversationID, message.SenderAccountID, message.SenderDeviceID, message.ClientMessageID, message.Algorithm, message.CryptoVersion, message.Nonce, message.Ciphertext, message.ReplyToMessageID, message.ForwardedFromID, message.TTLSeconds, message.ExpiresAt, message.CreatedAt).Scan(
 		&message.ServerSequence,
 		&message.CreatedAt,
 	)
@@ -204,7 +207,7 @@ func (s *Store) UpdateMessageWithRecipients(
 			edited_at = NOW(),
 			server_sequence = nextval(pg_get_serial_sequence('message_envelopes', 'server_sequence'))
 		WHERE id = $1
-		RETURNING id, conversation_id, sender_account_id, sender_device_id, client_message_id, algorithm, crypto_version, nonce, ciphertext, reply_to_message_id, ttl_seconds, expires_at, server_sequence, created_at, edited_at, deleted_at
+		RETURNING id, conversation_id, sender_account_id, sender_device_id, client_message_id, algorithm, crypto_version, nonce, ciphertext, reply_to_message_id, forwarded_from_message_id, ttl_seconds, expires_at, server_sequence, created_at, edited_at, deleted_at
 	`, messageID, algorithm, cryptoVersion, nonce, ciphertext).Scan(
 		&message.ID,
 		&message.ConversationID,
@@ -216,6 +219,7 @@ func (s *Store) UpdateMessageWithRecipients(
 		&message.Nonce,
 		&message.Ciphertext,
 		&message.ReplyToMessageID,
+		&message.ForwardedFromID,
 		&message.TTLSeconds,
 		&message.ExpiresAt,
 		&message.ServerSequence,
@@ -288,6 +292,7 @@ func (s *Store) ListConversationMessagesForDevice(ctx context.Context, conversat
 			me.nonce,
 			me.ciphertext,
 			me.reply_to_message_id,
+			me.forwarded_from_message_id,
 			me.ttl_seconds,
 			me.expires_at,
 			me.server_sequence,
@@ -308,6 +313,12 @@ func (s *Store) ListConversationMessagesForDevice(ctx context.Context, conversat
 			AND mr.recipient_device_id = $2
 		WHERE me.conversation_id = $1
 		  AND (me.expires_at IS NULL OR me.expires_at > NOW())
+		  AND NOT EXISTS (
+		    SELECT 1
+		    FROM message_hidden_for_accounts mha
+		    WHERE mha.message_id = me.id
+		      AND mha.account_id = COALESCE(mr.recipient_account_id, me.sender_account_id)
+		  )
 	`
 
 	args := []any{conversationID, deviceID}
@@ -349,6 +360,7 @@ func (s *Store) ListConversationMessagesForDevice(ctx context.Context, conversat
 			&item.Envelope.Nonce,
 			&item.Envelope.Ciphertext,
 			&item.Envelope.ReplyToMessageID,
+			&item.Envelope.ForwardedFromID,
 			&item.Envelope.TTLSeconds,
 			&item.Envelope.ExpiresAt,
 			&item.Envelope.ServerSequence,
@@ -411,6 +423,7 @@ func (s *Store) ListDeliverableMessagesSince(ctx context.Context, deviceID strin
 			me.nonce,
 			me.ciphertext,
 			me.reply_to_message_id,
+			me.forwarded_from_message_id,
 			me.ttl_seconds,
 			me.expires_at,
 			me.server_sequence,
@@ -430,6 +443,12 @@ func (s *Store) ListDeliverableMessagesSince(ctx context.Context, deviceID strin
 		WHERE mr.recipient_device_id = $1
 		  AND me.server_sequence > $2
 		  AND (me.expires_at IS NULL OR me.expires_at > NOW())
+		  AND NOT EXISTS (
+		    SELECT 1
+		    FROM message_hidden_for_accounts mha
+		    WHERE mha.message_id = me.id
+		      AND mha.account_id = mr.recipient_account_id
+		  )
 		ORDER BY me.server_sequence ASC
 		LIMIT $3
 	`, deviceID, sinceSequence, limit)
@@ -453,6 +472,7 @@ func (s *Store) ListDeliverableMessagesSince(ctx context.Context, deviceID strin
 			&item.Envelope.Nonce,
 			&item.Envelope.Ciphertext,
 			&item.Envelope.ReplyToMessageID,
+			&item.Envelope.ForwardedFromID,
 			&item.Envelope.TTLSeconds,
 			&item.Envelope.ExpiresAt,
 			&item.Envelope.ServerSequence,
@@ -579,5 +599,229 @@ func (s *Store) ListMessageReceiptsByMessageIDs(ctx context.Context, messageIDs 
 		return nil, fmt.Errorf("failed to iterate message receipt rows: %w", err)
 	}
 
+	return result, nil
+}
+
+func (s *Store) ListMessageRecipients(ctx context.Context, messageID string) ([]domain.MessageRecipient, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT message_id, recipient_account_id, recipient_device_id, wrapped_key, key_algorithm, delivery_state, queued_at, delivered_at, failed_reason
+		FROM message_recipients
+		WHERE message_id = $1
+	`, messageID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list message recipients: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]domain.MessageRecipient, 0)
+	for rows.Next() {
+		var item domain.MessageRecipient
+		if err := rows.Scan(
+			&item.MessageID,
+			&item.RecipientAccountID,
+			&item.RecipientDeviceID,
+			&item.WrappedKey,
+			&item.KeyAlgorithm,
+			&item.DeliveryState,
+			&item.QueuedAt,
+			&item.DeliveredAt,
+			&item.FailedReason,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan message recipient row: %w", err)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate message recipient rows: %w", err)
+	}
+	return items, nil
+}
+
+func (s *Store) HideMessageForAccount(ctx context.Context, messageID string, accountID string) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO message_hidden_for_accounts (message_id, account_id, hidden_at)
+		VALUES ($1, $2, NOW())
+		ON CONFLICT (message_id, account_id) DO UPDATE
+		SET hidden_at = EXCLUDED.hidden_at
+	`, messageID, accountID)
+	if err != nil {
+		return fmt.Errorf("failed to hide message for account: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) SoftDeleteMessageForAll(ctx context.Context, messageID string) (domain.MessageEnvelope, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return domain.MessageEnvelope{}, fmt.Errorf("failed to begin tx: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+
+	var message domain.MessageEnvelope
+	if err := tx.QueryRow(ctx, `
+		UPDATE message_envelopes
+		SET deleted_at = COALESCE(deleted_at, NOW()),
+			edited_at = COALESCE(edited_at, NOW()),
+			server_sequence = nextval(pg_get_serial_sequence('message_envelopes', 'server_sequence'))
+		WHERE id = $1
+		RETURNING id, conversation_id, sender_account_id, sender_device_id, client_message_id, algorithm, crypto_version, nonce, ciphertext, reply_to_message_id, forwarded_from_message_id, ttl_seconds, expires_at, server_sequence, created_at, edited_at, deleted_at
+	`, messageID).Scan(
+		&message.ID,
+		&message.ConversationID,
+		&message.SenderAccountID,
+		&message.SenderDeviceID,
+		&message.ClientMessageID,
+		&message.Algorithm,
+		&message.CryptoVersion,
+		&message.Nonce,
+		&message.Ciphertext,
+		&message.ReplyToMessageID,
+		&message.ForwardedFromID,
+		&message.TTLSeconds,
+		&message.ExpiresAt,
+		&message.ServerSequence,
+		&message.CreatedAt,
+		&message.EditedAt,
+		&message.DeletedAt,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.MessageEnvelope{}, ErrNotFound
+		}
+		return domain.MessageEnvelope{}, fmt.Errorf("failed to soft delete message: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE conversations
+		SET last_server_sequence = GREATEST(last_server_sequence, $2),
+			updated_at = NOW()
+		WHERE id = $1
+	`, message.ConversationID, message.ServerSequence); err != nil {
+		return domain.MessageEnvelope{}, fmt.Errorf("failed to update conversation sequence: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return domain.MessageEnvelope{}, fmt.Errorf("failed to commit message delete tx: %w", err)
+	}
+	return message, nil
+}
+
+func (s *Store) ToggleMessageReaction(ctx context.Context, messageID string, accountID string, emoji string) (domain.MessageEnvelope, bool, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return domain.MessageEnvelope{}, false, fmt.Errorf("failed to begin tx: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+
+	var exists bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1
+			FROM message_reactions
+			WHERE message_id = $1 AND account_id = $2 AND emoji = $3
+		)
+	`, messageID, accountID, emoji).Scan(&exists); err != nil {
+		return domain.MessageEnvelope{}, false, fmt.Errorf("failed to check existing message reaction: %w", err)
+	}
+
+	active := false
+	if exists {
+		if _, err := tx.Exec(ctx, `
+			DELETE FROM message_reactions
+			WHERE message_id = $1 AND account_id = $2 AND emoji = $3
+		`, messageID, accountID, emoji); err != nil {
+			return domain.MessageEnvelope{}, false, fmt.Errorf("failed to delete message reaction: %w", err)
+		}
+	} else {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO message_reactions (message_id, emoji, account_id, created_at)
+			VALUES ($1, $2, $3, NOW())
+		`, messageID, emoji, accountID); err != nil {
+			return domain.MessageEnvelope{}, false, fmt.Errorf("failed to insert message reaction: %w", err)
+		}
+		active = true
+	}
+
+	var message domain.MessageEnvelope
+	if err := tx.QueryRow(ctx, `
+		UPDATE message_envelopes
+		SET server_sequence = nextval(pg_get_serial_sequence('message_envelopes', 'server_sequence'))
+		WHERE id = $1
+		RETURNING id, conversation_id, sender_account_id, sender_device_id, client_message_id, algorithm, crypto_version, nonce, ciphertext, reply_to_message_id, forwarded_from_message_id, ttl_seconds, expires_at, server_sequence, created_at, edited_at, deleted_at
+	`, messageID).Scan(
+		&message.ID,
+		&message.ConversationID,
+		&message.SenderAccountID,
+		&message.SenderDeviceID,
+		&message.ClientMessageID,
+		&message.Algorithm,
+		&message.CryptoVersion,
+		&message.Nonce,
+		&message.Ciphertext,
+		&message.ReplyToMessageID,
+		&message.ForwardedFromID,
+		&message.TTLSeconds,
+		&message.ExpiresAt,
+		&message.ServerSequence,
+		&message.CreatedAt,
+		&message.EditedAt,
+		&message.DeletedAt,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.MessageEnvelope{}, false, ErrNotFound
+		}
+		return domain.MessageEnvelope{}, false, fmt.Errorf("failed to touch message sequence after reaction toggle: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE conversations
+		SET last_server_sequence = GREATEST(last_server_sequence, $2),
+			updated_at = NOW()
+		WHERE id = $1
+	`, message.ConversationID, message.ServerSequence); err != nil {
+		return domain.MessageEnvelope{}, false, fmt.Errorf("failed to update conversation sequence: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return domain.MessageEnvelope{}, false, fmt.Errorf("failed to commit message reaction tx: %w", err)
+	}
+	return message, active, nil
+}
+
+func (s *Store) ListMessageReactionsByMessageIDs(ctx context.Context, messageIDs []string) (map[string][]domain.MessageReaction, error) {
+	result := make(map[string][]domain.MessageReaction)
+	if len(messageIDs) == 0 {
+		return result, nil
+	}
+
+	rows, err := s.pool.Query(ctx, `
+		SELECT message_id, emoji, account_id, created_at
+		FROM message_reactions
+		WHERE message_id = ANY($1::uuid[])
+		ORDER BY created_at ASC
+	`, messageIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list message reactions: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var item domain.MessageReaction
+		if err := rows.Scan(
+			&item.MessageID,
+			&item.Emoji,
+			&item.AccountID,
+			&item.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan message reaction row: %w", err)
+		}
+		result[item.MessageID] = append(result[item.MessageID], item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate message reaction rows: %w", err)
+	}
 	return result, nil
 }

@@ -1,4 +1,4 @@
-import type { AttachmentMetaDTO, AttachmentUploadRequest, ConversationDTO, MessageDTO, SyncBatchDTO } from "@project/protocol";
+﻿import type { AttachmentMetaDTO, AttachmentUploadRequest, ConversationDTO, MessageDTO, SyncBatchDTO } from "@project/protocol";
 import type React from "react";
 
 import { webCryptoProvider, type RecipientPublicMaterial } from "../features/messaging/crypto";
@@ -48,6 +48,15 @@ export async function decodeMessage(
 
   const attachments = mapMessageAttachments(message.envelope.attachments, attachmentSecrets);
   const own = (message.envelope.senderAccountId as string) === session.accountId;
+  const reactions = (message.reactions ?? []).map((item) => {
+    const userIds = (item.userIds ?? []).map((userId) => userId as string);
+    return {
+      emoji: item.emoji,
+      userIds,
+      count: typeof item.count === "number" ? item.count : userIds.length,
+      reactedByMe: userIds.includes(session.accountId),
+    };
+  });
 
   return {
     id: message.envelope.id as string,
@@ -55,9 +64,13 @@ export async function decodeMessage(
     senderAccountId: message.envelope.senderAccountId as string,
     createdAt: message.envelope.createdAt as string,
     editedAt: message.envelope.editedAt ?? null,
+    deletedAt: message.envelope.deletedAt ?? null,
     serverSequence: message.envelope.serverSequence,
     text,
     attachments,
+    replyToMessageId: message.envelope.replyToMessageId ?? null,
+    forwardedFromMessageId: message.envelope.forwardedFromMessageId ?? null,
+    reactions,
     own,
     deliveryState: own && readByOthersAt ? "read" : message.deliveryState,
     readByMe,
@@ -270,6 +283,18 @@ export function mergeMessageView(existing: MessageView | undefined, incoming: Me
   if (existing.editedAt && !incoming.editedAt) {
     merged.editedAt = existing.editedAt;
   }
+  if (existing.deletedAt && !incoming.deletedAt) {
+    merged.deletedAt = existing.deletedAt;
+  }
+  if (existing.replyToMessageId && !incoming.replyToMessageId) {
+    merged.replyToMessageId = existing.replyToMessageId;
+  }
+  if (existing.forwardedFromMessageId && !incoming.forwardedFromMessageId) {
+    merged.forwardedFromMessageId = existing.forwardedFromMessageId;
+  }
+  if (existing.reactions.length > 0 && incoming.reactions.length === 0) {
+    merged.reactions = existing.reactions;
+  }
 
   return merged;
 }
@@ -336,4 +361,3 @@ function isCompatiblePublicKey(value: string): boolean {
     return false;
   }
 }
-

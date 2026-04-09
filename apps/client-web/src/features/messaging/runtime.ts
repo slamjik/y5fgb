@@ -18,6 +18,7 @@ type RuntimeCallbacks = {
   onBatch: (batch: SyncBatchDTO) => Promise<void> | void;
   onTransport: (state: RuntimeTransportState) => void;
   onError: (message: string) => void;
+  onTyping?: (event: { conversationId: string; accountId: string; isTyping: boolean; at: string }) => void;
 };
 
 const defaultTransportState: RuntimeTransportState = {
@@ -252,6 +253,31 @@ export class WebMessagingRuntime {
     if (envelope.type === "server.sync_available") {
       const hint = typeof envelope.payload?.cursor === "number" ? envelope.payload.cursor : undefined;
       void this.triggerSync(hint);
+      return;
+    }
+    if (
+      envelope.type === "server.notice" &&
+      envelope.payload &&
+      typeof envelope.payload === "object" &&
+      (envelope.payload as { noticeType?: unknown }).noticeType === "typing"
+    ) {
+      const payload = envelope.payload as {
+        conversationId?: unknown;
+        accountId?: unknown;
+        isTyping?: unknown;
+      };
+      if (
+        typeof payload.conversationId === "string" &&
+        typeof payload.accountId === "string" &&
+        typeof payload.isTyping === "boolean"
+      ) {
+        this.callbacks.onTyping?.({
+          conversationId: payload.conversationId,
+          accountId: payload.accountId,
+          isTyping: payload.isTyping,
+          at: new Date().toISOString(),
+        });
+      }
     }
   }
 

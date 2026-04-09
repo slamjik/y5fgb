@@ -155,8 +155,10 @@ function App() {
   const [conversationDetails, setConversationDetails] = React.useState<Record<string, ConversationDTO>>({});
   const [messagesByConversation, setMessagesByConversation] = React.useState<Record<string, MessageBucket>>({});
   const [drafts, setDrafts] = React.useState<Record<string, string>>({});
+  const [replyDraftByConversation, setReplyDraftByConversation] = React.useState<Record<string, string | null>>({});
   const [uploadsByConversation, setUploadsByConversation] = React.useState<Record<string, UploadDraft[]>>({});
   const [unreadByConversation, setUnreadByConversation] = React.useState<Record<string, number>>({});
+  const [typingByConversation, setTypingByConversation] = React.useState<Record<string, Record<string, number>>>({});
   const [attachmentOps, setAttachmentOps] = React.useState<Record<string, { loading: boolean; error: string }>>({});
   const [attachmentPreviews, setAttachmentPreviews] = React.useState<
     Record<string, { loading: boolean; src: string | null; error: string }>
@@ -236,6 +238,7 @@ function App() {
   const attachmentPreviewUrlsRef = React.useRef<Map<string, string>>(new Map());
   const attachmentPreviewInFlightRef = React.useRef<Set<string>>(new Set());
   const attachmentSecretsByIdRef = React.useRef<Map<string, { symmetricKey: string; nonce: string }>>(new Map());
+  const typingSignalsRef = React.useRef<Record<string, { active: boolean; timer: number | null }>>({});
 
   const api = React.useMemo(() => (server ? new WebApiClient(server.config) : null), [server]);
   const unreadTotal = React.useMemo(
@@ -376,6 +379,33 @@ function App() {
   React.useEffect(() => {
     messagesByConversationRef.current = messagesByConversation;
   }, [messagesByConversation]);
+
+  React.useEffect(() => {
+    const handle = window.setInterval(() => {
+      const now = Date.now();
+      setTypingByConversation((prev) => {
+        let changed = false;
+        const next: Record<string, Record<string, number>> = {};
+        for (const [conversationId, byAccount] of Object.entries(prev)) {
+          const filtered: Record<string, number> = {};
+          for (const [accountId, updatedAt] of Object.entries(byAccount)) {
+            if (now - updatedAt <= 7_000) {
+              filtered[accountId] = updatedAt;
+            } else {
+              changed = true;
+            }
+          }
+          if (Object.keys(filtered).length > 0) {
+            next[conversationId] = filtered;
+          } else if (Object.keys(byAccount).length > 0) {
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    }, 1500);
+    return () => window.clearInterval(handle);
+  }, []);
 
   React.useEffect(() => {
     const attachmentIDs = new Set<string>();
@@ -572,6 +602,35 @@ function App() {
         onError: (message) => {
           if (!disposed) setRuntimeError(message);
         },
+        onTyping: (event) => {
+          if (disposed || event.accountId === session.accountId) return;
+          setTypingByConversation((prev) => {
+            const byAccount = prev[event.conversationId] ?? {};
+            if (!event.isTyping) {
+              if (!byAccount[event.accountId]) {
+                return prev;
+              }
+              const nextByAccount = { ...byAccount };
+              delete nextByAccount[event.accountId];
+              if (Object.keys(nextByAccount).length === 0) {
+                const next = { ...prev };
+                delete next[event.conversationId];
+                return next;
+              }
+              return {
+                ...prev,
+                [event.conversationId]: nextByAccount,
+              };
+            }
+            return {
+              ...prev,
+              [event.conversationId]: {
+                ...byAccount,
+                [event.accountId]: Date.now(),
+              },
+            };
+          });
+        },
       });
       runtimeRef.current = runtime;
       await runtime.start(Number.isFinite(initialCursor) ? initialCursor : 0);
@@ -649,8 +708,10 @@ function App() {
     setMessagesByConversation({});
     messagesByConversationRef.current = {};
     setDrafts({});
+    setReplyDraftByConversation({});
     setUploadsByConversation({});
     setUnreadByConversation({});
+    setTypingByConversation({});
     setAttachmentOps({});
     clearAttachmentPreviews();
     clearAttachmentSecretsCache();
@@ -669,6 +730,12 @@ function App() {
     knownNotificationIDsRef.current = new Set();
     shownToastNotificationIDsRef.current = new Set();
     readReceiptInFlightRef.current = new Set();
+    for (const state of Object.values(typingSignalsRef.current)) {
+      if (state.timer !== null) {
+        window.clearTimeout(state.timer);
+      }
+    }
+    typingSignalsRef.current = {};
     setSection("messages");
   }
 
@@ -906,6 +973,51 @@ function App() {
     }
   }
 
+  const pushTypingSignal = React.useCallback(
+    (conversationId: string, isTyping: boolean) => {
+      if (!api || !session) return;
+      const current = typingSignalsRef.current[conversationId] ?? { active: false, timer: null as number | null };
+
+      const sendState = (value: boolean) => {
+        void api.sendTyping(session.accessToken, conversationId, value).catch(() => {
+          // typing hint is best effort only
+        });
+      };
+
+      if (!isTyping) {
+        if (current.timer !== null) {
+          window.clearTimeout(current.timer);
+          current.timer = null;
+        }
+        if (current.active) {
+          current.active = false;
+          sendState(false);
+        }
+        typingSignalsRef.current[conversationId] = current;
+        return;
+      }
+
+      if (!current.active) {
+        current.active = true;
+        sendState(true);
+      }
+      if (current.timer !== null) {
+        window.clearTimeout(current.timer);
+      }
+      current.timer = window.setTimeout(() => {
+        const state = typingSignalsRef.current[conversationId];
+        if (!state) return;
+        state.timer = null;
+        if (!state.active) return;
+        state.active = false;
+        sendState(false);
+      }, 1800);
+
+      typingSignalsRef.current[conversationId] = current;
+    },
+    [api, session?.accessToken],
+  );
+
   const openConversation = async (conversationId: string) => {
     setActiveConversationId(conversationId);
     setShowMobileConversationList(false);
@@ -1011,13 +1123,27 @@ function App() {
     void openConversation(activeConversationId);
   }, [activeConversationId, api, session?.accessToken, messagesByConversation]);
 
-  const sendMessage = async (conversationId: string, retryText?: string) => {
+  const sendMessage = async (
+    conversationId: string,
+    retryText?: string,
+    options?: {
+      forceText?: string;
+      forceUploads?: UploadDraft[];
+      replyToMessageId?: string | null;
+      forwardedFromMessageId?: string | null;
+      keepComposer?: boolean;
+    },
+  ) => {
     if (!api || !session) return;
-    const text = (retryText ?? drafts[conversationId] ?? "").trim();
-    const uploads = uploadsByConversation[conversationId] ?? [];
+    const textSource = options?.forceText ?? retryText ?? drafts[conversationId] ?? "";
+    const text = textSource.trim();
+    const uploads = options?.forceUploads ?? (uploadsByConversation[conversationId] ?? []);
+    const replyToMessageId = options?.replyToMessageId ?? replyDraftByConversation[conversationId] ?? null;
+    const forwardedFromMessageId = options?.forwardedFromMessageId ?? null;
     if (!text && uploads.length === 0) return;
     if (sendingConversationsRef.current.has(conversationId)) return;
     sendingConversationsRef.current.add(conversationId);
+    pushTypingSignal(conversationId, false);
 
     const optimisticId = `local_${Date.now()}_${Math.random().toString(16).slice(2)}`;
     setMessagesByConversation((prev) => {
@@ -1037,6 +1163,7 @@ function App() {
               senderAccountId: session.accountId,
               createdAt: new Date().toISOString(),
               editedAt: null,
+              deletedAt: null,
               serverSequence: Number.MAX_SAFE_INTEGER,
               text,
               attachments: uploads.map((item) => ({
@@ -1050,6 +1177,9 @@ function App() {
                 nonce: "",
                 symmetricKey: null,
               })),
+              replyToMessageId,
+              forwardedFromMessageId,
+              reactions: [],
               own: true,
               deliveryState: "pending",
               readByMe: true,
@@ -1079,7 +1209,8 @@ function App() {
         text,
         attachments: attachmentSecrets,
         createdAt: new Date().toISOString(),
-        replyToMessageId: null,
+        replyToMessageId,
+        forwardedFromMessageId,
       });
       const encrypted = await webCryptoProvider.encryptMessage(plaintextPayload, recipients);
       const response = await api.sendMessage(session.accessToken, conversationId, {
@@ -1090,6 +1221,8 @@ function App() {
         ciphertext: encrypted.ciphertext,
         recipients: encrypted.recipients as never,
         attachmentIds: attachmentSecrets.map((item) => item.attachmentId) as never,
+        replyToMessageId: (replyToMessageId ?? undefined) as never,
+        forwardedFromMessageId: (forwardedFromMessageId ?? undefined) as never,
       });
 
       const mapped = await decodeMessage(response.message, session, deviceMaterialRef.current);
@@ -1108,8 +1241,11 @@ function App() {
         };
       });
 
-      setDrafts((prev) => ({ ...prev, [conversationId]: "" }));
-      setUploadsByConversation((prev) => ({ ...prev, [conversationId]: [] }));
+      if (!options?.keepComposer && retryText === undefined && options?.forceText === undefined) {
+        setDrafts((prev) => ({ ...prev, [conversationId]: "" }));
+        setUploadsByConversation((prev) => ({ ...prev, [conversationId]: [] }));
+      }
+      setReplyDraftByConversation((prev) => ({ ...prev, [conversationId]: null }));
       void loadSummaries(api, session, setSummaries, setSummariesLoading, setSummariesError, setActiveConversationId);
     } catch (error) {
       setRuntimeError(toUserError(error));
@@ -1217,6 +1353,81 @@ function App() {
     } catch (error) {
       setRuntimeError(toUserError(error));
     }
+  };
+
+  const setReplyTarget = React.useCallback((conversationId: string, messageId: string | null) => {
+    setReplyDraftByConversation((prev) => ({ ...prev, [conversationId]: messageId }));
+  }, []);
+
+  const toggleReaction = async (conversationId: string, messageId: string, emoji: string) => {
+    if (!api || !session) return;
+    try {
+      const response = await api.toggleMessageReaction(session.accessToken, messageId, { emoji });
+      const mapped = await decodeMessage(response.message, session, deviceMaterialRef.current);
+      setMessagesByConversation((prev) => {
+        const bucket = prev[conversationId];
+        if (!bucket) return prev;
+        return {
+          ...prev,
+          [conversationId]: {
+            ...bucket,
+            items: upsertMessageItems(bucket.items, [mapped]),
+          },
+        };
+      });
+    } catch (error) {
+      toast("Не удалось обновить реакцию", { description: toUserError(error) });
+    }
+  };
+
+  const deleteMessageAction = async (conversationId: string, messageId: string, mode: "me" | "all") => {
+    if (!api || !session) return;
+    try {
+      const response = await api.deleteMessage(session.accessToken, messageId, mode);
+      if (response.mode === "me") {
+        setMessagesByConversation((prev) => {
+          const bucket = prev[conversationId];
+          if (!bucket) return prev;
+          return {
+            ...prev,
+            [conversationId]: {
+              ...bucket,
+              items: bucket.items.filter((item) => item.id !== messageId),
+            },
+          };
+        });
+        return;
+      }
+      if (!response.message) return;
+      const mapped = await decodeMessage(response.message, session, deviceMaterialRef.current);
+      setMessagesByConversation((prev) => {
+        const bucket = prev[conversationId];
+        if (!bucket) return prev;
+        return {
+          ...prev,
+          [conversationId]: {
+            ...bucket,
+            items: upsertMessageItems(bucket.items, [mapped]),
+          },
+        };
+      });
+    } catch (error) {
+      toast("Не удалось удалить сообщение", { description: toUserError(error) });
+    }
+  };
+
+  const forwardMessage = async (conversationId: string, messageId: string) => {
+    const bucket = messagesByConversation[conversationId];
+    const source = bucket?.items.find((item) => item.id === messageId);
+    if (!source) return;
+    const forwardText = source.text.trim() || "Пересланное сообщение";
+    await sendMessage(conversationId, undefined, {
+      forceText: forwardText,
+      forceUploads: [],
+      replyToMessageId: null,
+      forwardedFromMessageId: source.id,
+      keepComposer: true,
+    });
   };
 
   const addUpload = (conversationId: string, files: FileList | null) => {
@@ -1932,6 +2143,15 @@ function App() {
   };
 
   const activeBucket = activeConversationId ? messagesByConversation[activeConversationId] : undefined;
+  const activeReplyMessageId = activeConversationId ? replyDraftByConversation[activeConversationId] ?? null : null;
+  const activeReplyTarget =
+    activeConversationId && activeReplyMessageId
+      ? (messagesByConversation[activeConversationId]?.items.find((item) => item.id === activeReplyMessageId) ?? null)
+      : null;
+  const activeTypingCount =
+    activeConversationId && typingByConversation[activeConversationId]
+      ? Object.keys(typingByConversation[activeConversationId]).length
+      : 0;
   const viewedProfile = profileTarget ?? myProfile;
 
   if (booting) {
@@ -2079,6 +2299,12 @@ function App() {
               onDraftChange={(value) => {
                 if (!activeConversationId) return;
                 setDrafts((prev) => ({ ...prev, [activeConversationId]: value }));
+                pushTypingSignal(activeConversationId, value.trim().length > 0);
+              }}
+              replyTarget={activeReplyTarget}
+              onClearReply={() => {
+                if (!activeConversationId) return;
+                setReplyTarget(activeConversationId, null);
               }}
               uploads={activeConversationId ? uploadsByConversation[activeConversationId] ?? [] : []}
               onAddUpload={(files) => {
@@ -2098,6 +2324,23 @@ function App() {
                 return sendMessage(activeConversationId, retryText);
               }}
               onEditMessage={(messageId, nextText) => editMessage(messageId, nextText)}
+              onReplyToMessage={(messageId) => {
+                if (!activeConversationId) return;
+                setReplyTarget(activeConversationId, messageId);
+              }}
+              onToggleReaction={(messageId, emoji) => {
+                if (!activeConversationId) return;
+                void toggleReaction(activeConversationId, messageId, emoji);
+              }}
+              onDeleteMessage={(messageId, mode) => {
+                if (!activeConversationId) return;
+                void deleteMessageAction(activeConversationId, messageId, mode);
+              }}
+              onForwardMessage={(messageId) => {
+                if (!activeConversationId) return;
+                void forwardMessage(activeConversationId, messageId);
+              }}
+              typingCount={activeTypingCount}
               onEnsureAttachmentPreview={(attachment) => {
                 void ensureAttachmentPreview(attachment);
               }}

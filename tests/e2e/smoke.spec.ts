@@ -114,6 +114,70 @@ test("desktop messaging, notifications, and profile chain", async ({ page, brows
   }
 });
 
+test("desktop messaging actions: reply, reaction, delete", async ({ page, browser, request }, testInfo) => {
+  test.skip(isMobileProject(testInfo), "Desktop coverage only.");
+
+  const userA = await registerUserViaUI(page, {
+    label: "desktop_actions_a",
+    remembered: true,
+    mobile: false,
+  });
+
+  const contextB = await browser.newContext();
+  const pageB = await contextB.newPage();
+
+  try {
+    const userB = await registerUserViaUI(pageB, {
+      label: "desktop_actions_b",
+      remembered: true,
+      mobile: false,
+    });
+
+    const conversationId = await createDirectConversation(request, userA.accessToken, userB.accountId);
+
+    await navigateToSection(page, "messages", false);
+    await page.getByTestId("messages-refresh-list-button").click();
+
+    const conversationButton = page.getByTestId(`conversation-item-${conversationId}`);
+    await expect(conversationButton).toBeVisible({ timeout: 20_000 });
+    await conversationButton.click();
+
+    const baseText = `e2e-base-${randomUUID().slice(0, 8)}`;
+    await page.getByTestId("messages-composer-input").fill(baseText);
+    await page.getByTestId("messages-send-button").click();
+
+    const baseMessage = page.getByTestId("message").filter({ hasText: baseText }).first();
+    await expect(baseMessage).toBeVisible({ timeout: 15_000 });
+
+    await baseMessage.click({ button: "right" });
+    await page.getByRole("button", { name: "Ответить" }).click();
+
+    const replyText = `e2e-reply-${randomUUID().slice(0, 8)}`;
+    await page.getByTestId("messages-composer-input").fill(replyText);
+    await page.getByTestId("messages-send-button").click();
+
+    const replyMessage = page.getByTestId("message").filter({ hasText: replyText }).first();
+    await expect(replyMessage).toBeVisible({ timeout: 15_000 });
+    await expect(replyMessage.getByTestId("reply")).toBeVisible();
+
+    const reactionsBefore = await replyMessage.getByTestId("reaction").count();
+    await expect(async () => {
+      await page.getByTestId("message").filter({ hasText: replyText }).first().getByTestId("reaction").first().click();
+    }).toPass({ timeout: 10_000 });
+    await expect.poll(async () => replyMessage.getByTestId("reaction").count()).toBeGreaterThan(reactionsBefore);
+
+    const replyMessageId = await replyMessage.getAttribute("data-message-id");
+    expect(replyMessageId).toBeTruthy();
+    const replyMessageById = page.locator(`[data-testid="message"][data-message-id="${replyMessageId ?? ""}"]`);
+
+    await replyMessageById.click({ button: "right" });
+    await page.getByRole("button", { name: "Удалить у всех" }).click();
+    await expect(replyMessageById.getByText("Сообщение удалено")).toBeVisible({ timeout: 15_000 });
+  } finally {
+    await contextB.close();
+  }
+});
+
 test("mobile bottom-nav and overflow sanity", async ({ page }, testInfo) => {
   test.skip(!isMobileProject(testInfo), "Mobile coverage only.");
 

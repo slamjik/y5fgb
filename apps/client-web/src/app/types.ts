@@ -52,6 +52,13 @@ export type MessageAttachmentView = {
   symmetricKey: string | null;
 };
 
+export type MessageReactionView = {
+  emoji: string;
+  userIds: string[];
+  count: number;
+  reactedByMe: boolean;
+};
+
 export type UploadDraft = {
   id: string;
   file: File;
@@ -65,9 +72,13 @@ export type MessageView = {
   senderAccountId: string;
   createdAt: string;
   editedAt: string | null;
+  deletedAt: string | null;
   serverSequence: number;
   text: string;
   attachments: MessageAttachmentView[];
+  replyToMessageId: string | null;
+  forwardedFromMessageId: string | null;
+  reactions: MessageReactionView[];
   own: boolean;
   deliveryState: string;
   readByMe: boolean;

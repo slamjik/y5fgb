@@ -61,8 +61,16 @@ var attachmentFileMimeAllowlist = map[string]struct{}{
 	"video/quicktime":          {},
 }
 
+var allowedReactionEmoji = map[string]struct{}{
+	"❤️": {},
+	"👍":  {},
+	"😂":  {},
+	"😢":  {},
+}
+
 type PushNotifier interface {
 	NotifyDeviceSync(deviceID string, cursor int64)
+	NotifyDeviceTyping(deviceID string, conversationID string, accountID string, isTyping bool)
 }
 
 type Service struct {
@@ -113,6 +121,7 @@ type SendMessageInput struct {
 	Recipients       []RecipientInput
 	AttachmentIDs    []string
 	ReplyToMessageID *string
+	ForwardedFromID  *string
 	TTLSeconds       *int
 }
 
@@ -131,6 +140,7 @@ type MessageView struct {
 	Recipient   *domain.MessageRecipient
 	Receipts    []domain.MessageReceipt
 	Attachments []domain.AttachmentObject
+	Reactions   []domain.MessageReaction
 }
 
 type AttachmentUploadInput struct {
@@ -483,6 +493,43 @@ func (s *Service) SendMessage(ctx context.Context, input SendMessageInput) (Mess
 		return MessageView{}, service.NewError(service.ErrorCodeMembershipDenied, "membership denied")
 	}
 
+	var replyToMessageID *string
+	if input.ReplyToMessageID != nil {
+		trimmedReply := strings.TrimSpace(*input.ReplyToMessageID)
+		if trimmedReply != "" {
+			repliedMessage, replyErr := s.repo.GetMessageByID(ctx, trimmedReply)
+			if replyErr != nil {
+				if replyErr == postgres.ErrNotFound {
+					return MessageView{}, service.NewError(service.ErrorCodeNotFound, "reply target message not found")
+				}
+				return MessageView{}, service.NewError(service.ErrorCodeInternal, "failed to validate reply target")
+			}
+			if repliedMessage.ConversationID != input.ConversationID {
+				return MessageView{}, service.NewError(service.ErrorCodeValidation, "reply target must belong to the same conversation")
+			}
+			replyToMessageID = &trimmedReply
+		}
+	}
+
+	var forwardedFromID *string
+	if input.ForwardedFromID != nil {
+		trimmedForward := strings.TrimSpace(*input.ForwardedFromID)
+		if trimmedForward != "" {
+			forwardedFrom, lookupErr := s.repo.GetMessageByID(ctx, trimmedForward)
+			if lookupErr != nil {
+				if lookupErr == postgres.ErrNotFound {
+					return MessageView{}, service.NewError(service.ErrorCodeNotFound, "forward source message not found")
+				}
+				return MessageView{}, service.NewError(service.ErrorCodeInternal, "failed to validate forward source message")
+			}
+			sourceMember, memberErr := s.repo.GetConversationMember(ctx, forwardedFrom.ConversationID, input.Principal.AccountID)
+			if memberErr != nil || !sourceMember.IsActive {
+				return MessageView{}, service.NewError(service.ErrorCodeMembershipDenied, "cannot forward message outside of your conversations")
+			}
+			forwardedFromID = &trimmedForward
+		}
+	}
+
 	if existing, lookupErr := s.repo.GetMessageBySenderClientID(ctx, input.Principal.DeviceID, input.ClientMessageID); lookupErr == nil {
 		view, viewErr := s.loadMessageViewByID(ctx, input.Principal.DeviceID, existing.ID)
 		if viewErr != nil {
@@ -584,7 +631,8 @@ func (s *Service) SendMessage(ctx context.Context, input SendMessageInput) (Mess
 		CryptoVersion:    input.CryptoVersion,
 		Nonce:            input.Nonce,
 		Ciphertext:       input.Ciphertext,
-		ReplyToMessageID: input.ReplyToMessageID,
+		ReplyToMessageID: replyToMessageID,
+		ForwardedFromID:  forwardedFromID,
 		TTLSeconds:       ttlSeconds,
 		ExpiresAt:        expiresAt,
 		CreatedAt:        time.Now().UTC(),
@@ -788,6 +836,151 @@ func (s *Service) EditMessage(ctx context.Context, input EditMessageInput) (Mess
 	}
 
 	return messageView, nil
+}
+
+func (s *Service) ToggleMessageReaction(
+	ctx context.Context,
+	principal auth.AuthPrincipal,
+	messageID string,
+	emoji string,
+) (MessageView, bool, error) {
+	if strings.TrimSpace(messageID) == "" {
+		return MessageView{}, false, service.NewError(service.ErrorCodeValidation, "messageId is required")
+	}
+	normalizedEmoji := strings.TrimSpace(emoji)
+	if _, ok := allowedReactionEmoji[normalizedEmoji]; !ok {
+		return MessageView{}, false, service.NewError(service.ErrorCodeValidation, "unsupported reaction emoji")
+	}
+
+	message, err := s.repo.GetMessageByID(ctx, messageID)
+	if err != nil {
+		if err == postgres.ErrNotFound {
+			return MessageView{}, false, service.NewError(service.ErrorCodeNotFound, "message not found")
+		}
+		return MessageView{}, false, service.NewError(service.ErrorCodeInternal, "failed to load message")
+	}
+	member, memberErr := s.repo.GetConversationMember(ctx, message.ConversationID, principal.AccountID)
+	if memberErr != nil || !member.IsActive {
+		return MessageView{}, false, service.NewError(service.ErrorCodeMembershipDenied, "membership denied")
+	}
+
+	updated, active, err := s.repo.ToggleMessageReaction(ctx, messageID, principal.AccountID, normalizedEmoji)
+	if err != nil {
+		if err == postgres.ErrNotFound {
+			return MessageView{}, false, service.NewError(service.ErrorCodeNotFound, "message not found")
+		}
+		return MessageView{}, false, service.NewError(service.ErrorCodeInternal, "failed to toggle reaction")
+	}
+
+	recipients, recipientsErr := s.repo.ListMessageRecipients(ctx, messageID)
+	if recipientsErr != nil {
+		s.logger.Warn("failed to list message recipients after reaction toggle", "message_id", messageID, "error", recipientsErr)
+	} else if s.notifier != nil {
+		for _, recipient := range recipients {
+			s.notifier.NotifyDeviceSync(recipient.RecipientDeviceID, updated.ServerSequence)
+		}
+	}
+
+	view, viewErr := s.loadMessageViewByID(ctx, principal.DeviceID, messageID)
+	if viewErr != nil {
+		return MessageView{
+			Envelope: updated,
+		}, active, nil
+	}
+	return view, active, nil
+}
+
+func (s *Service) DeleteMessage(
+	ctx context.Context,
+	principal auth.AuthPrincipal,
+	messageID string,
+	mode string,
+) (MessageView, string, error) {
+	if strings.TrimSpace(messageID) == "" {
+		return MessageView{}, "", service.NewError(service.ErrorCodeValidation, "messageId is required")
+	}
+	normalizedMode := strings.ToLower(strings.TrimSpace(mode))
+	if normalizedMode == "" {
+		normalizedMode = "me"
+	}
+	if normalizedMode != "me" && normalizedMode != "all" {
+		return MessageView{}, "", service.NewError(service.ErrorCodeValidation, "invalid delete mode")
+	}
+
+	message, err := s.repo.GetMessageByID(ctx, messageID)
+	if err != nil {
+		if err == postgres.ErrNotFound {
+			return MessageView{}, "", service.NewError(service.ErrorCodeNotFound, "message not found")
+		}
+		return MessageView{}, "", service.NewError(service.ErrorCodeInternal, "failed to load message")
+	}
+	member, memberErr := s.repo.GetConversationMember(ctx, message.ConversationID, principal.AccountID)
+	if memberErr != nil || !member.IsActive {
+		return MessageView{}, "", service.NewError(service.ErrorCodeMembershipDenied, "membership denied")
+	}
+
+	if normalizedMode == "all" {
+		if message.SenderAccountID != principal.AccountID {
+			return MessageView{}, "", service.NewError(service.ErrorCodeForbidden, "only sender can delete a message for everyone")
+		}
+		updated, deleteErr := s.repo.SoftDeleteMessageForAll(ctx, messageID)
+		if deleteErr != nil {
+			if deleteErr == postgres.ErrNotFound {
+				return MessageView{}, "", service.NewError(service.ErrorCodeNotFound, "message not found")
+			}
+			return MessageView{}, "", service.NewError(service.ErrorCodeInternal, "failed to delete message")
+		}
+
+		recipients, recipientsErr := s.repo.ListMessageRecipients(ctx, messageID)
+		if recipientsErr != nil {
+			s.logger.Warn("failed to list message recipients after delete-for-all", "message_id", messageID, "error", recipientsErr)
+		} else if s.notifier != nil {
+			for _, recipient := range recipients {
+				s.notifier.NotifyDeviceSync(recipient.RecipientDeviceID, updated.ServerSequence)
+			}
+		}
+
+		view, viewErr := s.loadMessageViewByID(ctx, principal.DeviceID, messageID)
+		if viewErr != nil {
+			return MessageView{Envelope: updated}, normalizedMode, nil
+		}
+		return view, normalizedMode, nil
+	}
+
+	if err := s.repo.HideMessageForAccount(ctx, messageID, principal.AccountID); err != nil {
+		return MessageView{}, "", service.NewError(service.ErrorCodeInternal, "failed to hide message")
+	}
+	return MessageView{}, normalizedMode, nil
+}
+
+func (s *Service) PublishTyping(
+	ctx context.Context,
+	principal auth.AuthPrincipal,
+	conversationID string,
+	isTyping bool,
+) error {
+	if strings.TrimSpace(conversationID) == "" {
+		return service.NewError(service.ErrorCodeValidation, "conversationId is required")
+	}
+	conversationWithMembers, err := s.loadConversationWithMembers(ctx, conversationID)
+	if err != nil {
+		return err
+	}
+	if !hasActiveMember(conversationWithMembers.Members, principal.AccountID) {
+		return service.NewError(service.ErrorCodeMembershipDenied, "membership denied")
+	}
+	if s.notifier == nil {
+		return nil
+	}
+	for _, member := range conversationWithMembers.Members {
+		if !member.Member.IsActive || member.Member.AccountID == principal.AccountID {
+			continue
+		}
+		for _, device := range member.TrustedDevices {
+			s.notifier.NotifyDeviceTyping(device.ID, conversationID, principal.AccountID, isTyping)
+		}
+	}
+	return nil
 }
 
 func (s *Service) ListConversationMessages(ctx context.Context, principal auth.AuthPrincipal, conversationID string, limit int, beforeSequence int64) ([]MessageView, error) {
@@ -1183,6 +1376,10 @@ func (s *Service) hydrateMessageRows(ctx context.Context, rows []postgres.Messag
 	if err != nil {
 		return nil, service.NewError(service.ErrorCodeInternal, "failed to load message attachments")
 	}
+	reactionsByMessage, err := s.repo.ListMessageReactionsByMessageIDs(ctx, messageIDs)
+	if err != nil {
+		return nil, service.NewError(service.ErrorCodeInternal, "failed to load message reactions")
+	}
 
 	result := make([]MessageView, 0, len(rows))
 	for _, row := range rows {
@@ -1191,6 +1388,7 @@ func (s *Service) hydrateMessageRows(ctx context.Context, rows []postgres.Messag
 			Recipient:   row.Recipient,
 			Receipts:    receiptsByMessage[row.Envelope.ID],
 			Attachments: attachmentsByMessage[row.Envelope.ID],
+			Reactions:   reactionsByMessage[row.Envelope.ID],
 		})
 	}
 	return result, nil
@@ -1208,11 +1406,13 @@ func (s *Service) loadMessageViewByID(ctx context.Context, deviceID string, mess
 	}
 	receiptsByMessage, _ := s.repo.ListMessageReceiptsByMessageIDs(ctx, []string{messageID})
 	attachmentsByMessage, _ := s.repo.ListAttachmentsByMessageIDs(ctx, []string{messageID})
+	reactionsByMessage, _ := s.repo.ListMessageReactionsByMessageIDs(ctx, []string{messageID})
 	return MessageView{
 		Envelope:    message,
 		Recipient:   recipientPtr,
 		Receipts:    receiptsByMessage[messageID],
 		Attachments: attachmentsByMessage[messageID],
+		Reactions:   reactionsByMessage[messageID],
 	}, nil
 }
 

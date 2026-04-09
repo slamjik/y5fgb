@@ -8,6 +8,7 @@ import type {
   MessageAttachmentView,
   MessageBucket,
   MessageRowAttachmentState,
+  MessageView,
   UploadDraft,
 } from "../../types";
 import { chatAttachmentInputAccept } from "../../upload-security";
@@ -48,12 +49,19 @@ type MessagesSectionProps = {
   attachmentInputRef: React.MutableRefObject<HTMLInputElement | null>;
   draftText: string;
   onDraftChange: (value: string) => void;
+  replyTarget: MessageView | null;
+  onClearReply: () => void;
   uploads: UploadDraft[];
   onAddUpload: (files: FileList | null) => void;
   onRemoveUpload: (uploadId: string) => void;
   onSendMessage: () => void;
   onResendMessage: (retryText: string) => Promise<void>;
   onEditMessage: (messageId: string, nextText: string) => Promise<void>;
+  onReplyToMessage: (messageId: string) => void;
+  onToggleReaction: (messageId: string, emoji: string) => void;
+  onDeleteMessage: (messageId: string, mode: "me" | "all") => void;
+  onForwardMessage: (messageId: string) => void;
+  typingCount: number;
   onDownloadAttachment: (attachment: MessageAttachmentView) => Promise<void>;
   onEnsureAttachmentPreview: (attachment: MessageAttachmentView) => void;
   attachmentPreviewState: Record<string, { loading: boolean; src: string | null; error: string }>;
@@ -63,6 +71,8 @@ type MessagesSectionProps = {
   serverInput: string;
   onReconnect: () => void;
 };
+
+const maxRenderedMessages = 260;
 
 export function MessagesSection({
   conversationSearch,
@@ -96,12 +106,19 @@ export function MessagesSection({
   attachmentInputRef,
   draftText,
   onDraftChange,
+  replyTarget,
+  onClearReply,
   uploads,
   onAddUpload,
   onRemoveUpload,
   onSendMessage,
   onResendMessage,
   onEditMessage,
+  onReplyToMessage,
+  onToggleReaction,
+  onDeleteMessage,
+  onForwardMessage,
+  typingCount,
   onDownloadAttachment,
   onEnsureAttachmentPreview,
   attachmentPreviewState,
@@ -114,6 +131,82 @@ export function MessagesSection({
   const activeTitle = resolveConversationTitle(
     summaries.find((item) => (item.id as string) === activeConversationId) ?? null,
   );
+
+  const messageRefMap = React.useRef<Map<string, HTMLDivElement | null>>(new Map());
+  const [highlightedMessageId, setHighlightedMessageId] = React.useState<string | null>(null);
+  const [showNewMessages, setShowNewMessages] = React.useState(false);
+  const [isNearBottom, setIsNearBottom] = React.useState(true);
+  const latestMessageIdRef = React.useRef<string | null>(null);
+
+  const activeItems = activeBucket?.items ?? [];
+  const hiddenCount = Math.max(0, activeItems.length - maxRenderedMessages);
+  const renderedItems = hiddenCount > 0 ? activeItems.slice(-maxRenderedMessages) : activeItems;
+  const byId = React.useMemo(() => {
+    const map = new Map<string, MessageView>();
+    for (const message of activeItems) {
+      map.set(message.id, message);
+    }
+    return map;
+  }, [activeItems]);
+
+  React.useEffect(() => {
+    latestMessageIdRef.current = null;
+    setShowNewMessages(false);
+    setIsNearBottom(true);
+    const el = messageScrollRef.current;
+    if (!el) return;
+    requestAnimationFrame(() => {
+      el.scrollTop = el.scrollHeight;
+    });
+  }, [activeConversationId, messageScrollRef]);
+
+  React.useEffect(() => {
+    const latest = activeItems[activeItems.length - 1];
+    if (!latest) return;
+    if (latestMessageIdRef.current === latest.id) return;
+    latestMessageIdRef.current = latest.id;
+
+    const el = messageScrollRef.current;
+    if (!el) return;
+    const bottomGap = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const nearBottomNow = bottomGap < 140;
+    if (nearBottomNow || isNearBottom) {
+      requestAnimationFrame(() => {
+        el.scrollTop = el.scrollHeight;
+      });
+      setShowNewMessages(false);
+      setIsNearBottom(true);
+      return;
+    }
+
+    if (!latest.own) {
+      setShowNewMessages(true);
+    }
+  }, [activeItems, isNearBottom, messageScrollRef]);
+
+  React.useEffect(() => {
+    if (!highlightedMessageId) return;
+    const timer = window.setTimeout(() => setHighlightedMessageId(null), 2200);
+    return () => window.clearTimeout(timer);
+  }, [highlightedMessageId]);
+
+  const scrollToMessage = React.useCallback(
+    (messageId: string) => {
+      const target = messageRefMap.current.get(messageId);
+      if (!target) return;
+      target.scrollIntoView({ behavior: "smooth", block: "center" });
+      setHighlightedMessageId(messageId);
+    },
+    [setHighlightedMessageId],
+  );
+
+  const jumpToLatest = () => {
+    const el = messageScrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+    setIsNearBottom(true);
+    setShowNewMessages(false);
+  };
 
   return (
     <section className="mobile-screen-shell grid gap-3 lg:grid-cols-[320px_1fr_280px] h-[calc(100dvh-216px)] lg:h-[calc(100vh-170px)] min-h-[420px] app-section-transition">
@@ -296,7 +389,12 @@ export function MessagesSection({
                 >
                   <ArrowLeft className="w-4 h-4" />
                 </button>
-                <p data-testid="messages-active-title" className="truncate" style={{ color: "var(--text-primary)", fontWeight: 600 }}>{activeTitle}</p>
+                <div className="min-w-0">
+                  <p data-testid="messages-active-title" className="truncate" style={{ color: "var(--text-primary)", fontWeight: 600 }}>{activeTitle}</p>
+                  {typingCount > 0 ? (
+                    <p style={{ color: "var(--base-grey-light)", fontSize: 12 }}>Печатает...</p>
+                  ) : null}
+                </div>
               </div>
               <button
                 type="button"
@@ -309,44 +407,93 @@ export function MessagesSection({
                 Обновить
               </button>
             </header>
-            <div ref={messageScrollRef} className="flex-1 overflow-auto px-3 lg:px-4 py-3 space-y-3">
-              {activeBucket?.hasMore ? (
-                <div className="text-center">
-                  <button
-                    type="button"
-                    data-testid="messages-load-older-button"
-                    className="px-3 py-1 rounded-lg border text-xs disabled:opacity-60"
-                    style={outlineButtonStyle}
-                    onClick={onLoadOlderMessages}
-                    disabled={Boolean(activeBucket.loadingMore)}
-                  >
-                    {activeBucket.loadingMore ? "Загружаем..." : "Загрузить более старые"}
-                  </button>
-                </div>
-              ) : null}
-              {activeBucket?.loading ? <InlineInfo text="Загрузка истории..." /> : null}
-              {activeBucket?.error ? (
-                <div className="space-y-2">
-                  <InlineInfo tone="error" text={activeBucket.error} />
-                  <button type="button" className="px-3 py-1.5 rounded-lg border text-sm" style={outlineButtonStyle} onClick={onReconnect}>
-                    Повторить подключение
-                  </button>
-                </div>
-              ) : null}
-              {activeBucket && activeBucket.items.length === 0 ? <InlineInfo text="В чате пока нет сообщений." /> : null}
-              {activeBucket?.items.map((message) => (
-                <MessageRow
-                  key={message.id}
-                  message={message}
-                  onResend={message.localStatus === "failed" ? () => onResendMessage(message.retryText ?? "") : undefined}
-                  onEditMessage={message.own ? onEditMessage : undefined}
-                  attachmentPreviewState={attachmentPreviewState}
-                  onEnsureAttachmentPreview={onEnsureAttachmentPreview}
-                  onDownloadAttachment={onDownloadAttachment}
-                  attachmentOpState={attachmentOps}
-                />
-              ))}
+            <div
+              ref={messageScrollRef}
+              className="flex-1 overflow-auto px-3 lg:px-4 py-3"
+              onScroll={(event) => {
+                const target = event.currentTarget;
+                const nearBottom = target.scrollHeight - target.scrollTop - target.clientHeight < 140;
+                setIsNearBottom(nearBottom);
+                if (nearBottom) {
+                  setShowNewMessages(false);
+                }
+              }}
+            >
+              <div className="space-y-1">
+                {activeBucket?.hasMore ? (
+                  <div className="text-center">
+                    <button
+                      type="button"
+                      data-testid="messages-load-older-button"
+                      className="px-3 py-1 rounded-lg border text-xs disabled:opacity-60"
+                      style={outlineButtonStyle}
+                      onClick={onLoadOlderMessages}
+                      disabled={Boolean(activeBucket.loadingMore)}
+                    >
+                      {activeBucket.loadingMore ? "Загружаем..." : "Загрузить более старые"}
+                    </button>
+                  </div>
+                ) : null}
+                {hiddenCount > 0 ? <InlineInfo text={`Показаны последние ${renderedItems.length} сообщений.`} /> : null}
+                {activeBucket?.loading ? <InlineInfo text="Загрузка истории..." /> : null}
+                {activeBucket?.error ? (
+                  <div className="space-y-2">
+                    <InlineInfo tone="error" text={activeBucket.error} />
+                    <button type="button" className="px-3 py-1.5 rounded-lg border text-sm" style={outlineButtonStyle} onClick={onReconnect}>
+                      Повторить подключение
+                    </button>
+                  </div>
+                ) : null}
+                {activeBucket && activeBucket.items.length === 0 ? <InlineInfo text="В чате пока нет сообщений." /> : null}
+                {renderedItems.map((message, index) => {
+                  const previous = index > 0 ? renderedItems[index - 1] : null;
+                  const showDate = !previous || !isSameDay(previous.createdAt, message.createdAt);
+                  const compactTop =
+                    Boolean(previous) &&
+                    !showDate &&
+                    previous?.senderAccountId === message.senderAccountId &&
+                    Math.abs(new Date(message.createdAt).getTime() - new Date(previous.createdAt).getTime()) < 5 * 60 * 1000;
+
+                  return (
+                    <React.Fragment key={message.id}>
+                      {showDate ? <DateSeparator value={message.createdAt} /> : null}
+                      <MessageRow
+                        message={message}
+                        replySource={message.replyToMessageId ? byId.get(message.replyToMessageId) ?? null : null}
+                        compactTop={compactTop}
+                        highlighted={highlightedMessageId === message.id}
+                        onJumpToMessage={scrollToMessage}
+                        onReplyToMessage={onReplyToMessage}
+                        onToggleReaction={onToggleReaction}
+                        onDeleteMessage={onDeleteMessage}
+                        onForwardMessage={onForwardMessage}
+                        onResend={message.localStatus === "failed" ? () => onResendMessage(message.retryText ?? "") : undefined}
+                        onEditMessage={message.own ? onEditMessage : undefined}
+                        attachmentPreviewState={attachmentPreviewState}
+                        onEnsureAttachmentPreview={onEnsureAttachmentPreview}
+                        onDownloadAttachment={onDownloadAttachment}
+                        attachmentOpState={attachmentOps}
+                        registerRef={(messageId, el) => {
+                          messageRefMap.current.set(messageId, el);
+                        }}
+                      />
+                    </React.Fragment>
+                  );
+                })}
+              </div>
             </div>
+            {showNewMessages ? (
+              <div className="px-4 pb-2">
+                <button
+                  type="button"
+                  className="w-full rounded-lg border px-3 py-1.5 text-sm"
+                  style={outlineButtonStyle}
+                  onClick={jumpToLatest}
+                >
+                  Новые сообщения v
+                </button>
+              </div>
+            ) : null}
             <footer className="border-t p-3 lg:p-4 space-y-2" style={{ borderColor: "var(--glass-border)", paddingBottom: "max(12px, env(safe-area-inset-bottom))" }}>
               <input
                 ref={attachmentInputRef}
@@ -359,8 +506,22 @@ export function MessagesSection({
                   event.currentTarget.value = "";
                 }}
               />
+              {replyTarget ? (
+                <div className="rounded-lg border px-3 py-2 flex items-center justify-between gap-2" style={innerCardStyle}>
+                  <div className="min-w-0">
+                    <p style={{ color: "var(--base-grey-light)", fontSize: 11 }}>Ответ на сообщение</p>
+                    <p className="truncate" style={{ color: "var(--text-primary)", fontSize: 12 }}>
+                      {replyTarget.deletedAt ? "Сообщение удалено" : replyTarget.text || "Вложение"}
+                    </p>
+                  </div>
+                  <button type="button" className="p-1 rounded border" style={outlineButtonStyle} onClick={onClearReply}>
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              ) : null}
               <textarea
                 data-testid="messages-composer-input"
+                data-message-testid="message-input"
                 value={draftText}
                 onChange={(e) => onDraftChange(e.target.value)}
                 onKeyDown={(e) => {
@@ -402,6 +563,7 @@ export function MessagesSection({
                 <button
                   type="button"
                   data-testid="messages-send-button"
+                  data-message-testid="send-button"
                   className="px-4 py-2 rounded-lg border"
                   style={outlineButtonStyle}
                   onClick={onSendMessage}
@@ -434,4 +596,35 @@ export function MessagesSection({
       </aside>
     </section>
   );
+}
+
+function DateSeparator({ value }: { value: string }) {
+  return (
+    <div className="py-2 flex justify-center">
+      <span className="px-3 py-1 rounded-full border text-xs" style={innerCardStyle}>
+        {formatDateLabel(value)}
+      </span>
+    </div>
+  );
+}
+
+function isSameDay(left: string, right: string): boolean {
+  const a = new Date(left);
+  const b = new Date(right);
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+
+function formatDateLabel(value: string): string {
+  const source = new Date(value);
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const target = new Date(source.getFullYear(), source.getMonth(), source.getDate()).getTime();
+  const dayDiff = Math.round((today - target) / (24 * 60 * 60 * 1000));
+  if (dayDiff === 0) return "Сегодня";
+  if (dayDiff === 1) return "Вчера";
+  return source.toLocaleDateString("ru-RU", {
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+  });
 }

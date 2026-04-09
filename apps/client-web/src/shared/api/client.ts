@@ -11,6 +11,7 @@
   CreateSocialPostResponse,
   CreateStoryRequest,
   DeviceListResponse,
+  DeleteMessageResponse,
   EditMessageRequest,
   EditMessageResponse,
   FriendListResponse,
@@ -35,6 +36,8 @@
   SecurityEventsResponse,
   SendMessageRequest,
   SendMessageResponse,
+  ToggleMessageReactionRequest,
+  ToggleMessageReactionResponse,
   SocialNotificationsResponse,
   SocialPostLikeResponse,
   StoryFeedResponse,
@@ -50,6 +53,7 @@
   WebRegisterRequest,
   WebTwoFactorLoginVerifyRequest,
   ClearNotificationsResponse,
+  ConversationTypingResponse,
 } from "@project/protocol";
 import type { ServerBootstrapConfig } from "@project/client-core";
 import type { MediaID, StoryID } from "@project/shared-types";
@@ -258,6 +262,31 @@ export class WebApiClient {
 
   async editMessage(accessToken: string, messageId: string, body: EditMessageRequest): Promise<EditMessageResponse> {
     return this.request<EditMessageResponse>(`/messages/${messageId}`, "PATCH", body, accessToken);
+  }
+
+  async toggleMessageReaction(
+    accessToken: string,
+    messageId: string,
+    body: ToggleMessageReactionRequest,
+  ): Promise<ToggleMessageReactionResponse> {
+    return this.request<ToggleMessageReactionResponse>(`/messages/${messageId}/reactions`, "POST", body, accessToken);
+  }
+
+  async deleteMessage(
+    accessToken: string,
+    messageId: string,
+    mode: "me" | "all" = "me",
+  ): Promise<DeleteMessageResponse> {
+    return this.request<DeleteMessageResponse>(`/messages/${messageId}`, "DELETE", { mode }, accessToken);
+  }
+
+  async sendTyping(accessToken: string, conversationId: string, isTyping: boolean): Promise<ConversationTypingResponse> {
+    return this.request<ConversationTypingResponse>(
+      `/conversations/${conversationId}/typing`,
+      "POST",
+      { isTyping },
+      accessToken,
+    );
   }
 
   async syncBootstrap(accessToken: string, limit = 100): Promise<SyncBootstrapResponse> {

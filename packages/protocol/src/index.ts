@@ -493,6 +493,12 @@ export interface AttachmentMetaDTO {
   createdAt: ISO8601Timestamp;
 }
 
+export interface MessageReactionDTO {
+  emoji: string;
+  userIds: AccountID[];
+  count: number;
+}
+
 export interface EncryptedMessageEnvelopeDTO {
   id: MessageID;
   conversationId: ConversationID;
@@ -506,9 +512,11 @@ export interface EncryptedMessageEnvelopeDTO {
   recipients: EncryptedRecipientKeyDTO[];
   attachments: AttachmentMetaDTO[];
   replyToMessageId: MessageID | null;
+  forwardedFromMessageId: MessageID | null;
   ttlSeconds: number | null;
   createdAt: ISO8601Timestamp;
   editedAt: ISO8601Timestamp | null;
+  deletedAt: ISO8601Timestamp | null;
   expiresAt: ISO8601Timestamp | null;
   serverSequence: number;
 }
@@ -527,6 +535,7 @@ export interface MessageDTO {
   deliveredAt: ISO8601Timestamp | null;
   failedReason: string | null;
   receipts: MessageReceiptDTO[];
+  reactions?: MessageReactionDTO[];
 }
 
 export interface CreateDirectConversationRequest {
@@ -903,6 +912,7 @@ export interface SendMessageRequest {
   recipients: EncryptedRecipientKeyDTO[];
   attachmentIds?: AttachmentID[];
   replyToMessageId?: MessageID;
+  forwardedFromMessageId?: MessageID;
   ttlSeconds?: number;
 }
 
@@ -920,6 +930,33 @@ export interface EditMessageRequest {
 
 export interface EditMessageResponse {
   message: MessageDTO;
+}
+
+export interface ToggleMessageReactionRequest {
+  emoji: string;
+}
+
+export interface ToggleMessageReactionResponse {
+  message: MessageDTO;
+  active: boolean;
+}
+
+export interface DeleteMessageRequest {
+  mode?: "me" | "all";
+}
+
+export interface DeleteMessageResponse {
+  ok: boolean;
+  mode: "me" | "all";
+  message?: MessageDTO;
+}
+
+export interface ConversationTypingRequest {
+  isTyping: boolean;
+}
+
+export interface ConversationTypingResponse {
+  ok: boolean;
 }
 
 export interface ConversationMessagesResponse {
